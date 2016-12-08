@@ -16,9 +16,9 @@ module.exports = function(grunt) {
       options: {
         sourceMap: true
       },
-      client: {
-        src: 'src/client.js',
-        dest: 'dist/client.js'
+      firetruss: {
+        src: 'src/firetruss.js',
+        dest: 'dist/firetruss.js'
       },
       worker: {
         src: 'src/worker.js',
@@ -34,9 +34,9 @@ module.exports = function(grunt) {
         sourceMapIn: src => src + '.map',
         sourceMapName: dest => dest + '.map',
       },
-      client: {
-        src: 'dist/client.js',
-        dest: 'dist/client.min.js'
+      firetruss: {
+        src: 'dist/firetruss.js',
+        dest: 'dist/firetruss.min.js'
       },
       worker: {
         src: 'dist/worker.js',

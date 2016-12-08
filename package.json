@@ -1,25 +1,27 @@
 {
-  "name": "fireworker",
-  "version": "0.2.12",
-  "description": "Firebase in web workers",
+  "name": "firetruss",
+  "version": "0.1.0",
+  "description": "Advanced data sync layer for Firebase and Vue.js",
   "scripts": {
     "setup": "rm -rf bower_components; rm -rf node_modules; npm install; bower install;"
   },
   "repository": {
     "type": "git",
-    "url": "git@github.com:pkaminski/fireworker.git"
+    "url": "git@github.com:pkaminski/firetruss.git"
   },
   "keywords": [
     "firebase",
+    "vuejs",
+    "model",
     "worker",
-    "webworker"
+    "angular"
   ],
   "author": "Piotr Kaminski",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/pkaminski/fireworker/issues"
+    "url": "https://github.com/pkaminski/firetruss/issues"
   },
-  "homepage": "https://github.com/pkaminski/fireworker",
+  "homepage": "https://github.com/pkaminski/firetruss",
   "devDependencies": {
     "buble": "^0.14.2",
     "compose-source-map": "^1.0.0",

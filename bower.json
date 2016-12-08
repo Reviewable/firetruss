@@ -1,15 +1,17 @@
 {
-  "name": "fireworker",
-  "version": "0.2.12",
-  "homepage": "https://github.com/pkaminski/fireworker",
+  "name": "firetruss",
+  "version": "0.1.0",
+  "homepage": "https://github.com/pkaminski/firetruss",
   "authors": [
     "Piotr Kaminski"
   ],
-  "description": "Firebase in web workers",
+  "description": "Advanced data sync layer for Firebase and Vue.js",
   "keywords": [
     "firebase",
+    "vuejs",
+    "model",
     "worker",
-    "webworker"
+    "angular"
   ],
   "license": "MIT",
   "ignore": [
