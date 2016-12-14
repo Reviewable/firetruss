@@ -1,6 +1,3 @@
-(function() {
-'use strict';
-
 /* globals Firebase, CryptoJS, setImmediate, setInterval, self */
 
 const fireworkers = [];
@@ -484,5 +481,3 @@ setInterval(function findAbandonedConnections() {
 self.Fireworker = Fireworker;
 self.window = self;
 acceptConnections();
-
-})();

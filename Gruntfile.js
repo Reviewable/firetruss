@@ -1,9 +1,12 @@
 'use strict';
 
+const buble = require('rollup-plugin-buble');
+const nodeResolve = require('rollup-plugin-node-resolve');
+const commonjs = require('rollup-plugin-commonjs');
+
 module.exports = function(grunt) {
 
   require('load-grunt-tasks')(grunt);
-  require('./build/grunt_buble.js')(grunt);
 
   grunt.initConfig({
     pkg: grunt.file.readJSON('package.json'),
@@ -12,17 +15,43 @@ module.exports = function(grunt) {
       dist: ['dist']
     },
 
-    buble: {
+    rollup: {
       options: {
-        sourceMap: true
+        sourceMap: true,
+        sourceMapRelativePaths: true,
+        globals: {
+          vue: 'Vue',
+          lodash: '_'
+        },
+        plugins: [
+          commonjs(),
+          buble({
+            transforms: {
+              dangerousForOf: true
+            }
+          }),
+          nodeResolve({
+            jsnext: true,
+            skip: ['vue', 'lodash']
+          })
+        ]
       },
       firetruss: {
-        src: 'src/firetruss.js',
-        dest: 'dist/firetruss.js'
+        options: {
+          format: 'umd',
+          moduleName: 'Truss'
+        },
+        files: {
+          'dist/firetruss.js': ['src/client/Truss.js']
+        }
       },
       worker: {
-        src: 'src/worker.js',
-        dest: 'dist/worker.js'
+        options: {
+          format: 'iife'
+        },
+        files: {
+          'dist/worker.js': ['src/worker/worker.js']
+        }
       }
     },
 
@@ -60,7 +89,7 @@ module.exports = function(grunt) {
   });
 
   grunt.registerTask('default', [
-    'clean:dist', 'buble', 'uglify', 'gitadd'
+    'clean:dist', 'rollup', 'uglify', 'gitadd'
   ]);
 
 };

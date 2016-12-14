@@ -3,7 +3,8 @@
   "version": "0.1.1",
   "description": "Advanced data sync layer for Firebase and Vue.js",
   "scripts": {
-    "setup": "rm -rf bower_components; rm -rf node_modules; npm install; bower install;"
+    "setup": "rm -rf bower_components; rm -rf node_modules; npm install; bower install;",
+    "test": "node node_modules/ava/cli.js --watch"
   },
   "repository": {
     "type": "git",
@@ -23,7 +24,7 @@
   },
   "homepage": "https://github.com/pkaminski/firetruss",
   "devDependencies": {
-    "buble": "^0.14.2",
+    "ava": "^0.17.0",
     "compose-source-map": "^1.0.0",
     "grunt": "^1.0.0",
     "grunt-contrib-clean": "^1.0.0",
@@ -31,5 +32,22 @@
     "grunt-git": "^1.0.1",
     "grunt-release": "^0.14.0",
     "load-grunt-tasks": "^3.5.2"
+  },
+  "ava": {
+    "files": [
+      "src/**/*.test.js"
+    ],
+    "source": [
+      "src/**/*.js"
+    ]
+  },
+  "dependencies": {
+    "grunt-rollup": "^1.0.1",
+    "lodash": "^4.17.2",
+    "performance-now": "^0.2.0",
+    "rollup-plugin-buble": "^0.15.0",
+    "rollup-plugin-commonjs": "^5.0.5",
+    "rollup-plugin-node-resolve": "^2.0.0",
+    "vue": "^2.1.6"
   }
 }
