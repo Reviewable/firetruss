@@ -1,6 +1,10 @@
 'use strict';
 
+import {unescapeKey, ABORT_TRANSACTION_NOW} from './utils.js';
+
 // jshint browser:true
+
+let bridge;
 
 class SlownessTracker {
   constructor(record) {
@@ -27,11 +31,44 @@ class SlownessTracker {
 }
 
 
-class Bridge {
+class Snapshot {
+  constructor({path, value, valueError, exists}) {
+    this._path = path;
+    this._value = value;
+    this._valueError = errorFromJson(valueError);
+    this._exists = value === undefined ? exists || false : value !== null;
+  }
+
+  get path() {
+    return this._path;
+  }
+
+  get exists() {
+    return this._exists;
+  }
+
+  get value() {
+    this._checkValue();
+    return this._value;
+  }
+
+  get key() {
+    if (this._key === undefined) this._key = unescapeKey(this._path.replace(/.*\//, ''));
+    return this._key;
+  }
+
+  _checkValue() {
+    if (this._valueError) throw this._valueError;
+    if (this._value === undefined) throw new Error('Value omitted from snapshot');
+  }
+}
+
+
+export default class Bridge {
   constructor(webWorker) {
     this._idCounter = 0;
     this._deferreds = {};
-    this._active = true;
+    this._suspended = false;
     this._servers = {};
     this._callbacks = {};
     this._errorCallbacks = [];
@@ -49,7 +86,7 @@ class Bridge {
     setInterval(() => {this._send({msg: 'ping'});}, 60 * 1000);
   }
 
-  init() {
+  static init(webWorker) {
     const items = [];
     try {
       const storage = window.localStorage || window.sessionStorage;
@@ -61,20 +98,19 @@ class Bridge {
     } catch (e) {
       // Some browsers don't like us accessing local storage -- nothing we can do.
     }
-    return this._send({msg: 'init', storage: items}).then(
-      ({exposedFunctionNames, firebaseSdkVersion}) => {
-        Truss.FIREBASE_SDK_VERSION = firebaseSdkVersion;
-        for (let name of exposedFunctionNames) {
-          Truss.worker[name] = this.bindExposedFunction(name);
-        }
-      }
-    );
+    return this._send({msg: 'init', storage: items});
   }
 
-  activate(enabled) {
-    if (this._active === enabled) return;
-    this._active = enabled;
-    if (enabled) {
+  static get instance() {
+    if (!bridge) throw new Error('No web worker connected, please call Truss.connectWorker first');
+    return bridge;
+  }
+
+  suspend(suspended) {
+    if (suspended === undefined) suspended = true;
+    if (this._suspended === suspended) return;
+    this._suspended = suspended;
+    if (!suspended) {
       this._receiveMessages(this._inboundMessages);
       this._inboundMessages = [];
       if (this._outboundMessages.length) setImmediate(this._flushMessageQueue);
@@ -103,7 +139,7 @@ class Bridge {
       });
       for (let name in message) if (message.hasOwnProperty(name)) deferred[name] = message[name];
     }
-    if (!this._outboundMessages.length && this._active) setImmediate(this._flushMessageQueue);
+    if (!this._outboundMessages.length && !this._suspended) setImmediate(this._flushMessageQueue);
     this._outboundMessages.push(message);
     return promise;
   }
@@ -114,10 +150,10 @@ class Bridge {
   }
 
   _receive(event) {
-    if (this._active) {
-      this._receiveMessages(event.data);
-    } else {
+    if (this._suspended) {
       this._inboundMessages = this._inboundMessages.concat(event.data);
+    } else {
+      this._receiveMessages(event.data);
     }
   }
 
@@ -153,7 +189,7 @@ class Bridge {
   }
 
   _hydrateError(json, props) {
-    const error = this._errorFromJson(json);
+    const error = errorFromJson(json);
     const code = json.code || json.message;
     if (code && code.toLowerCase() === 'permission_denied') {
       return this._simulateCall(props).then(securityTrace => {
@@ -230,10 +266,8 @@ class Bridge {
 
   trackServer(rootUrl) {
     if (this._servers.hasOwnProperty(rootUrl)) return;
-    const server = this._servers[rootUrl] = {offset: 0, authListeners: []};
+    const server = this._servers[rootUrl] = {authListeners: []};
     const authCallbackId = this._registerCallback(this._authCallback.bind(this, server));
-    const offsetUrl = `${rootUrl}/.info/serverTimeOffset`;
-    this.on(offsetUrl, offsetUrl, [], 'value', offset => {server.offset = offset.val();});
     this._send({msg: 'onAuth', url: rootUrl, callbackId: authCallbackId});
   }
 
@@ -297,26 +331,14 @@ class Bridge {
     const idsToDeregister = [];
     let callbackId;
     if (snapshotCallback) {
-      if (snapshotCallback.__callbackIds) {
-        let i = 0;
-        while (i < snapshotCallback.__callbackIds.length) {
-          const id = snapshotCallback.__callbackIds[i];
-          const handle = this._callbacks[id];
-          if (!handle) {
-            snapshotCallback.__callbackIds.splice(i, 1);
-            continue;
-          }
-          if (handle.listenerKey === listenerKey && handle.eventType === eventType &&
-              handle.context === context) {
-            callbackId = id;
-            idsToDeregister.push(id);
-            snapshotCallback.__callbackIds.splice(i, 1);
-            break;
-          }
-          i += 1;
-        }
-      }
-      if (!callbackId) return;  // no-op, callback never registered or already deregistered
+      callbackId = this._findAndRemoveCallbackId(
+        snapshotCallback,
+        handle =>
+          handle.listenerKey === listenerKey && handle.eventType === eventType &&
+          handle.context === context
+      );
+      if (!callbackId) return Promise.resolve();  // no-op, never registered or already deregistered
+      idsToDeregister.push(callbackId);
     } else {
       for (let id of Object.keys(this._callbacks)) {
         const handle = this._callbacks[id];
@@ -366,7 +388,7 @@ class Bridge {
       } catch (e) {
         return Promise.reject(e);
       }
-      if (newValue === Firebase.ABORT_TRANSACTION_NOW ||
+      if (newValue === ABORT_TRANSACTION_NOW ||
           newValue === undefined && !options.safeAbort) {
         return {committed: false, snapshot: new Snapshot({url, value: oldValue})};
       }
@@ -380,6 +402,27 @@ class Bridge {
     };
 
     return attemptTransaction(null, null);
+  }
+
+  onRawData(url, callback, context) {
+    const handle = {url, bareCallback: callback, context};
+    this._registerCallback(callback.bind(context), handle);
+    callback.__callbackIds = callback.__callbackIds || [];
+    callback.__callbackIds.push(handle.id);
+    return this._send({msg: 'onRawData', url, callbackId: handle.id}).catch(error => {
+      this._deregisterCallback(handle.id);
+      return Promise.reject(error);
+    });
+  }
+
+  offRawData(url, callback, context) {
+    const callbackId = this._findAndRemoveCallbackId(
+      callback, handle => handle.bareCallback === callback && handle.context === context);
+    if (!callbackId) return Promise.resolve();
+    this._nullifyCallback(callbackId);
+    return this._send({msg: 'offRawData', url, callbackId}).then(() => {
+      this._deregisterCallback(callbackId);
+    });
   }
 
   onDisconnect(url, method, value) {
@@ -414,6 +457,24 @@ class Bridge {
 
   _deregisterCallback(id) {
     delete this._callbacks[id];
+  }
+
+  _findAndRemoveCallbackId(callback, predicate) {
+    if (!callback.__callbackIds) return;
+    let i = 0;
+    while (i < callback.__callbackIds.length) {
+      const id = callback.__callbackIds[i];
+      const handle = this._callbacks[id];
+      if (!handle) {
+        callback.__callbackIds.splice(i, 1);
+        continue;
+      }
+      if (predicate(handle)) {
+        callback.__callbackIds.splice(i, 1);
+        return id;
+      }
+      i += 1;
+    }
   }
 
   onError(callback) {
@@ -466,21 +527,6 @@ class Bridge {
     return promise;
   }
 
-  _errorFromJson(json) {
-    if (!json || json instanceof Error) return json;
-    const error = new Error(json.message);
-    for (let propertyName in json) {
-      if (propertyName === 'message' || !json.hasOwnProperty(propertyName)) continue;
-      try {
-        error[propertyName] = json[propertyName];
-      } catch (e) {
-        e.extra = {propertyName};
-        throw e;
-      }
-    }
-    return error;
-  }
-
   _emitError(error) {
     if (this._errorCallbacks.length) {
       setTimeout(() => {
@@ -494,5 +540,22 @@ class Bridge {
 
 function noop() {}
 
-export default Bridge;
+function errorFromJson(json) {
+  if (!json || json instanceof Error) return json;
+  const error = new Error(json.message);
+  for (let propertyName in json) {
+    if (propertyName === 'message' || !json.hasOwnProperty(propertyName)) continue;
+    try {
+      error[propertyName] = json[propertyName];
+    } catch (e) {
+      e.extra = {propertyName};
+      throw e;
+    }
+  }
+  return error;
+}
 
+function getUrlRoot(url) {
+  const k = url.indexOf('/', 8);
+  return k >= 8 ? url.slice(0, k) : url;
+}

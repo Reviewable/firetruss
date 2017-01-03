@@ -1,14 +1,14 @@
 'use strict';
 
-import {unescapeKey} from './utils.js';
+import {escapeKey, unescapeKey} from './utils.js';
 
 import _ from 'lodash';
 
 
-class Query {
+export class Query {
   constructor(truss, path, terms) {
     this._truss = truss;
-    this._path = path.replace(/^\/?/, '/').replace(/\/$/, '');
+    this._path = path.replace(/^\/*/, '/').replace(/\/$/, '');
     this._terms = terms;
   }
 
@@ -28,24 +28,32 @@ class Query {
     return trackSlowness(worker.once(this._url, this._terms, 'value'), 'read');
   }
 
-  connect() {}  // TODO: implement
-  disconnect() {}  // TODO: implement
-
   toString() {
-    let result = this._path;
-    if (this._terms) {
-      const queryTerms = this._terms.map(term => {
-        let queryTerm = term[0];
-        if (term.length > 1) {
-          queryTerm +=
-            '=' + encodeURIComponent(term.slice(1).map(x => JSON.stringify(x)).join(','));
-        }
-        return queryTerm;
-      });
-      queryTerms.sort();
-      result += '?' + queryTerms.join('&');
+    if (!this._string) {
+      this._string = this._path;
+      if (this._terms) {
+        const queryTerms = this._terms.map(term => {
+          let queryTerm = term[0];
+          if (term.length > 1) {
+            queryTerm +=
+              '=' + encodeURIComponent(term.slice(1).map(x => JSON.stringify(x)).join(','));
+          }
+          return queryTerm;
+        });
+        queryTerms.sort();
+        this._string += '?' + queryTerms.join('&');
+      }
     }
-    return result;
+    return this._string;
+  }
+
+  isEqual(that) {
+    if (!(that instanceof Query)) return false;
+    return this._truss === that._truss && this.toString() === that.toString();
+  }
+
+  belongsTo(truss) {
+    return this._truss === truss;
   }
 
   orderByChild(ref) {
@@ -76,15 +84,39 @@ class Query {
 
 
 // jshint latedef:false
-class Reference extends Query {
+export class Reference extends Query {
 // jshint latedef:nofunc
 
   constructor(truss, path) {
     super(truss, path);
   }
 
-  child() {}  // TODO: implement
-  children() {}  // TODO: implement
+  child() {
+    if (!arguments.length) return this;
+    return new Reference(
+      this._truss, `${this._path}/${_.map(arguments, key => escapeKey(key)).join('/')}`);
+  }
+
+  children() {
+    if (!arguments.length) return this;
+    const escapedKeys = [];
+    _.each(arguments, (arg, i) => {
+      if (_.isArray(arg)) {
+        const mapping = {};
+        const subPath = `${this._path}/${escapedKeys.join('/')}`;
+        const rest = _.slice(arguments, i + 1);
+        _.each(arg, key => {
+          const subRef = new Reference(this._truss, `${subPath}/${escapeKey(key)}`);
+          mapping[key] = subRef.children.apply(subRef, rest);
+        });
+        return mapping;
+      } else {
+        escapedKeys.push(escapeKey(arg));
+      }
+    });
+    return new Reference(this._truss, `${this._path}/${escapedKeys.join('/')}`);
+  }
+
   set(value) {}  // TODO: implement
   update(values) {}  // TODO: implement
 

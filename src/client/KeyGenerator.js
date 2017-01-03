@@ -2,7 +2,7 @@
 
 const ALPHABET = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz';
 
-class KeyGenerator {
+export default class KeyGenerator {
   constructor() {
     this._lastUniqueKeyTime = 0;
     this._lastRandomValues = [];
@@ -39,5 +39,3 @@ class KeyGenerator {
     return chars.join('');
   }
 }
-
-export default KeyGenerator;

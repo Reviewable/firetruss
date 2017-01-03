@@ -80,6 +80,56 @@ class LocalStorage {
 self.localStorage = new LocalStorage();
 
 
+class Registry {
+  constructor() {
+    this._roots = [];
+    this._rootsByKey = {};
+    Firebase.enableLogging(this._handleLog.bind(this));
+  }
+
+  _makeKey(url, context) {
+    return getUrlRoot(url) + (context ? '/' + context : '');
+  }
+
+  register(url, context) {
+    const key = this._makeKey(url, context);
+    if (this._rootsByKey[key]) return;
+    const root = {key, index: this._roots.length, url, context, listeners: []};
+    this._rootsByKey[key] = root;
+    this._roots.push(root);
+  }
+
+  on(url, context, callback) {
+    const key = this._makeKey(url, context);
+    let root = this._rootsByKey[key];
+    if (!root) {
+      createRef(url, undefined, context);
+      root = this._rootsByKey[key];
+    }
+    root.listeners.push(callback);
+  }
+
+  off(url, context, callback) {
+    const key = this._makeKey(url, context);
+    const root = this._rootsByKey[key];
+    if (!root) return;
+    const k = root.listeners.indexOf(callback);
+    if (k >= 0) root.listeners.splice(k, 1);
+  }
+
+  _handleLog(message) {
+    if (!message) return;
+    const match = message.match(/p:(\d+): handleServerMessage [dm]/);
+    if (!match) return;
+    const root = this._roots[parseInt(match[1], 10)];
+    if (!root || !root.listeners.length) return;
+    for (let callback of root.listeners) callback(message);
+  }
+}
+
+const registry = new Registry();
+
+
 class Fireworker {
   constructor(port) {
     this.ping();
@@ -92,7 +142,7 @@ class Fireworker {
 
   init({storage, url}) {
     if (storage) self.localStorage.init(storage);
-    if (url) new Firebase(url);
+    if (url) createRef(url);
     return {
       exposedFunctionNames: Object.keys(Fireworker._exposed),
       firebaseSdkVersion: Firebase.SDK_VERSION
@@ -167,14 +217,6 @@ class Fireworker {
     return createRef(url).authWithCustomToken(authToken, options);
   }
 
-  authAnonymously({url, options}) {
-    return createRef(url).authAnonymously(options);
-  }
-
-  authWithOAuthToken({url, provider, credentials, options}) {
-    return createRef(url).authWithOAuthToken(provider, credentials, options);
-  }
-
   unauth({url}) {
     return createRef(url).unauth();
   }
@@ -219,7 +261,7 @@ class Fireworker {
     snapshotCallback.cancel = this.off.bind(this, {listenerKey, url, terms, eventType, callbackId});
     const cancelCallback = this._onCancelCallback.bind(this, callbackId);
     createRef(url, terms).on(eventType, snapshotCallback, cancelCallback);
-    options.skipCurrent = false;
+    if (options.sync) options.omitValue = true;
   }
 
   off({listenerKey, url, terms, eventType, callbackId}) {
@@ -242,10 +284,11 @@ class Fireworker {
   }
 
   _onSnapshotCallback(callbackId, options, snapshot) {
-    if (options.skipCurrent || options.skipCallback) return;
+    if (options.skip) return;
     this._send({
       msg: 'callback', id: callbackId, args: [null, snapshotToJson(snapshot, options)]
     });
+    if (options.sync) options.skip = true;
   }
 
   _onCancelCallback(callbackId, error) {
@@ -289,6 +332,23 @@ class Fireworker {
   onDisconnect({url, method, value}) {
     const onDisconnect = createRef(url).onDisconnect();
     return onDisconnect[method].call(onDisconnect, value);
+  }
+
+  onRawData({url, context, callbackId}) {
+    const callback = this._callbacks[callbackId] = this._onRawDataCallback.bind(this, callbackId);
+    registry.on(url, context, callback);
+  }
+
+  offRawData({url, context, callbackId}) {
+    const callback = this._callbacks[callbackId];
+    if (callback) {
+      registry.off(url, context, callback);
+      delete this._callbacks[callbackId];
+    }
+  }
+
+  _onRawDataCallback(callbackId, data) {
+    this._send({msg: 'callback', id: callbackId, args: [data]});
   }
 
   simulate({token, method, url, args}) {
@@ -375,33 +435,21 @@ function errorToJson(error) {
 }
 
 function snapshotToJson(snapshot, options) {
-  const url = snapshot.ref().toString();
+  const path =
+    decodeURIComponent(snapshot.ref().toString().replace(/.*?:\/\/[^/]*/, '').replace(/\/$/, ''));
   if (options && options.omitValue) {
-    return {url, exists: snapshot.exists(), hasChildren: snapshot.hasChildren()};
+    return {path, exists: snapshot.exists()};
   } else {
     try {
-      const value = snapshot.val();
-      let childrenKeys;
-      if (options && options.orderChildren && typeof value === 'object') {
-        for (let key in value) {
-          if (!value.hasOwnProperty(key)) continue;
-          // Non-enumerable properties won't be transmitted when sending.
-          Object.defineProperty(value[key], '$key', {value: key});
-        }
-        childrenKeys = [];
-        snapshot.forEach(child => {childrenKeys.push(child.$key);});
-      }
-      return {url, value, childrenKeys};
+      return {path, value: snapshot.val()};
     } catch (e) {
-      return {
-        url, exists: snapshot.exists(), hasChildren: snapshot.hasChildren(),
-        valueError: errorToJson(e)
-      };
+      return {path, exists: snapshot.exists(), valueError: errorToJson(e)};
     }
   }
 }
 
 function createRef(url, terms, context) {
+  registry.register(url, context);
   try {
     let ref = new Firebase(url, context);
     if (terms) {
@@ -451,6 +499,11 @@ function _hashJson(json, sha1) {
     default:
       throw new Error(`Unable to hash non-JSON data of type ${type}: ${json}`);
   }
+}
+
+function getUrlRoot(url) {
+  const k = url.indexOf('/', 8);
+  return k >= 8 ? url.slice(0, k) : url;
 }
 
 function acceptConnections() {

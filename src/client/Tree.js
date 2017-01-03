@@ -1,49 +1,19 @@
-'use strict';
-
-import Reference from './Reference.js';
-import {unescapeKey} from './utils.js';
+import Couplings from './Couplings.js';
+import Mountings from './Mountings.js';
+import {escapeKey, unescapeKey} from './utils.js';
 
 import _ from 'lodash';
-import performanceNow from 'performance-now';
 import Vue from 'vue';
 
-// These are defined separately for each object so they're not included in Value below.
-const RESERVED_VALUE_PROPERTY_NAMES = {$truss: true, $parent: true, $key: true, $path: true};
-
-const computedPropertyStats = {};
-
-
-class Value {
-  get $ref() {return new Reference(this.$truss, this.$path);}
-  get $refs() {return [this.$ref];}
-  get $keys() {return _.keys(this);}
-  get $values() {return _.values(this);}
-  get $root() {return this.$truss._vue.$data.$root;}  // access via $data to leave dependency trace
-  $set(value) {return this.$ref.set(value);}
-  $update(values) {return this.$ref.update(values);}
-  $commit(options, updateFn) {return this.$ref.commit(options, updateFn);}
-  // TODO
-  // $temporarilyOverride(updateFn)
-  // $onPropertyChange(method)
-  // $freezeProperty
-}
-
-
-class ComputedPropertyStats {
-  constructor(name) {
-    _.extend(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
-  }
-}
-
-
-class Tree {
-  constructor(truss, classes) {
+export default class Tree {
+  constructor(truss, rootUrl, bridge, classes) {
     this._truss = truss;
+    this._bridge = bridge;
     this._firebasePropertyEditAllowed = false;
-    this._vue = new Vue({data: {$root: null}});
-    this._mounts = _(classes).map(Class => this._mountClass(Class)).flatten().value();
+    this._couplings = new Couplings(rootUrl, bridge, this._integrateSnapshot.bind(this));
+    this._vue = new Vue({data: {$root: undefined}});
+    this._mountings = new Mountings(classes);
     this._vue.$data.$root = this._createObject('/', '');
-    // console.log(this._vue.$data.$root);
     this._completeCreateObject(this.root);
     this._plantPlaceholders(this.root, '/');
   }
@@ -53,73 +23,17 @@ class Tree {
   }
 
   destroy() {
+    this._couplings.destroy();
     this._vue.$destroy();
   }
 
-  _augmentClass(Class) {
-    let computedProperties;
-    let proto = Class.prototype;
-    while (proto && proto.constructor !== Object) {
-      for (let name of Object.getOwnPropertyNames(proto)) {
-        const descriptor = Object.getOwnPropertyDescriptor(proto, name);
-        if (name.charAt(0) === '$') {
-          if (_.isEqual(descriptor, Object.getOwnPropertyDescriptor(Value.prototype, name))) {
-            continue;
-          }
-          throw new Error(`Property names starting with "$" are reserved: ${Class.name}.${name}`);
-        }
-        if (descriptor.set) {
-          throw new Error(`Computed properties must not have a setter: ${Class.name}.${name}`);
-        }
-        if (descriptor.get && !(computedProperties && computedProperties[name])) {
-          (computedProperties || (computedProperties = {}))[name] = {
-            name, fullName: `${proto.constructor.name}.${name}`, get: descriptor.get
-          };
-        }
-      }
-      proto = Object.getPrototypeOf(proto);
+  connect(query) {
+    if (!query.belongsTo(this._truss)) {
+      throw new Error('Reference belongs to another Truss instance');
     }
-    for (let name of Object.getOwnPropertyNames(Value.prototype)) {
-      if (name === 'constructor') continue;
-      Object.defineProperty(
-        Class.prototype, name, Object.getOwnPropertyDescriptor(Value.prototype, name));
-    }
-    return computedProperties;
   }
 
-  _mountClass(Class) {
-    if (Class.$$truss) throw new Error(`Class ${Class.name} already mounted`);
-    Class.$$truss = true;
-    const computedProperties = this._augmentClass(Class);
-    let mounts = Class.$trussMount;
-    if (!mounts) throw new Error(`Class ${Class.name} lacks a $trussMount static property`);
-    if (!_.isArray(mounts)) mounts = [mounts];
-    return _.map(mounts, mount => {
-      if (_.isString(mount)) mount = {path: mount};
-      const variables = [];
-      const pathTemplate = mount.path.replace(/\/\$[^\/]+/g, match => {
-        variables.push(match.slice(1));
-        return '\u0001';
-      }).replace(/[$-.?[-^{|}]/g, '\\$&');
-      for (let variable of variables) {
-        if (variable === '$' || variable.charAt(1) === '$') {
-          throw new Error(`Invalid variable name: ${variable}`);
-        }
-        if (variable.charAt(0) === '$' && (
-            _.has(Value.prototype, variable) || RESERVED_VALUE_PROPERTY_NAMES[variable]
-        )) {
-          throw new Error(`Variable name conflicts with built-in property or method: ${variable}`);
-        }
-      }
-      return {
-        klass: Class, variables, computedProperties,
-        escapedKey: mount.path.match(/\/([^/]*)$/)[1],
-        placeholder: mount.placeholder,
-        regex: new RegExp('^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + '$'),
-        parentRegex: new RegExp(
-          '^' + (pathTemplate.replace(/\/[^/]*$/, '').replace(/\u0001/g, '/([^/]+)') || '/') + '$')
-      };
-    });
+  disconnect(query) {
   }
 
   /**
@@ -138,101 +52,10 @@ class Tree {
       $path: {value: path, writable: false, configurable: false, enumerable: false}
     };
 
-    let Class = Value;
-    let computedProperties;
-    for (let mount of this._mounts) {
-      mount.regex.lastIndex = 0;
-      var match = mount.regex.exec(path);
-      if (match) {
-        Class = mount.klass;
-        computedProperties = mount.computedProperties;
-        for (let i = 0; i < mount.variables.length; i++) {
-          properties[mount.variables[i]] = {
-            value: unescapeKey(match[i + 1]),
-            writable: false, configurable: false, enumerable: false
-          };
-        }
-        break;
-      }
-    }
-
-    const object = new Class();
-
-    if (computedProperties) {
-      const touchThis = parent ? () => parent[key] : () => this._vue.$data.$root;
-      _.each(computedProperties, prop => {
-        properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop, touchThis);
-      });
-    }
-
+    const touchThis = parent ? () => parent[key] : () => this._vue.$data.$root;
+    const object = this._mountings.createObject(path, properties, touchThis);
     Object.defineProperties(object, properties);
     return object;
-  }
-
-  _buildComputedPropertyDescriptor(object, prop, touchThis) {
-    if (!computedPropertyStats[prop.fullName]) {
-      Object.defineProperty(computedPropertyStats, prop.fullName, {
-        value: new ComputedPropertyStats(prop.fullName), writable: false, enumerable: true,
-        configurable: false
-      });
-    }
-    const stats = computedPropertyStats[prop.fullName];
-
-    function computeValue() {
-      // Touch this object, since a failed access to a missing property doesn't get captured as a
-      // dependency.
-      touchThis();
-
-      const startTime = performanceNow();
-      // jshint validthis: true
-      const result = prop.get.call(this);
-      // jshint validthis: false
-      stats.runtime += performanceNow() - startTime;
-      stats.numRecomputes += 1;
-      return result;
-    }
-
-    let value;
-    let writeAllowed = false;
-    let firstCallback = true;
-
-    if (!object.__destructors__) {
-      Object.defineProperty(object, '__destructors__', {
-        value: [], writable: false, enumerable: false, configurable: false});
-    }
-    if (!object.__initializers__) {
-      Object.defineProperty(object, '__initializers__', {
-        value: [], writable: false, enumerable: false, configurable: false});
-    }
-    object.__initializers__.push(() => {
-      object.__destructors__.push(
-        this._vue.$watch(computeValue.bind(object), newValue => {
-          if (firstCallback) {
-            stats.numUpdates += 1;
-            value = newValue;
-            firstCallback = false;
-          } else {
-            if (_.isEqual(value, newValue, this._isTrussEqual, this)) return;
-            stats.numUpdates += 1;
-            writeAllowed = true;
-            object[prop.name] = newValue;
-            writeAllowed = false;
-          }
-        }, {immediate: true})  // use immediate:true since watcher will run computeValue anyway
-      );
-    });
-    return {
-      enumerable: true, configurable: true,
-      get: function() {return value;},
-      set: function(newValue) {
-        if (!writeAllowed) throw new Error(`You cannot set a computed property: ${prop.name}`);
-        value = newValue;
-      }
-    };
-  }
-
-  _isTrussEqual(a, b) {
-    if (a && a.$truss || b && b.$truss) return a === b;
   }
 
   // To be called on the result of _createObject after it's been inserted into the _vue hierarchy
@@ -250,53 +73,155 @@ class Tree {
       }
     }
     if (object.__initializers__) {
-      for (let fn of object.__initializers__) fn();
+      for (let fn of object.__initializers__) fn(this._vue);
     }
   }
 
   _destroyObject(object) {
+    if (!(object && object.$$truss)) return;
     if (object.__destructors__) {
       for (let fn of object.__destructors__) fn();
     }
     for (let key in object) {
       if (!Object.hasOwnProperty(object, key)) continue;
-      const value = object[key];
-      if (value && value.$truss) this._destroyObject(value);
+      this._destroyObject(object[key]);
     }
   }
 
-  _plantSnapshotValue(snap, parent) {
-    return this._plantValue(
-      pathFromUrl(snap.ref().toString()), unescapeKey(snap.key()), snap.val(), parent);
+  _integrateSnapshot(snap) {
+    if (snap.exists) {
+      this._plantValue(snap.path, snap.key, snap.value, this._scaffoldAncestors(snap.path));
+    } else {
+      this._harvestValue(snap.path);
+    }
+  }
+
+  _scaffoldAncestors(path) {
+    let object;
+    const segments = _(path).split('/').dropRight().value();
+    _.each(segments, (segment, i) => {
+      const childKey = unescapeKey(segment);
+      let child = childKey ? object[childKey] : this.root;
+      if (!child) {
+        child = this._plantValue(segments.slice(0, i + 1).join('/'), childKey, {}, object);
+      }
+      object = child;
+    });
+    return object;
   }
 
   _plantValue(path, key, value, parent) {
+    if (value === null || value === undefined) {
+      throw new Error('Snapshot includes invalid value: ' + value);
+    }
     if (!_.isArray(value) && !_.isObject(value)) {
       this._setFirebaseProperty(parent, key, value);
       return;
     }
-    const object = this._createObject(path, key, parent);
-    this._setFirebaseProperty(parent, key, object);
-    this._completeCreateObject(object);
+    let object = parent[key];
+    if (object === undefined) {
+      object = this._createObject(path, key, parent);
+      this._setFirebaseProperty(parent, key, object);
+      this._completeCreateObject(object);
+    }
     _.each(value, (item, escapedChildKey) => {
-      if (item === null || item === undefined) return;
-      this._plantValue(
-        `${joinPath(path, escapedChildKey)}`, unescapeKey(escapedChildKey), item, object);
+      this._plantValue(joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object);
+    });
+    _.each(object, (item, childKey) => {
+      const escapedChildKey = escapeKey(childKey);
+      if (!value.hasOwnProperty(escapedChildKey)) {
+        this._harvestValue(joinPath(path, escapedChildKey));
+      }
     });
     this._plantPlaceholders(object, path);
     return object;
   }
 
   _plantPlaceholders(object, path) {
-    _.each(this._mounts, mount => {
-      const key = unescapeKey(mount.escapedKey);
-      if (!object.hasOwnProperty(key) && mount.placeholder && mount.parentRegex.test(path)) {
-        this._plantValue(`${joinPath(path, mount.escapedKey)}`, key, mount.placeholder, object);
+    this._mountings.forEachPlaceholderChild(path, (escapedKey, placeholder) => {
+      const key = unescapeKey(escapedKey);
+      if (!object.hasOwnProperty(key)) {
+        this._plantValue(joinPath(path, escapedKey), key, placeholder, object);
       }
     });
   }
 
   _setFirebaseProperty(object, key, value) {
+    let descriptor = this._getFirebasePropertyDescriptor(object, key);
+    if (descriptor) {
+      this._firebasePropertyEditAllowed = true;
+      object[key] = value;
+      this._firebasePropertyEditAllowed = false;
+    } else {
+      Vue.set(object, key, value);
+      descriptor = Object.getOwnPropertyDescriptor(object, key);
+      Object.defineProperty(object, key, {
+        get: descriptor.get,
+        set: function(newValue) {
+          if (!this._firebasePropertyEditAllowed) {
+            throw new Error(`Firebase data cannot be mutated directly: ${key}`);
+          }
+          descriptor.set.call(this, newValue);
+        },
+        configurable: true, enumerable: true
+      });
+    }
+  }
+
+  _harvestValue(path) {
+    let object;
+    const segments = path.split('/');
+    const key = unescapeKey(segments.pop());
+    _.each(segments, segment => {
+      const childKey = unescapeKey(segment);
+      object = childKey ? object[childKey] : this.root;
+      if (!object) return false;
+    });
+    if (!object) return;
+    this._deleteFirebaseProperty(object, key);
+  }
+
+  _deleteFirebaseProperty(object, key) {
+    // Destroy the child (unless it's a placeholder that's still needed) and any ancestors that
+    // are no longer needed to keep this child rooted, and have no other reason to exist.
+    let descriptor = this._getFirebasePropertyDescriptor(object, key);
+    if (!descriptor) return;
+    object = object[key];
+    let deleted = false;
+    while (!this._isNeeded(object)) {
+      deleted = true;
+      this._destroyObject(object);
+      Vue.delete(object.$parent, object.$key);
+      object = object.$parent;
+    }
+    if (!deleted) this._deleteNonPlaceholderDescendants(object);
+  }
+
+  _isNeeded(object) {
+    if (!object.$$truss) return false;
+    return (
+      object === this.root ||
+      this._mountings.isPlaceholder(object.$path) ||
+      !_(object).keys().every(key =>
+        this._mountings.isPlaceholder(joinPath(object.$path, escapeKey(key)))
+      )
+    );
+  }
+
+  _deleteNonPlaceholderDescendants(object) {
+    // The target object is a placeholder, and all ancestors are placeholders as well, so we can't
+    // delete it.  Instead, dive into its descendants to delete what we can there.
+    _.each(object, value => {
+      if (value.$$truss && this._mountings.isPlaceholder(value.$path)) {
+        this._deleteNonPlaceholderDescendants(value);
+      } else {
+        this._destroyObject(value);
+        Vue.delete(object.$parent, object.$key);
+      }
+    });
+  }
+
+  _getFirebasePropertyDescriptor(object, key) {
     let descriptor = Object.getOwnPropertyDescriptor(object, key);
     if (descriptor) {
       if (!descriptor.enumerable) {
@@ -308,36 +233,11 @@ class Tree {
         throw new Error(`Unbound property at ${object.$path}: ${key}`);
       }
     }
-    if (value === null || value === undefined) {
-      if (descriptor) {
-        const oldValue = object[key];
-        if (oldValue && oldValue.$truss) this._deleteObject(oldValue);
-        Vue.delete(object, key);
-      }
-    } else {
-      if (descriptor) {
-        this._firebasePropertyEditAllowed = true;
-        object[key] = value;
-        this._firebasePropertyEditAllowed = false;
-      } else {
-        Vue.set(object, key, value);
-        descriptor = Object.getOwnPropertyDescriptor(object, key);
-        Object.defineProperty(object, key, {
-          get: descriptor.get,
-          set: function(newValue) {
-            if (!this._firebasePropertyEditAllowed) {
-              throw new Error(`Firebase data cannot be mutated directly: ${key}`);
-            }
-            descriptor.set.call(this, newValue);
-          },
-          configurable: true, enumerable: true
-        });
-      }
-    }
+    return descriptor;
   }
 
   static get computedPropertyStats() {
-    return computedPropertyStats;
+    return Mountings.computedPropertyStats;
   }
 }
 
@@ -354,4 +254,3 @@ function joinPath() {
   return segments.join('/');
 }
 
-export default Tree;

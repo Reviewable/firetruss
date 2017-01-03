@@ -31,7 +31,8 @@
     "grunt-contrib-uglify": "^2.0.0",
     "grunt-git": "^1.0.1",
     "grunt-release": "^0.14.0",
-    "load-grunt-tasks": "^3.5.2"
+    "load-grunt-tasks": "^3.5.2",
+    "testdouble": "^1.10.2"
   },
   "ava": {
     "files": [
@@ -39,6 +40,14 @@
     ],
     "source": [
       "src/**/*.js"
+    ],
+    "require": [
+      "babel-register"
+    ]
+  },
+  "babel": {
+    "presets": [
+      "es2015"
     ]
   },
   "dependencies": {

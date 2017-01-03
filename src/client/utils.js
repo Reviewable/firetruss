@@ -13,3 +13,6 @@ export function unescapeKey(key) {
     return String.fromCharCode(parseInt(code.slice(1), 16));
   });
 }
+
+export const TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
+export const ABORT_TRANSACTION_NOW = Object.freeze(Object.create(null));
