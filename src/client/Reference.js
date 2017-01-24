@@ -9,7 +9,7 @@ export class Query {
   constructor(truss, path, terms) {
     this._truss = truss;
     this._path = path.replace(/^\/*/, '/').replace(/\/$/, '');
-    this._terms = terms;
+    this._terms = terms;  // warning: accessed directly by Coupler
   }
 
   get key() {

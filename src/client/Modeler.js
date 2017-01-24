@@ -11,7 +11,9 @@ const computedPropertyStats = {};
 
 
 class Value {
-  get $ref() {return new Reference(this.$truss, this.$path);}
+  get $ref() {
+    Object.defineProperty(this, '$ref', {value: new Reference(this.$truss, this.$path)});
+  }
   get $refs() {return [this.$ref];}
   get $keys() {return _.keys(this);}
   get $values() {return _.values(this);}
@@ -32,9 +34,9 @@ class ComputedPropertyStats {
 }
 
 
-export default class Mountings {
+export default class Modeler {
   constructor(classes) {
-    this._mounts = _(classes).map(Class => this._mountClass(Class)).flatten().value();
+    this._mounts = _(classes).uniq().map(Class => this._mountClass(Class)).flatten().value();
     const patterns = _.map(this._mounts, mount => mount.regex.toString());
     if (patterns.length !== _.uniq(patterns).length) {
       const badPaths = _(patterns)
@@ -45,6 +47,9 @@ export default class Mountings {
         .value();
       throw new Error('Paths have multiple mounted classes: ' + badPaths.join(', '));
     }
+  }
+
+  destroy() {
   }
 
   _augmentClass(Class) {
@@ -71,7 +76,7 @@ export default class Mountings {
       proto = Object.getPrototypeOf(proto);
     }
     for (let name of Object.getOwnPropertyNames(Value.prototype)) {
-      if (name === 'constructor') continue;
+      if (name === 'constructor' || Class.prototype.hasOwnProperty(name)) continue;
       Object.defineProperty(
         Class.prototype, name, Object.getOwnPropertyDescriptor(Value.prototype, name));
     }
@@ -79,8 +84,6 @@ export default class Mountings {
   }
 
   _mountClass(Class) {
-    if (Class.$$truss) throw new Error(`Class ${Class.name} already mounted`);
-    Class.$$truss = true;
     const computedProperties = this._augmentClass(Class);
     let mounts = Class.$trussMount;
     if (!mounts) throw new Error(`Class ${Class.name} lacks a $trussMount static property`);

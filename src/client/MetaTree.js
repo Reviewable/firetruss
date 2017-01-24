@@ -1,3 +1,4 @@
+import angularCompatibility from './angularCompatibility.js';
 import Vue from 'vue';
 
 export default class MetaTree {
@@ -14,6 +15,10 @@ export default class MetaTree {
         }, intervalMillis);
       }
     }}});
+
+    if (angularCompatibility.active) {
+      this._vue.$watch('$data', angularCompatibility.digest, {deep: true});
+    }
 
     bridge.trackAuth(rootUrl);
     bridge.onAuth(rootUrl, this._handleAuthChange, this);

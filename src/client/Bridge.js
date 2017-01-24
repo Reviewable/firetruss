@@ -404,27 +404,6 @@ export default class Bridge {
     return attemptTransaction(null, null);
   }
 
-  onRawData(url, callback, context) {
-    const handle = {url, bareCallback: callback, context};
-    this._registerCallback(callback.bind(context), handle);
-    callback.__callbackIds = callback.__callbackIds || [];
-    callback.__callbackIds.push(handle.id);
-    return this._send({msg: 'onRawData', url, callbackId: handle.id}).catch(error => {
-      this._deregisterCallback(handle.id);
-      return Promise.reject(error);
-    });
-  }
-
-  offRawData(url, callback, context) {
-    const callbackId = this._findAndRemoveCallbackId(
-      callback, handle => handle.bareCallback === callback && handle.context === context);
-    if (!callbackId) return Promise.resolve();
-    this._nullifyCallback(callbackId);
-    return this._send({msg: 'offRawData', url, callbackId}).then(() => {
-      this._deregisterCallback(callbackId);
-    });
-  }
-
   onDisconnect(url, method, value) {
     return this._send({msg: 'onDisconnect', url, method, value});
   }

@@ -1,5 +1,6 @@
-import Couplings from './Couplings.js';
-import Mountings from './Mountings.js';
+import angularCompatibility from './angularCompatibility.js';
+import Coupler from './Coupler.js';
+import Modeler from './Modeler.js';
 import {escapeKey, unescapeKey} from './utils.js';
 
 import _ from 'lodash';
@@ -10,9 +11,13 @@ export default class Tree {
     this._truss = truss;
     this._bridge = bridge;
     this._firebasePropertyEditAllowed = false;
-    this._couplings = new Couplings(rootUrl, bridge, this._integrateSnapshot.bind(this));
+    this._coupler = new Coupler(
+      rootUrl, bridge, this._integrateSnapshot.bind(this), this._prune.bind(this));
     this._vue = new Vue({data: {$root: undefined}});
-    this._mountings = new Mountings(classes);
+    if (angularCompatibility.active) {
+      this._vue.$watch('$data', angularCompatibility.digest, {deep: true});
+    }
+    this._modeler = new Modeler(classes);
     this._vue.$data.$root = this._createObject('/', '');
     this._completeCreateObject(this.root);
     this._plantPlaceholders(this.root, '/');
@@ -23,17 +28,48 @@ export default class Tree {
   }
 
   destroy() {
-    this._couplings.destroy();
+    this._coupler.destroy();
+    this._modeler.destroy();
     this._vue.$destroy();
   }
 
-  connect(query) {
+  connectReference(ref, valueCallback) {
+    this._checkQuery(ref);
+    this._coupler.couple(ref.path);
+    let unwatch;
+    if (valueCallback) {
+      const segments = _(ref.path).split('/').map(segment => unescapeKey(segment)).value();
+      unwatch = this._vue.$watch(() => {
+        let object;
+        for (let segment of segments) {
+          object = segment ? object[segment] : this.root;
+          if (!object) break;
+        }
+        return object;
+      }, valueCallback);
+    }
+    return this._disconnectReference.bind(this, ref, unwatch);
+  }
+
+  _disconnectReference(ref, unwatch) {
+    if (unwatch) unwatch();
+    this._coupler.decouple(ref.path);  // will call back to _prune if necessary
+  }
+
+  connectQuery(query, keysCallback) {
+    this._checkQuery(query);
+    this._coupler.subscribe(query, keysCallback);
+    return this._disconnectQuery.bind(this, query, keysCallback);
+  }
+
+  _disconnectQuery(query, keysCallback) {
+    this._coupler.unsubscribe(query, keysCallback);  // will call back to _prune if necessary
+  }
+
+  _checkQuery(query) {
     if (!query.belongsTo(this._truss)) {
       throw new Error('Reference belongs to another Truss instance');
     }
-  }
-
-  disconnect(query) {
   }
 
   /**
@@ -46,14 +82,14 @@ export default class Tree {
     if (parent && _.has(parent, key)) throw new Error(`Duplicate object created for ${path}`);
     let properties = {
       $truss: {value: this._truss, writable: false, configurable: false, enumerable: false},
-      // We want Vue to wrap this; we'll hide it in _completeCreateObject.
+      // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
       $parent: {value: parent, writable: false, configurable: true, enumerable: true},
       $key: {value: key, writable: false, configurable: false, enumerable: false},
       $path: {value: path, writable: false, configurable: false, enumerable: false}
     };
 
     const touchThis = parent ? () => parent[key] : () => this._vue.$data.$root;
-    const object = this._mountings.createObject(path, properties, touchThis);
+    const object = this._modeler.createObject(path, properties, touchThis);
     Object.defineProperties(object, properties);
     return object;
   }
@@ -78,7 +114,7 @@ export default class Tree {
   }
 
   _destroyObject(object) {
-    if (!(object && object.$$truss)) return;
+    if (!(object && object.$truss)) return;
     if (object.__destructors__) {
       for (let fn of object.__destructors__) fn();
     }
@@ -92,7 +128,7 @@ export default class Tree {
     if (snap.exists) {
       this._plantValue(snap.path, snap.key, snap.value, this._scaffoldAncestors(snap.path));
     } else {
-      this._harvestValue(snap.path);
+      this._prune(snap.path);
     }
   }
 
@@ -130,7 +166,7 @@ export default class Tree {
     _.each(object, (item, childKey) => {
       const escapedChildKey = escapeKey(childKey);
       if (!value.hasOwnProperty(escapedChildKey)) {
-        this._harvestValue(joinPath(path, escapedChildKey));
+        this._prune(joinPath(path, escapedChildKey));
       }
     });
     this._plantPlaceholders(object, path);
@@ -138,12 +174,95 @@ export default class Tree {
   }
 
   _plantPlaceholders(object, path) {
-    this._mountings.forEachPlaceholderChild(path, (escapedKey, placeholder) => {
+    this._modeler.forEachPlaceholderChild(path, (escapedKey, placeholder) => {
       const key = unescapeKey(escapedKey);
       if (!object.hasOwnProperty(key)) {
         this._plantValue(joinPath(path, escapedKey), key, placeholder, object);
       }
     });
+  }
+
+  _prune(path, coupledDescendantPaths) {
+    const object = this._getObject(path);
+    if (coupledDescendantPaths && coupledDescendantPaths.length || !this._pruneAncestors(object)) {
+      // The target object is a placeholder, and all ancestors are placeholders or otherwise needed
+      // as well, so we can't delete it.  Instead, dive into its descendants to delete what we can.
+      this._pruneDescendants(object, coupledDescendantPaths);
+    }
+  }
+
+  _pruneAncestors(targetObject) {
+    // Destroy the child (unless it's a placeholder that's still needed) and any ancestors that
+    // are no longer needed to keep this child rooted, and have no other reason to exist.
+    let deleted = false;
+    let object = targetObject;
+    while (object && object !== this.root) {
+      if (!this._modeler.isPlaceholder(object.$path)) {
+        const ghostObjects = deleted ? null : [targetObject];
+        if (!this._holdsConcreteData(object, ghostObjects)) {
+          deleted = true;
+          this._deleteFirebaseProperty(object.$parent, object.$key);
+        }
+      }
+      object = object.$parent;
+    }
+    return deleted;
+  }
+
+  _holdsConcreteData(object, ghostObjects) {
+    if (ghostObjects && _.contains(ghostObjects, object)) return false;
+    if (_.some(object, value => !value.$truss)) return true;
+    return _.some(object, value => this._holdsConcreteData(value, ghostObjects));
+  }
+
+  _pruneDescendants(object, coupledDescendantPaths) {
+    if (coupledDescendantPaths[object.$path]) return true;
+    let coupledDescendantFound = false;
+    _.each(object, (value, key) => {
+      let shouldDelete = true;
+      let valueCoupled;
+      if (coupledDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
+        shouldDelete = false;
+        valueCoupled = true;
+      } else if (value.$truss) {
+        if (this._modeler.isPlaceholder(value.$path)) {
+          valueCoupled = this._pruneDescendants(value, coupledDescendantPaths);
+          shouldDelete = false;
+        } else if (_.has(coupledDescendantPaths, value.$path)) {
+          valueCoupled = this._pruneDescendants(value);
+          shouldDelete = !valueCoupled;
+        }
+      }
+      if (shouldDelete) this._deleteFirebaseProperty(object, key);
+      coupledDescendantFound = coupledDescendantFound || valueCoupled;
+    });
+    return coupledDescendantFound;
+  }
+
+  _getObject(path) {
+    let object;
+    const segments = path.split('/');
+    for (let segment of segments) {
+      const key = unescapeKey(segment);
+      object = key ? object[key] : this.root;
+      if (!object) return;
+    }
+    return object;
+  }
+
+  _getFirebasePropertyDescriptor(object, key) {
+    let descriptor = Object.getOwnPropertyDescriptor(object, key);
+    if (descriptor) {
+      if (!descriptor.enumerable) {
+        throw new Error(
+          `Key conflict between Firebase and instance or computed properties at ` +
+          `${object.$path}: ${key}`);
+      }
+      if (!descriptor.get || !descriptor.set) {
+        throw new Error(`Unbound property at ${object.$path}: ${key}`);
+      }
+    }
+    return descriptor;
   }
 
   _setFirebaseProperty(object, key, value) {
@@ -168,76 +287,15 @@ export default class Tree {
     }
   }
 
-  _harvestValue(path) {
-    let object;
-    const segments = path.split('/');
-    const key = unescapeKey(segments.pop());
-    _.each(segments, segment => {
-      const childKey = unescapeKey(segment);
-      object = childKey ? object[childKey] : this.root;
-      if (!object) return false;
-    });
-    if (!object) return;
-    this._deleteFirebaseProperty(object, key);
-  }
-
   _deleteFirebaseProperty(object, key) {
-    // Destroy the child (unless it's a placeholder that's still needed) and any ancestors that
-    // are no longer needed to keep this child rooted, and have no other reason to exist.
-    let descriptor = this._getFirebasePropertyDescriptor(object, key);
-    if (!descriptor) return;
-    object = object[key];
-    let deleted = false;
-    while (!this._isNeeded(object)) {
-      deleted = true;
-      this._destroyObject(object);
-      Vue.delete(object.$parent, object.$key);
-      object = object.$parent;
-    }
-    if (!deleted) this._deleteNonPlaceholderDescendants(object);
-  }
-
-  _isNeeded(object) {
-    if (!object.$$truss) return false;
-    return (
-      object === this.root ||
-      this._mountings.isPlaceholder(object.$path) ||
-      !_(object).keys().every(key =>
-        this._mountings.isPlaceholder(joinPath(object.$path, escapeKey(key)))
-      )
-    );
-  }
-
-  _deleteNonPlaceholderDescendants(object) {
-    // The target object is a placeholder, and all ancestors are placeholders as well, so we can't
-    // delete it.  Instead, dive into its descendants to delete what we can there.
-    _.each(object, value => {
-      if (value.$$truss && this._mountings.isPlaceholder(value.$path)) {
-        this._deleteNonPlaceholderDescendants(value);
-      } else {
-        this._destroyObject(value);
-        Vue.delete(object.$parent, object.$key);
-      }
-    });
-  }
-
-  _getFirebasePropertyDescriptor(object, key) {
-    let descriptor = Object.getOwnPropertyDescriptor(object, key);
-    if (descriptor) {
-      if (!descriptor.enumerable) {
-        throw new Error(
-          `Key conflict between Firebase and instance or computed properties at ` +
-          `${object.$path}: ${key}`);
-      }
-      if (!descriptor.get || !descriptor.set) {
-        throw new Error(`Unbound property at ${object.$path}: ${key}`);
-      }
-    }
-    return descriptor;
+    // Make sure it's actually a Firebase property.
+    this._getFirebasePropertyDescriptor(object, key);
+    this._destroyObject(object[key]);
+    Vue.delete(object, key);
   }
 
   static get computedPropertyStats() {
-    return Mountings.computedPropertyStats;
+    return Modeler.computedPropertyStats;
   }
 }
 

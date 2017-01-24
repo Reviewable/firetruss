@@ -1,4 +1,4 @@
-import {Query} from './Reference.js';
+import {Query, Reference} from './Reference.js';
 import angular from './angularCompatibility.js';
 
 import _ from 'lodash';
@@ -14,6 +14,7 @@ export default class Connector {
     this._tree = tree;
     this._subConnectors = {};
     this._currentDescriptors = {};
+    this._disconnects = {};
     this._vue = new Vue({data: _.mapValues(connections, _.constant(undefined))});
 
     this._linkScopeProperties();
@@ -25,6 +26,8 @@ export default class Connector {
         this._connect(key, descriptor);
       }
     });
+
+    if (angular.active && scope.$on && scope.$$id) scope.$on('$destroy', () => {this.destroy();});
   }
 
   get ready() {
@@ -99,11 +102,16 @@ export default class Connector {
   _connect(key, descriptor) {
     this._currentDescriptors[key] = descriptor;
     if (!descriptor) return;
-    if (descriptor instanceof Query) {
-      this._tree.connect(descriptor);
+    if (descriptor instanceof Reference) {
+      const updateFn = this._scope ? this._updateScopeRef.bind(this, key) : null;
+      this._disconnects[key] = this._tree.connectReference(descriptor, updateFn);
+    } else if (descriptor instanceof Query) {
+      const updateFn = this._scope ? this._updateScopeQuery.bind(this, key) : null;
+      this._disconnects[key] = this._tree.connectQuery(descriptor, updateFn);
     } else {
       const subScope = {};
       if (this._scope) {
+        // TODO: set only after subconnector is ready (initial values filled in)
         Vue.set(this._scope, key, subScope);
         angular.digest();
       }
@@ -119,10 +127,43 @@ export default class Connector {
     if (_.has(this._subConnectors, key)) {
       this._subConnectors[key].destroy();
       delete this._subConnectors[key];
-    } else if (this._currentDescriptors[key]) {
-      this._tree.disconnect(this._currentDescriptors[key]);
     }
+    if (this._disconnects[key]) this._disconnects[key]();
+    delete this._disconnects[key];
     delete this._currentDescriptors[key];
+  }
+
+  _updateScopeRef(key, value) {
+    if (this._scope[key] !== value) {
+      Vue.set(this._scope, key, value);
+      angular.digest();
+    }
+  }
+
+  _updateScopeQuery(key, childKeys) {
+    let changed = false;
+    if (!this._scope[key]) {
+      Vue.set(this._scope, key, {});
+      changed = true;
+    }
+    const subScope = this._scope[key];
+    for (let childKey in subScope) {
+      if (!subScope.hasOwnProperty(childKey)) continue;
+      if (!_.contains(childKeys, childKey)) {
+        Vue.delete(subScope, childKey);
+        changed = true;
+      }
+    }
+    let object;
+    for (let segment of this._currentDescriptors[key].path.split('/')) {
+      object = segment ? object[segment] : this._tree.root;
+    }
+    for (let childKey of childKeys) {
+      if (subScope.hasOwnProperty(childKey)) continue;
+      Vue.set(subScope, childKey, object[childKey]);
+      changed = true;
+    }
+    if (changed) angular.digest();
   }
 
 }

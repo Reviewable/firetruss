@@ -9,7 +9,6 @@
   "maxlen": 100,
   "newcap": true,
   "noarg": true,
-  "node": true,
   "quotmark": "single",
   "trailing": true,
   "undef": true,

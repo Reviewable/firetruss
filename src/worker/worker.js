@@ -1,4 +1,4 @@
-/* globals Firebase, CryptoJS, setImmediate, setInterval, self */
+/* globals Firebase, CryptoJS, setImmediate, setInterval */
 
 const fireworkers = [];
 let simulationQueue = Promise.resolve(), consoleIntercepted = false, simulationConsoleLogs;
@@ -80,54 +80,56 @@ class LocalStorage {
 self.localStorage = new LocalStorage();
 
 
-class Registry {
+class Branch {
   constructor() {
-    this._roots = [];
-    this._rootsByKey = {};
-    Firebase.enableLogging(this._handleLog.bind(this));
+    this._root = null;
   }
 
-  _makeKey(url, context) {
-    return getUrlRoot(url) + (context ? '/' + context : '');
+  set(value) {
+    this._root = value;
   }
 
-  register(url, context) {
-    const key = this._makeKey(url, context);
-    if (this._rootsByKey[key]) return;
-    const root = {key, index: this._roots.length, url, context, listeners: []};
-    this._rootsByKey[key] = root;
-    this._roots.push(root);
-  }
-
-  on(url, context, callback) {
-    const key = this._makeKey(url, context);
-    let root = this._rootsByKey[key];
-    if (!root) {
-      createRef(url, undefined, context);
-      root = this._rootsByKey[key];
+  diff(value, pathPrefix) {
+    const updates = {};
+    const segments = pathPrefix === '/' ? [''] : pathPrefix.split('/');
+    if (this._diffRecursively(this._root, value, segments, updates)) {
+      this._root = value;
+      updates[pathPrefix] = value;
     }
-    root.listeners.push(callback);
+    return updates;
   }
 
-  off(url, context, callback) {
-    const key = this._makeKey(url, context);
-    const root = this._rootsByKey[key];
-    if (!root) return;
-    const k = root.listeners.indexOf(callback);
-    if (k >= 0) root.listeners.splice(k, 1);
-  }
-
-  _handleLog(message) {
-    if (!message) return;
-    const match = message.match(/p:(\d+): handleServerMessage [dm]/);
-    if (!match) return;
-    const root = this._roots[parseInt(match[1], 10)];
-    if (!root || !root.listeners.length) return;
-    for (let callback of root.listeners) callback(message);
+  _diffRecursively(oldValue, newValue, segments, updates) {
+    if (oldValue === undefined) oldValue = null;
+    if (newValue === undefined) newValue = null;
+    if (oldValue === null) return newValue !== null;
+    if (oldValue instanceof Object && newValue instanceof Object) {
+      let replace = true;
+      const keysToReplace = [];
+      for (let childKey in newValue) {
+        if (!newValue.hasOwnProperty(childKey)) continue;
+        if (this._diffRecursively(
+            oldValue[childKey], newValue[childKey], segments.concat(childKey), updates)) {
+          keysToReplace.push(childKey);
+        } else {
+          replace = false;
+        }
+      }
+      if (replace) return true;
+      for (let childKey in oldValue) {
+        if (!oldValue.hasOwnProperty(childKey) || newValue.hasOwnProperty(childKey)) continue;
+        updates[segments.concat(childKey).join('/')] = null;
+        delete oldValue[childKey];
+      }
+      for (let childKey of keysToReplace) {
+        updates[segments.concat(childKey).join('/')] = newValue[childKey];
+        oldValue[childKey] = newValue[childKey];
+      }
+    } else {
+      return newValue !== oldValue;
+    }
   }
 }
-
-const registry = new Registry();
 
 
 class Fireworker {
@@ -245,15 +247,7 @@ class Fireworker {
 
   on({listenerKey, url, terms, eventType, callbackId, options}) {
     options = options || {};
-    options.orderChildren = false;
-    if (terms) {
-      for (let term of terms) {
-        if (term[0] === 'orderByChild' || term[0] === 'orderByValue') {
-          options.orderChildren = true;
-          break;
-        }
-      }
-    }
+    if (options.sync) options.branch = new Branch();
     const snapshotCallback = this._callbacks[callbackId] =
       this._onSnapshotCallback.bind(this, callbackId, options);
     snapshotCallback.listenerKey = listenerKey;
@@ -284,11 +278,35 @@ class Fireworker {
   }
 
   _onSnapshotCallback(callbackId, options, snapshot) {
-    if (options.skip) return;
-    this._send({
-      msg: 'callback', id: callbackId, args: [null, snapshotToJson(snapshot, options)]
-    });
-    if (options.sync) options.skip = true;
+    if (options.sync && options.rest) {
+      const path = decodeURIComponent(
+        snapshot.ref().toString().replace(/.*?:\/\/[^/]*/, '').replace(/\/$/, ''));
+      let value;
+      try {
+        value = normalizeFirebaseValue(snapshot.val());
+      } catch (e) {
+        options.branch.set(null);
+        this._send({
+          msg: 'callback', id: callbackId,
+          args: [null, {path, exists: snapshot.exists(), valueError: errorToJson(e)}]
+        });
+      }
+      const updates = this.options.branch.diff(value, path);
+      for (let childPath in updates) {
+        if (!updates.hasOwnProperty(childPath)) continue;
+        this._send({
+          msg: 'callback', id: callbackId,
+          args: [null, {path: childPath, value: updates[childPath]}]
+        });
+      }
+    } else {
+      const snapshotJson = snapshotToJson(snapshot, options);
+      if (options.sync) options.branch.set(snapshotJson.value);
+      this._send({
+        msg: 'callback', id: callbackId, args: [null, snapshotJson]
+      });
+      options.rest = true;
+    }
   }
 
   _onCancelCallback(callbackId, error) {
@@ -332,23 +350,6 @@ class Fireworker {
   onDisconnect({url, method, value}) {
     const onDisconnect = createRef(url).onDisconnect();
     return onDisconnect[method].call(onDisconnect, value);
-  }
-
-  onRawData({url, context, callbackId}) {
-    const callback = this._callbacks[callbackId] = this._onRawDataCallback.bind(this, callbackId);
-    registry.on(url, context, callback);
-  }
-
-  offRawData({url, context, callbackId}) {
-    const callback = this._callbacks[callbackId];
-    if (callback) {
-      registry.off(url, context, callback);
-      delete this._callbacks[callbackId];
-    }
-  }
-
-  _onRawDataCallback(callbackId, data) {
-    this._send({msg: 'callback', id: callbackId, args: [data]});
   }
 
   simulate({token, method, url, args}) {
@@ -441,7 +442,7 @@ function snapshotToJson(snapshot, options) {
     return {path, exists: snapshot.exists()};
   } else {
     try {
-      return {path, value: snapshot.val()};
+      return {path, value: normalizeFirebaseValue(snapshot.val())};
     } catch (e) {
       return {path, exists: snapshot.exists(), valueError: errorToJson(e)};
     }
@@ -449,7 +450,6 @@ function snapshotToJson(snapshot, options) {
 }
 
 function createRef(url, terms, context) {
-  registry.register(url, context);
   try {
     let ref = new Firebase(url, context);
     if (terms) {
@@ -460,6 +460,24 @@ function createRef(url, terms, context) {
     e.extra = {url, terms, context};
     throw e;
   }
+}
+
+function normalizeFirebaseValue(value) {
+  if (Array.isArray(value)) {
+    const normalValue = {};
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (item === undefined || item === null) continue;
+      normalValue[i] = normalizeFirebaseValue(item);
+    }
+    return normalValue;
+  }
+  if (value instanceof Object) {
+    for (let key in value) {
+      if (value.hasOwnProperty(key)) value[key] = normalizeFirebaseValue(value[key]);
+    }
+  }
+  return value;
 }
 
 function hashJson(json) {

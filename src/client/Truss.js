@@ -1,20 +1,20 @@
-'use strict';
-
-import Tree from './Tree.js';
-import Connector from './Connector.js';
-import MetaTree from './MetaTree.js';
-import KeyGenerator from './KeyGenerator.js';
-import Bridge from './Bridge.js';
+import _ from 'lodash';
 import angularCompatibility from './angularCompatibility.js';
+import Bridge from './Bridge.js';
+import Connector from './Connector.js';
+import Dispatcher from './Dispatcher.js';
+import KeyGenerator from './KeyGenerator.js';
+import MetaTree from './MetaTree.js';
+import Reference from './Reference.js';
+import Tree from './Tree.js';
 import {escapeKey, unescapeKey, TIMESTAMP, ABORT_TRANSACTION_NOW} from './utils.js';
 
 
 let bridge;
+const workerFunctions = {};
 
 
-// jshint latedef:false
-class Truss {
-// jshint latedef:nofunc
+export default class Truss {
 
   /**
    * Create a new Truss instance, specific to a given datastore.  To avoid confusion there should be
@@ -32,6 +32,7 @@ class Truss {
     }
     this._rootUrl = rootUrl.replace(/\/$/, '');
     this._keyGenerator = new KeyGenerator();
+    this._dispatcher = new Dispatcher();
 
     this._metaTree = new MetaTree(this._rootUrl, bridge);
     Object.defineProperty(this, 'meta', {
@@ -42,10 +43,6 @@ class Truss {
     Object.defineProperty(this, 'root', {
       value: this._tree.root, writable: false, configurable: false, enumerable: false
     });
-
-    if (angularCompatibility.active) {
-      this._vue.$watch('$data', angularCompatibility.digest, {deep: true});
-    }
   }
 
   destroy() {
@@ -56,14 +53,27 @@ class Truss {
   get now() {return Date.now() + this.meta.timeOffset;}
   newKey() {return this._keyGenerator.generateUniqueKey(this.now);}
 
-  authenticate(token) {return bridge.authWithCustomToken(this._rootUrl, token);}
-  unauthenticate() {return bridge.unauth(this._rootUrl);}
+  authenticate(token) {
+    return this._dispatcher.execute('auth', new Reference(this, '/'), () => {
+      return bridge.authWithCustomToken(this._rootUrl, token);
+    });
+  }
+  unauthenticate() {
+    return this._dispatcher.execute('auth', new Reference(this, '/'), () => {
+      return bridge.unauth(this._rootUrl);
+    });
+  }
 
-  interceptConnections(/* {beforeConnect: beforeFn, afterDisconnect: afterFn, onError: errorFn} */) {}
-  interceptWrites(/* {beforeWrite: beforeFn, afterWrite: afterFn, onError: errorFn} */) {}
+  intercept(actionType, callbacks) {
+    return this._dispatcher.intercept(actionType, callbacks);
+  }
 
   // connections are {key: Query | Object | fn() -> (Query | Object)}
   connect(scope, connections) {
+    if (!connections) {
+      connections = scope;
+      scope = undefined;
+    }
     return new Connector(scope, connections, this._tree);
   }
 
@@ -71,6 +81,11 @@ class Truss {
 
   static connectWorker(webWorker) {
     if (bridge) throw new Error('Worker already connected');
+    if (_.isString(webWorker)) {
+      const Worker = window.SharedWorker || window.Worker;
+      if (!Worker) throw new Error('Browser does not implement Web Workers');
+      webWorker = new Worker(webWorker);
+    }
     bridge = new Bridge(webWorker);
     return bridge.init(webWorker).then(
       ({exposedFunctionNames, firebaseSdkVersion}) => {
@@ -82,9 +97,15 @@ class Truss {
     );
   }
 
+  static get worker() {return workerFunctions;}
+
   static preExpose(functionName) {
     Truss.worker[functionName] = bridge.bindExposedFunction(functionName);
   }
+
+  static bounceConnection() {return bridge.bounceConnection();}
+  static suspend() {return bridge.suspend();}
+  static debugPermissionDeniedErrors() {return bridge.debugPermissionDeniedErrors();}
 
   static escapeKey(key) {
     return escapeKey(key);
@@ -98,27 +119,4 @@ class Truss {
   static get ABORT_TRANSACTION_NOW() {return ABORT_TRANSACTION_NOW;}
 }
 
-[
-  'onError', 'offError', 'onSlow', 'offSlow', 'bounceConnection', 'debugPermissionDeniedErrors',
-  'suspend'
-].forEach(methodName => {
-  Truss[methodName] = function() {
-    return bridge[methodName].apply(bridge, arguments);
-  };
-});
-
-
-Truss.worker = {};
-
-
-function pathFromUrl(url) {
-  return url.replace(/^https?:\/\/[^/]+/, '');
-}
-
-function getUrlRoot(url) {
-  const k = url.indexOf('/', 8);
-  return k >= 8 ? url.slice(0, k) : url;
-}
-
 angularCompatibility.defineModule(Truss);
-export default Truss;
