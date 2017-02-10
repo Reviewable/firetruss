@@ -4,6 +4,7 @@ import Vue from 'vue';
 
 import Tree from './Tree.js';
 import Bridge from './Bridge.js';
+import Dispatcher from './Dispatcher.js';
 
 
 class Root {
@@ -43,9 +44,11 @@ test.beforeEach(t => {
   t.context = {
     rootUrl: 'https://example.firebaseio.com',
     bridge: td.object(Bridge),
+    dispatcher: td.object(Dispatcher),
     truss: td.object()
   };
-  t.context.tree = new Tree(t.context.truss, t.context.rootUrl, t.context.bridge, [Root, Subroot]);
+  t.context.tree = new Tree(
+    t.context.truss, t.context.rootUrl, t.context.bridge, t.context.dispatcher, [Root, Subroot]);
 });
 
 test.afterEach(t => {

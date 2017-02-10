@@ -7,12 +7,13 @@ import _ from 'lodash';
 import Vue from 'vue';
 
 export default class Tree {
-  constructor(truss, rootUrl, bridge, classes) {
+  constructor(truss, rootUrl, bridge, dispatcher, classes) {
     this._truss = truss;
     this._bridge = bridge;
+    this._dispatcher = dispatcher;
     this._firebasePropertyEditAllowed = false;
     this._coupler = new Coupler(
-      rootUrl, bridge, this._integrateSnapshot.bind(this), this._prune.bind(this));
+      rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
     this._vue = new Vue({data: {$root: undefined}});
     if (angularCompatibility.active) {
       this._vue.$watch('$data', angularCompatibility.digest, {deep: true});
@@ -34,40 +35,47 @@ export default class Tree {
   }
 
   connectReference(ref, valueCallback) {
-    this._checkQuery(ref);
-    this._coupler.couple(ref.path);
+    this._checkReference(ref);
+    const operation = this._dispatcher.createOperation('read', 'connect', ref);
     let unwatch;
     if (valueCallback) {
       const segments = _(ref.path).split('/').map(segment => unescapeKey(segment)).value();
-      unwatch = this._vue.$watch(() => {
-        let object;
-        for (let segment of segments) {
-          object = segment ? object[segment] : this.root;
-          if (!object) break;
-        }
-        return object;
-      }, valueCallback);
+      unwatch = this._vue.$watch(this._getObject.bind(segments), valueCallback);
     }
-    return this._disconnectReference.bind(this, ref, unwatch);
+    operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
+    this._dispatcher.begin(operation).then(() => {
+      if (operation.running) this._coupler.couple(ref.path, operation);
+    }).catch(e => {});  // ignore exception, let onFailure handlers deal with it
+    return operation._disconnect;
   }
 
-  _disconnectReference(ref, unwatch) {
+  _disconnectReference(ref, operation, unwatch, error) {
+    if (operation._disconnected) return;
+    operation._disconnected = true;
     if (unwatch) unwatch();
-    this._coupler.decouple(ref.path);  // will call back to _prune if necessary
+    this._coupler.decouple(ref.path, operation);  // will call back to _prune if necessary
+    this._dispatcher.end(operation, error).catch(e => {});
   }
 
   connectQuery(query, keysCallback) {
-    this._checkQuery(query);
-    this._coupler.subscribe(query, keysCallback);
-    return this._disconnectQuery.bind(this, query, keysCallback);
+    this._checkReference(query);
+    const operation = this._dispatcher.createOperation('read', 'connect', query);
+    operation._disconnect = this._disconnectQuery.bind(this, query, operation);
+    this._dispatcher.begin(operation).then(() => {
+      if (operation.running) this._coupler.subscribe(query, operation, keysCallback);
+    }).catch(e => {});  // ignore exception, let onFailure handlers deal with it
+    return operation._disconnect;
   }
 
-  _disconnectQuery(query, keysCallback) {
-    this._coupler.unsubscribe(query, keysCallback);  // will call back to _prune if necessary
+  _disconnectQuery(query, operation, error) {
+    if (operation._disconnected) return;
+    operation._disconnected = true;
+    this._coupler.unsubscribe(query, operation);  // will call back to _prune if necessary
+    this._dispatcher.end(operation, error).catch(e => {});
   }
 
-  _checkQuery(query) {
-    if (!query.belongsTo(this._truss)) {
+  _checkReference(ref) {
+    if (!ref.belongsTo(this._truss)) {
       throw new Error('Reference belongs to another Truss instance');
     }
   }
@@ -239,12 +247,12 @@ export default class Tree {
     return coupledDescendantFound;
   }
 
-  _getObject(path) {
+  _getObject(pathOrSegments) {
     let object;
-    const segments = path.split('/');
+    const segments = _.isString(pathOrSegments) ?
+      _(pathOrSegments).split('/').map(unescapeKey).value() : pathOrSegments;
     for (let segment of segments) {
-      const key = unescapeKey(segment);
-      object = key ? object[key] : this.root;
+      object = segment ? object[segment] : this.root;
       if (!object) return;
     }
     return object;

@@ -31,6 +31,7 @@ class Operation {
     this._method = method;
     this._target = target;
     this._ready = false;
+    this._running = false;
     this._startTimestamp = Date.now();
     this._slowHandles = [];
   }
@@ -39,6 +40,7 @@ class Operation {
   get method() {return this._method;}
   get target() {return this._target;}
   get ready() {return this._ready;}
+  get running() {return this._running;}
   get error() {return this._error;}
 
   onSlow(delay, callback) {
@@ -47,12 +49,16 @@ class Operation {
     handle.initiate();
   }
 
+  _setRunning(value) {
+    this._running = value;
+  }
+
   _markReady() {
     this._ready = true;
     _.each(this._slowHandles, handle => handle.cancel());
   }
 
-  _resetReady() {
+  _clearReady() {
     this._ready = false;
     this._startTimestamp = Date.now();
     _.each(this._slowHandles, handle => handle.initiate());
@@ -106,49 +112,53 @@ export default class Dispatcher {
 
   execute(operationType, method, target, executor) {
     executor = this._wrap(executor);
-    const operation = new Operation(operationType, method, target);
-    return this._begin(operation).then(
-      () => {
-        const executeWithRetries = () => {
-          return executor().catch(e => this.retryOrEnd(operation, e).then(executeWithRetries));
-        };
-        return executeWithRetries();
-      },
-      e => this.end(operation, e)
-    ).then(result => this.end(operation).then(() => result));
+    const operation = this.createOperation(operationType, method, target);
+    return this.begin(operation).then(() => {
+      const executeWithRetries = () => {
+        return executor().catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
+      };
+      return executeWithRetries();
+    }).then(result => this.end(operation).then(() => result));
   }
 
-  begin(operationType, method, target) {
-    const operation = new Operation(operationType, method, target);
-    return this._begin(operation).then(() => operation, e => this.end(operation, e));
+  createOperation(operationType, method, target) {
+    return new Operation(operationType, method, target);
   }
 
-  _begin(operation) {
+  begin(operation) {
     return Promise.all(
       _.map(this._getCallbacks('onBefore', operation.type), onBefore => onBefore(operation))
-    );
+    ).then(() => {operation._setRunning(true);}, e => this.end(operation, e));
   }
 
   markReady(operation) {
     operation._markReady();
   }
 
-  resetReady(operation) {
-    operation._resetReady();
+  clearReady(operation) {
+    operation._clearReady();
   }
 
-  retryOrEnd(operation, error) {
+  retry(operation, error) {
     return Promise.all(
-      _.map(this._getCallbacks('onError', operation.type), onError => onError(operation, error))
-    ).then(
-      results => {
-        if (!_.some(results)) return this.end(operation, error);
-      },
-      e => this.end(operation, e)
-    );
+      _.map(this._getCallbacks('onError', operation.type), onError => {
+        try {
+          return Promise.resolve(onError(operation, error));
+        } catch (e) {
+          return Promise.reject(e);
+        }
+      })
+    ).then(results => _.some(results));
+  }
+
+  _retryOrEnd(operation, error) {
+    return this.retry(operation, error).then(result => {
+      if (!result) return this.end(operation, error);
+    }, e => this.end(operation, e));
   }
 
   end(operation, error) {
+    operation._setRunning(false);
     if (error) operation._error = error;
     return Promise.all(
       _.map(this._getCallbacks('onAfter', operation.type), onAfter => onAfter(operation))

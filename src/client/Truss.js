@@ -39,7 +39,7 @@ export default class Truss {
       value: this._metaTree.root, writable: false, configurable: false, enumerable: false
     });
 
-    this._tree = new Tree(this, this._rootUrl, bridge, classes);
+    this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher, classes);
     Object.defineProperty(this, 'root', {
       value: this._tree.root, writable: false, configurable: false, enumerable: false
     });

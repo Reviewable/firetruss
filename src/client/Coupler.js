@@ -2,34 +2,44 @@ import _ from 'lodash';
 
 
 class QueryHandler {
-  constructor(coupler, query, keysCallback) {
+  constructor(coupler, query) {
     this._coupler = coupler;
     this._query = query;
-    this._keysCallback = keysCallback;
-    this._count = 1;
+    this._listeners = [];
     this._keys = [];
     this._url = `${this._coupler._rootUrl}${query.path}`;
     this._segments = query.path.split('/');
+    this._listening = false;
+    this.ready = false;
+  }
+
+  attach(operation, keysCallback) {
+    this._listen();
+    this._listeners.push({operation, keysCallback});
+    keysCallback(this._keys);
+  }
+
+  detach(operation) {
+    const k = _.findIndex(this._listeners, {operation});
+    if (k >= 0) this._listeners.splice(k, 1);
+    return this._listeners.length;
+  }
+
+  _listen() {
+    if (this._listening) return;
     this._coupler._bridge.on(
-      query.toString(), this._url, query._terms, 'value',
-      this._handleSnapshot, this._handleError.bind(query.path), this, {sync: true});
-  }
-
-  matches(query, keysCallback) {
-    return this._keysCallback === keysCallback && this._query.isEqual(query);
-  }
-
-  use(delta) {
-    this._count += delta;
-    if (this._count === 0) this.destroy();
-    return this._count > 0;
+      this._query.toString(), this._url, this._query._terms, 'value',
+      this._handleSnapshot, this._handleError.bind(this._query.path), this, {sync: true});
+    this._listening = true;
   }
 
   destroy() {
     this._coupler._bridge.off(
       this._query.toString(), this._url, this._query._terms, 'value', this._handleSnapshot, this);
-    for (let key in this._keys) {
-      this._coupler._decoupleSegments(this._segments.concat(key), false);
+    this._listening = false;
+    this.ready = false;
+    for (let key of this._keys) {
+      this._coupler._decoupleSegments(this._segments.concat(key));
     }
   }
 
@@ -38,7 +48,13 @@ class QueryHandler {
     // tree, then tell the client to update its keys, pulling values from the tree.
     const updatedKeys = this._updateKeys(snap);
     this._coupler._handleSnapshot(snap);
-    if (updatedKeys) this.keysCallback(updatedKeys);
+    if (!this.ready) {
+      this.ready = true;
+      for (let listener of this._listeners) this._coupler._dispatcher.markReady(listener.operation);
+    }
+    if (updatedKeys) {
+      for (let listener of this._listeners) listener.keysCallback(updatedKeys);
+    }
   }
 
   _updateKeys(snap) {
@@ -49,11 +65,11 @@ class QueryHandler {
       if (_.isEqual(this._keys, updatedKeys)) {
         updatedKeys = null;
       } else {
-        for (let key in _.difference(updatedKeys, this._keys)) {
-          this._coupler._coupleSegments(this._segments.concat(key), false);
+        for (let key of _.difference(updatedKeys, this._keys)) {
+          this._coupler._coupleSegments(this._segments.concat(key));
         }
-        for (let key in _.difference(this._keys, updatedKeys)) {
-          this._coupler._decoupleSegments(this._segments.concat(key), false);
+        for (let key of _.difference(this._keys, updatedKeys)) {
+          this._coupler._decoupleSegments(this._segments.concat(key));
         }
         this._keys = updatedKeys;
       }
@@ -61,14 +77,14 @@ class QueryHandler {
       const hasKey = _.contains(this._keys, snap.key);
       if (snap.value) {
         if (!hasKey) {
-          this._coupler._coupleSegments(this._segments.concat(snap.key), false);
+          this._coupler._coupleSegments(this._segments.concat(snap.key));
           this._keys.push(snap.key);
           this._keys.sort();
           updatedKeys = this._keys;
         }
       } else {
         if (hasKey) {
-          this._coupler._decoupleSegments(this._segments.concat(snap.key), false);
+          this._coupler._decoupleSegments(this._segments.concat(snap.key));
           _.pull(this._keys, snap.key);
           this._keys.sort();
           updatedKeys = this._keys;
@@ -77,17 +93,36 @@ class QueryHandler {
     }
     return updatedKeys;
   }
+
+  _handleError(error) {
+    if (!this._listeners.length || !this._listening) return;
+    this._listening = false;
+    Promise.all(_.map(this._listeners, listener => {
+      this._coupler._dispatcher.clearReady(listener.operation);
+      return this._coupler._dispatcher.retry(listener.operation, error).catch(e => {
+        listener.operation._disconnect(e);
+        return false;
+      });
+    })).then(results => {
+      if (_.some(results)) {
+        if (this._listeners.length) this._listen();
+      } else {
+        for (let listener of this._listeners) listener.operation._disconnect(error);
+      }
+    });
+  }
 }
 
 
 class Node {
-  constructor(coupler) {
+  constructor(coupler, path) {
     this._coupler = coupler;
-    this.count = 0;
+    this.path = path;
+    this.url = `${this._coupler._rootUrl}${path}`;
+    this.operations = [];
     this.queryCount = 0;
     this.listening = false;
     this.ready = false;
-    this.stale = false;
     this.children = {};
   }
 
@@ -95,59 +130,77 @@ class Node {
     return this.count || this.queryCount;
   }
 
-  listen(segments, skip) {
+  get count() {
+    return this.operations.length;
+  }
+
+  listen(skip) {
     if (!skip && this.count) {
       if (this.listening) return;
-      const path = segments.join('/');
-      const url = `${this._coupler._rootUrl}${path}`;
+      _.each(this.operations, op => {this._coupler._dispatcher.clearReady(op);});
       this._coupler._bridge.on(
-        url, url, null, 'value', this._handleSnapshot, this._handleError.bind(this, segments), this,
-        {sync: true});
+        this.url, this.url, null, 'value', this._handleSnapshot, this._handleError.bind(this),
+        this, {sync: true});
       this.listening = true;
     } else {
-      _.each(this.children, (child, escapedKey) => {
-        child.listen(segments.concat(escapedKey));
-      });
+      _.each(this.children, child => {child.listen();});
     }
   }
 
-  unlisten(segments, skip) {
+  unlisten(skip) {
     if (!skip && this.listening) {
-      const url = `${this._coupler._rootUrl}${segments.join('/')}`;
-      this._coupler._bridge.off(url, url, null, 'value', this._handleSnapshot, this);
+      this._coupler._bridge.off(this.url, this.url, null, 'value', this._handleSnapshot, this);
       this.listening = false;
-      this.ready = false;
+      this._forAllDescendants(node => {node.ready = false;});
     } else {
-      _.each(this.children, (child, escapedKey) => {
-        child.unlisten(segments.concat(escapedKey));
-      });
+      _.each(this.children, child => {child.unlisten();});
     }
   }
 
   _handleSnapshot(snap) {
-    if (!this._coupler.isTrunkCoupled(snap.path)) return;
-    if (this.listening) {
-      this.ready = true;
-      this.stale = false;
-    }
+    if (!this.listening || !this._coupler.isTrunkCoupled(snap.path)) return;
     this._coupler._applySnapshot(snap);
+    if (!this.ready && snap.path === this.path) {
+      this.unlisten(true);
+      this._forAllDescendants(node => {
+        node.ready = true;
+        for (let op of this.operations) this._coupler._dispatcher.markReady(op);
+      });
+    }
   }
 
-  _handleError(segments, error) {
-    if (!this.listening) return;
+  _handleError(error) {
+    if (!this.count || !this.listening) return;
     this.listening = false;
-    this.stale = true;
-    this.listen(segments, true);
-    // TODO: propagate the error
+    this._forAllDescendants(node => {
+      node.ready = false;
+      for (let op of this.operations) this._coupler._dispatcher.clearReady(op);
+    });
+    return Promise.all(_.map(this.operations, op => {
+      return this._coupler._dispatcher.retry(op, error).catch(e => {
+        op._disconnect(e);
+        return false;
+      });
+    })).then(results => {
+      if (_.some(results)) {
+        if (this.count) this.listen();
+      } else {
+        for (let op of this.operations) op._disconnect(error);
+        // Pulling all the operations will automatically get us listening on descendants.
+      }
+    });
   }
 
-  collectCoupledDescendantPaths(segments, paths) {
-    if (paths) paths[segments.join('/')] = this.active;
+  _forAllDescendants(iteratee) {
+    iteratee(this);
+    _.each(this.children, child => child._forAllDescendants(iteratee));
+  }
+
+  collectCoupledDescendantPaths(paths) {
+    if (paths) paths[this.path] = this.active;
     if (!paths) paths = [];
     if (!this.active) {
-      _.each(this.children, (child, childKey) => {
-        child.collectCoupledDescendantPaths(segments.concat(childKey), paths);
-      });
+      _.each(this.children, child => {child.collectCoupledDescendantPaths(paths);});
     }
     return paths;
   }
@@ -155,44 +208,54 @@ class Node {
 
 
 export default class Coupler {
-  constructor(rootUrl, bridge, applySnapshot, prunePath) {
+  constructor(rootUrl, bridge, dispatcher, applySnapshot, prunePath) {
     this._rootUrl = rootUrl;
     this._bridge = bridge;
+    this._dispatcher = dispatcher;
     this._applySnapshot = applySnapshot;
     this._prunePath = prunePath;
-    this._root = new Node(this);
-    this._queryHandlers = [];
+    this._root = new Node(this, '/');
+    this._queryHandlers = {};
   }
 
   destroy() {
-    this._root.unlisten(['']);
+    _.each(this._queryHandlers, queryHandler => {queryHandler.destroy();});
+    this._root.unlisten();
   }
 
-  couple(path) {
-    return this._coupleSegments(path.split('/'), true);
+  couple(path, operation) {
+    return this._coupleSegments(path.split('/'), operation);
   }
 
-  _coupleSegments(segments, listen) {
+  _coupleSegments(segments, operation) {
     let node;
-    let superseded = !listen;
+    let superseded = !operation;
+    let ready = false;
     for (let segment of segments) {
       let child = segment ? node.children && node.children[segment] : this._root;
-      if (!child) node.children[segment] = child = new Node(this);
+      if (!child) node.children[segment] = child =
+        new Node(this, `${node.path === '/' ? '' : node.path}/${segment}`);
       superseded = superseded || child.listening;
+      ready = ready || child.ready;
       node = child;
     }
-    if (listen) node.count++; else node.queryCount++;
-    if (!superseded) {
-      node.listen(segments);
-      node.unlisten(segments, true);
+    if (operation) {
+      node.operations.push(operation);
+    } else {
+      node.queryCount++;
+    }
+    if (superseded) {
+      if (operation && ready) this._dispatcher.markReady(operation);
+    } else {
+      node.listen();  // node will call unlisten() on descendants when ready
     }
   }
 
-  decouple(path) {
-    return this._decoupleSegments(path.split('/'), true);
+  decouple(path, operation) {
+    return this._decoupleSegments(path.split('/'), operation);
   }
 
-  _decoupleSegments(segments, listen) {
+  _decoupleSegments(segments, operation) {
     const ancestors = [];
     let node;
     for (let segment of segments) {
@@ -200,18 +263,22 @@ export default class Coupler {
       if (!node) break;
       ancestors.push(node);
     }
-    if (!node || !(listen ? node.count : node.queryCount)) {
+    if (!node || !(operation ? node.count : node.queryCount)) {
       throw new Error(`Path not coupled: ${segments.join('/')}`);
     }
-    if (listen) node.count--; else node.queryCount--;
-    if (listen && !node.count) {
+    if (operation) {
+      _.pull(node.operations, operation);
+    } else {
+      node.queryCount--;
+    }
+    if (operation && !node.count) {
       // Ideally, we wouldn't resync the full values here since we probably already have the current
       // value for all children.  But making sure that's true is tricky in an async system (what if
       // the node's value changes and the update crosses the 'off' call in transit?) and this
       // situation should be sufficiently rare that the optimization is probably not worth it right
       // now.
-      node.listen(segments);
-      if (node.listening) node.unlisten(segments);
+      node.listen();
+      if (node.listening) node.unlisten();
     }
     if (!node.active) {
       const coupledDescendantPaths = node.collectCoupledDescendantPaths(segments);
@@ -224,20 +291,18 @@ export default class Coupler {
     }
   }
 
-  subscribe(query, keysCallback) {
-    const queryHandler =
-      _.find(this._queryHandlers, queryHandler => queryHandler.matches(query, keysCallback));
-    if (queryHandler) {
-      queryHandler.use(true);
-    } else {
-      this._queryHandlers.push(new QueryHandler(this, query, keysCallback));
-    }
+  subscribe(query, operation, keysCallback) {
+    let queryHandler = this._queryHandlers[query.toString()];
+    if (!queryHandler) queryHandler = new QueryHandler(this, query);
+    queryHandler.attach(operation, keysCallback);
  }
 
-  unsubscribe(query, keysCallback) {
-    const queryHandler =
-      _.find(this._queryHandlers, queryHandler => queryHandler.matches(query, keysCallback));
-    if (queryHandler && !queryHandler.use(false)) _.pull(this._queryHandlers, queryHandler);
+  unsubscribe(query, operation) {
+    const queryHandler = this._queryHandlers[query.toString()];
+    if (queryHandler && !queryHandler.detach(operation)) {
+      queryHandler.destroy();
+      delete this._queryHandlers[query.toString()];
+    }
   }
 
   // Return whether the node at path or any ancestors are coupled.

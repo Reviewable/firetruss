@@ -1,15 +1,12 @@
-'use strict';
-
 import {escapeKey, unescapeKey} from './utils.js';
 
 import _ from 'lodash';
 
 
-export class Query {
-  constructor(truss, path, terms) {
+class Handle {
+  constructor(truss, path) {
     this._truss = truss;
     this._path = path.replace(/^\/*/, '/').replace(/\/$/, '');
-    this._terms = terms;  // warning: accessed directly by Coupler
   }
 
   get key() {
@@ -28,27 +25,8 @@ export class Query {
     return trackSlowness(worker.once(this._url, this._terms, 'value'), 'read');
   }
 
-  toString() {
-    if (!this._string) {
-      this._string = this._path;
-      if (this._terms) {
-        const queryTerms = this._terms.map(term => {
-          let queryTerm = term[0];
-          if (term.length > 1) {
-            queryTerm +=
-              '=' + encodeURIComponent(term.slice(1).map(x => JSON.stringify(x)).join(','));
-          }
-          return queryTerm;
-        });
-        queryTerms.sort();
-        this._string += '?' + queryTerms.join('&');
-      }
-    }
-    return this._string;
-  }
-
   isEqual(that) {
-    if (!(that instanceof Query)) return false;
+    if (!(that instanceof Handle)) return false;
     return this._truss === that._truss && this.toString() === that.toString();
   }
 
@@ -56,39 +34,87 @@ export class Query {
     return this._truss === truss;
   }
 
-  orderByChild(ref) {
-    if (ref._terms) {
-      throw new Error('orderByChild must be called with a reference, not a query: ' + ref);
+}
+
+
+export class Query extends Handle {
+  constructor(truss, path, spec) {
+    super(truss, path);
+    this._spec = this._copyAndValidateSpec(spec);
+  }
+
+  _copyAndValidateSpec(spec) {
+    if (!spec.by) throw new Error('Query needs "by" clause: ' + JSON.stringify(spec));
+    if (!!spec.at + !!spec.from + !!spec.to > 1) {
+      throw new Error(
+        'Query must contain at most one of "at", "from", or "to" clauses: ' + JSON.stringify(spec));
     }
-    let relativePath = ref.toString();
-    if (_.startsWith(relativePath, this._path)) {
-      relativePath = relativePath.slice(this._path.length);
+    if (!!spec.first + !!spec.last > 1) {
+      throw new Error(
+        'Query must contain at most one of "first" or "last" clauses: ' + JSON.stringify(spec));
     }
-    const terms = this._terms ? this._terms.slice() : [];
-    terms.push(['orderByChild', relativePath]);
-    return new Query(this._truss, this._path, terms);
+    return _.clone(spec);
+  }
+
+  get _terms() {  // warning: accessed directly by Coupler
+    const terms = [];
+
+    switch (this._spec.by) {
+      case '$key': terms.push('orderByKey'); break;
+      case '$value': terms.push('orderByValue'); break;
+      default: {
+        if (!(this._spec.by instanceof Reference)) {
+          throw new Error('Query "by" value must be a reference: ' + this._spec.by);
+        }
+        let childPath = this._spec.by.toString();
+        if (!_.startsWith(childPath, this._path)) {
+          throw new Error(
+            'Query "by" value must be a descendant of target reference: ' + this._spec.by);
+        }
+        childPath = childPath.slice(this._path.length).replace(/^\/?/, '');
+        if (childPath.indexOf('/') === -1) {
+          throw new Error(
+            'Query "by" value must not be a direct child of target reference: ' + this._spec.by);
+        }
+        childPath = childPath.replace(/.*?\//, '');
+        terms.push(['orderByChild', childPath]);
+        break;
+      }
+    }
+
+    if (this._spec.at) terms.push(['equalTo', this._spec.at]);
+    else if (this._spec.from) terms.push(['startAt', this._spec.from]);
+    else if (this._spec.to) terms.push(['endAt', this._spec.to]);
+
+    if (this._spec.first) terms.push(['limitToFirst', this._spec.first]);
+    else if (this._spec.last) terms.push(['limitToLast', this._spec.last]);
+
+    return terms;
+  }
+
+  toString() {
+    if (!this._string) {
+      const queryTerms = _(this._spec)
+        .map((value, key) => `${key}=${encodeURIComponent(JSON.stringify(value))}`)
+        .sortBy()
+        .join('&');
+      this._string = `${this._path}?${queryTerms}`;
+    }
+    return this._string;
   }
 }
 
-[
-  'orderByKey', 'orderByValue', 'startAt', 'endAt', 'equalTo', 'limitToFirst', 'limitToLast'
-].forEach(methodName => {
-  Query.prototype[methodName] = function() {
-    const term = Array.prototype.slice.call(arguments);
-    term.unshift(methodName);
-    const terms = this._terms ? this._terms.slice() : [];
-    terms.push(term);
-    return new Query(this._url, terms);
-  };
-});
-
 
 // jshint latedef:false
-export class Reference extends Query {
+export class Reference extends Handle {
 // jshint latedef:nofunc
 
   constructor(truss, path) {
     super(truss, path);
+  }
+
+  toString() {
+    return this._path;
   }
 
   child() {
@@ -115,6 +141,10 @@ export class Reference extends Query {
       }
     });
     return new Reference(this._truss, `${this._path}/${escapedKeys.join('/')}`);
+  }
+
+  query(spec) {
+    return new Query(this._truss, this._path, spec);
   }
 
   set(value) {}  // TODO: implement
