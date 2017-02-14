@@ -210,7 +210,6 @@ test('handle error', t => {
 
   bar._handleSnapshot({path: '/foo/bar'});
   t.true(bar.ready);
-  t.true(baz.ready);
 
   baz._handleError(error);  // ignored, not listening to baz
 
@@ -229,7 +228,6 @@ test('handle error', t => {
     t.true(bar.listening);
     bar._handleSnapshot({path: '/foo/bar'});
     t.true(bar.ready);
-    t.true(baz.ready);
 
     td.when(t.context.dispatcher.retry(t.context.op1, error), {times: 1}).thenResolve(false);
     td.when(t.context.op1._disconnect(error), {times: 1}).thenDo(() => {

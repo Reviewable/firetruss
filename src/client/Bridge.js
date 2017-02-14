@@ -218,7 +218,7 @@ export default class Bridge {
         break;
       case 'on':
       case 'once':
-        simulatedCalls.push({method: 'once', url: props.url, args: ['value']});
+        simulatedCalls.push({method: 'once', url: props.url, terms: props.terms, args: ['value']});
         break;
       case 'transaction':
         simulatedCalls.push({method: 'once', url: props.url, args: ['value']});

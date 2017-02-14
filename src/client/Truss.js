@@ -54,12 +54,12 @@ export default class Truss {
   newKey() {return this._keyGenerator.generateUniqueKey(this.now);}
 
   authenticate(token) {
-    return this._dispatcher.execute('auth', new Reference(this, '/'), () => {
+    return this._dispatcher.execute('auth', new Reference(this._tree, '/'), () => {
       return bridge.authWithCustomToken(this._rootUrl, token);
     });
   }
   unauthenticate() {
-    return this._dispatcher.execute('auth', new Reference(this, '/'), () => {
+    return this._dispatcher.execute('auth', new Reference(this._tree, '/'), () => {
       return bridge.unauth(this._rootUrl);
     });
   }

@@ -1,4 +1,4 @@
-import {Query, Reference} from './Reference.js';
+import {Handle, Query, Reference} from './Reference.js';
 import angular from './angularCompatibility.js';
 
 import _ from 'lodash';
@@ -32,8 +32,8 @@ export default class Connector {
 
   get ready() {
     return _.every(this._currentDescriptors, (descriptor, key) => {
-      if (!descriptor) return true;
-      if (descriptor instanceof Query) return descriptor.ready;
+      if (!descriptor) return false;
+      if (descriptor instanceof Handle) return descriptor.ready;
       return this._subConnectors[key].ready;
     });
   }
@@ -75,12 +75,12 @@ export default class Connector {
   _updateComputedConnection(key, newDescriptor) {
     const oldDescriptor = this._currentDescriptors[key];
     if (oldDescriptor === newDescriptor ||
-        newDescriptor instanceof Query && newDescriptor.isEqual(oldDescriptor)) return;
+        newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) return;
     if (!newDescriptor) {
       this._disconnect(key);
       return;
     }
-    if (newDescriptor instanceof Query || !_.has(this._subConnectors, key)) {
+    if (newDescriptor instanceof Handle || !_.has(this._subConnectors, key)) {
       this._disconnect(key);
       this._connect(key, newDescriptor);
     } else {
@@ -94,7 +94,7 @@ export default class Connector {
       this._updateComputedConnection(key, descriptor);
     });
     _.each(this._connections, (descriptor, key) => {
-      this._updateComputedConnection(key);
+      if (!_.has(connections, key)) this._updateComputedConnection(key);
     });
     this._connections = connections;
   }

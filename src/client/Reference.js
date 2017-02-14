@@ -3,9 +3,9 @@ import {escapeKey, unescapeKey} from './utils.js';
 import _ from 'lodash';
 
 
-class Handle {
-  constructor(truss, path) {
-    this._truss = truss;
+export class Handle {
+  constructor(tree, path) {
+    this._tree = tree;
     this._path = path.replace(/^\/*/, '/').replace(/\/$/, '');
   }
 
@@ -14,33 +14,33 @@ class Handle {
     return this._key;
   }
   get path() {return this._path;}
-  get parent() {return new Reference(this._truss, this._path.replace(/\/[^/]*$/, ''));}
+  get parent() {return new Reference(this._tree, this._path.replace(/\/[^/]*$/, ''));}
 
-  get ready() {}  // TODO: implement
-  waitUntilReady() {}  // TODO: implement
-
-  get() {
-    // TODO: implement
-    if (this.ready) return Promise.resolve();
-    return trackSlowness(worker.once(this._url, this._terms, 'value'), 'read');
+  get annotations() {
+    if (!this._annotations) this._annotations = {};
+    return this._annotations;
   }
 
   isEqual(that) {
     if (!(that instanceof Handle)) return false;
-    return this._truss === that._truss && this.toString() === that.toString();
+    return this._tree === that._tree && this.toString() === that.toString();
   }
-
-  belongsTo(truss) {
-    return this._truss === truss;
-  }
-
 }
 
 
 export class Query extends Handle {
-  constructor(truss, path, spec) {
-    super(truss, path);
+  constructor(tree, path, spec) {
+    super(tree, path);
     this._spec = this._copyAndValidateSpec(spec);
+  }
+
+  // Vue-bound
+  get ready() {
+    return this._tree.isQueryReady(this);
+  }
+
+  get() {
+    return this._tree.fetchQuery(this);
   }
 
   _copyAndValidateSpec(spec) {
@@ -109,8 +109,13 @@ export class Query extends Handle {
 export class Reference extends Handle {
 // jshint latedef:nofunc
 
-  constructor(truss, path) {
-    super(truss, path);
+  constructor(tree, path) {
+    super(tree, path);
+  }
+
+  // Vue-bound
+  get ready() {
+    return this._tree.isReferenceReady(this);
   }
 
   toString() {
@@ -120,7 +125,7 @@ export class Reference extends Handle {
   child() {
     if (!arguments.length) return this;
     return new Reference(
-      this._truss, `${this._path}/${_.map(arguments, key => escapeKey(key)).join('/')}`);
+      this._tree, `${this._path}/${_.map(arguments, key => escapeKey(key)).join('/')}`);
   }
 
   children() {
@@ -132,7 +137,7 @@ export class Reference extends Handle {
         const subPath = `${this._path}/${escapedKeys.join('/')}`;
         const rest = _.slice(arguments, i + 1);
         _.each(arg, key => {
-          const subRef = new Reference(this._truss, `${subPath}/${escapeKey(key)}`);
+          const subRef = new Reference(this._tree, `${subPath}/${escapeKey(key)}`);
           mapping[key] = subRef.children.apply(subRef, rest);
         });
         return mapping;
@@ -140,11 +145,15 @@ export class Reference extends Handle {
         escapedKeys.push(escapeKey(arg));
       }
     });
-    return new Reference(this._truss, `${this._path}/${escapedKeys.join('/')}`);
+    return new Reference(this._tree, `${this._path}/${escapedKeys.join('/')}`);
   }
 
   query(spec) {
-    return new Query(this._truss, this._path, spec);
+    return new Query(this._tree, this._path, spec);
+  }
+
+  get() {
+    return this._tree.fetchReference(this);
   }
 
   set(value) {}  // TODO: implement

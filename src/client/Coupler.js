@@ -1,4 +1,6 @@
 import _ from 'lodash';
+import Vue from 'vue';
+import angularCompatibility from './angularCompatibility.js';
 
 
 class QueryHandler {
@@ -7,10 +9,14 @@ class QueryHandler {
     this._query = query;
     this._listeners = [];
     this._keys = [];
-    this._url = `${this._coupler._rootUrl}${query.path}`;
+    this._url = this._coupler._rootUrl + query.path;
     this._segments = query.path.split('/');
     this._listening = false;
     this.ready = false;
+  }
+
+  getKeysIfReady() {
+    if (this.ready) return this._keys;
   }
 
   attach(operation, keysCallback) {
@@ -38,6 +44,7 @@ class QueryHandler {
       this._query.toString(), this._url, this._query._terms, 'value', this._handleSnapshot, this);
     this._listening = false;
     this.ready = false;
+    angularCompatibility.digest();
     for (let key of this._keys) {
       this._coupler._decoupleSegments(this._segments.concat(key));
     }
@@ -46,10 +53,12 @@ class QueryHandler {
   _handleSnapshot(snap) {
     // Order is important here: first couple any new subpaths so _handleSnapshot will update the
     // tree, then tell the client to update its keys, pulling values from the tree.
+    if (!this._listeners.length || !this._listening) return;
     const updatedKeys = this._updateKeys(snap);
-    this._coupler._handleSnapshot(snap);
+    this._coupler._applySnapshot(snap);
     if (!this.ready) {
       this.ready = true;
+      angularCompatibility.digest();
       for (let listener of this._listeners) this._coupler._dispatcher.markReady(listener.operation);
     }
     if (updatedKeys) {
@@ -118,7 +127,7 @@ class Node {
   constructor(coupler, path) {
     this._coupler = coupler;
     this.path = path;
-    this.url = `${this._coupler._rootUrl}${path}`;
+    this.url = this._coupler._rootUrl + path;
     this.operations = [];
     this.queryCount = 0;
     this.listening = false;
@@ -151,7 +160,12 @@ class Node {
     if (!skip && this.listening) {
       this._coupler._bridge.off(this.url, this.url, null, 'value', this._handleSnapshot, this);
       this.listening = false;
-      this._forAllDescendants(node => {node.ready = false;});
+      this._forAllDescendants(node => {
+        if (node.ready) {
+          node.ready = false;
+          angularCompatibility.digest();
+        }
+      });
     } else {
       _.each(this.children, child => {child.unlisten();});
     }
@@ -161,9 +175,10 @@ class Node {
     if (!this.listening || !this._coupler.isTrunkCoupled(snap.path)) return;
     this._coupler._applySnapshot(snap);
     if (!this.ready && snap.path === this.path) {
+      this.ready = true;
+      angularCompatibility.digest();
       this.unlisten(true);
       this._forAllDescendants(node => {
-        node.ready = true;
         for (let op of this.operations) this._coupler._dispatcher.markReady(op);
       });
     }
@@ -173,7 +188,10 @@ class Node {
     if (!this.count || !this.listening) return;
     this.listening = false;
     this._forAllDescendants(node => {
-      node.ready = false;
+      if (node.ready) {
+        node.ready = false;
+        angularCompatibility.digest();
+      }
       for (let op of this.operations) this._coupler._dispatcher.clearReady(op);
     });
     return Promise.all(_.map(this.operations, op => {
@@ -214,13 +232,21 @@ export default class Coupler {
     this._dispatcher = dispatcher;
     this._applySnapshot = applySnapshot;
     this._prunePath = prunePath;
-    this._root = new Node(this, '/');
-    this._queryHandlers = {};
+    this._vue = new Vue({data: {$root: new Node(this, '/'), $queryHandlers: {}}});
+  }
+
+  get _root() {
+    return this._vue.$data.$root;  // Access indirectly to leave dependency trace.
+  }
+
+  get _queryHandler() {
+    return this._vue.$data.$queryHandlers;  // Access indirectly to leave dependency trace.
   }
 
   destroy() {
     _.each(this._queryHandlers, queryHandler => {queryHandler.destroy();});
     this._root.unlisten();
+    this._vue.$destroy();
   }
 
   couple(path, operation) {
@@ -233,8 +259,10 @@ export default class Coupler {
     let ready = false;
     for (let segment of segments) {
       let child = segment ? node.children && node.children[segment] : this._root;
-      if (!child) node.children[segment] = child =
-        new Node(this, `${node.path === '/' ? '' : node.path}/${segment}`);
+      if (!child) {
+        child = new Node(this, `${node.path === '/' ? '' : node.path}/${segment}`);
+        Vue.set(node.children, segment, child);
+      }
       superseded = superseded || child.listening;
       ready = ready || child.ready;
       node = child;
@@ -286,14 +314,17 @@ export default class Coupler {
       for (let i = ancestors.length - 1; i > 0; i--) {
         node = ancestors[i];
         if (node === this._root || node.active || !_.isEmpty(node.children)) break;
-        delete ancestors[i - 1].children[segments[i]];
+        Vue.delete(ancestors[i - 1].children, segments[i]);
       }
     }
   }
 
   subscribe(query, operation, keysCallback) {
     let queryHandler = this._queryHandlers[query.toString()];
-    if (!queryHandler) queryHandler = new QueryHandler(this, query);
+    if (!queryHandler) {
+      queryHandler = new QueryHandler(this, query);
+      Vue.set(this._queryHandlers, query.toString(), queryHandler);
+    }
     queryHandler.attach(operation, keysCallback);
  }
 
@@ -301,7 +332,7 @@ export default class Coupler {
     const queryHandler = this._queryHandlers[query.toString()];
     if (queryHandler && !queryHandler.detach(operation)) {
       queryHandler.destroy();
-      delete this._queryHandlers[query.toString()];
+      Vue.delete(this._queryHandlers, query.toString());
     }
   }
 
@@ -315,6 +346,27 @@ export default class Coupler {
       if (node.active) return true;
     }
     return false;
+  }
+
+  isSubtreeReady(path) {
+    const segments = path.split('/');
+    let node;
+    for (let segment of segments) {
+      node = segment ? node.children && node.children[segment] : this._root;
+      if (!node) return false;
+      if (node.ready) return true;
+    }
+    return false;
+  }
+
+  isQueryReady(query) {
+    const queryHandler = this._queryHandlers[query.toString()];
+    return queryHandler && queryHandler.ready;
+  }
+
+  getQueryKeys(query) {
+    const queryHandler = this._queryHandlers[query.toString()];
+    return queryHandler && queryHandler.getKeysIfReady();
   }
 }
 

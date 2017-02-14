@@ -12,7 +12,7 @@ const computedPropertyStats = {};
 
 class Value {
   get $ref() {
-    Object.defineProperty(this, '$ref', {value: new Reference(this.$truss, this.$path)});
+    Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
   }
   get $refs() {return [this.$ref];}
   get $keys() {return _.keys(this);}

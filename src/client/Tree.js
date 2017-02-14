@@ -9,6 +9,7 @@ import Vue from 'vue';
 export default class Tree {
   constructor(truss, rootUrl, bridge, dispatcher, classes) {
     this._truss = truss;
+    this._rootUrl = rootUrl;
     this._bridge = bridge;
     this._dispatcher = dispatcher;
     this._firebasePropertyEditAllowed = false;
@@ -35,7 +36,7 @@ export default class Tree {
   }
 
   connectReference(ref, valueCallback) {
-    this._checkReference(ref);
+    this._checkHandle(ref);
     const operation = this._dispatcher.createOperation('read', 'connect', ref);
     let unwatch;
     if (valueCallback) {
@@ -57,8 +58,30 @@ export default class Tree {
     this._dispatcher.end(operation, error).catch(e => {});
   }
 
+  fetchReference(ref) {
+    this._checkHandle(ref);
+    return this._dispatcher.execute('read', 'get', ref, () => {
+      if (this.isReferenceReady(ref)) return this._getObject(ref.path);
+      this._bridge.once(this._rootUrl + ref.path, null, 'value').then(snap => {
+        this._coupler.couple(ref.path);
+        try {
+          this._integrateSnapshot(snap);
+          const result = this._getObject(ref.path);
+          return result;
+        } finally {
+          this._coupler.decouple(ref.path);
+        }
+      });
+    });
+  }
+
+  isReferenceReady(ref) {
+    this._checkHandle(ref);
+    return this._coupler.isSubtreeReady(ref.path);
+  }
+
   connectQuery(query, keysCallback) {
-    this._checkReference(query);
+    this._checkHandle(query);
     const operation = this._dispatcher.createOperation('read', 'connect', query);
     operation._disconnect = this._disconnectQuery.bind(this, query, operation);
     this._dispatcher.begin(operation).then(() => {
@@ -74,10 +97,43 @@ export default class Tree {
     this._dispatcher.end(operation, error).catch(e => {});
   }
 
-  _checkReference(ref) {
-    if (!ref.belongsTo(this._truss)) {
-      throw new Error('Reference belongs to another Truss instance');
-    }
+  fetchQuery(query) {
+    this._checkHandle(query);
+    return this._dispatcher.execute('read', 'get', query, () => {
+      const queryKeys = this._coupler.getQueryKeys(query);
+      if (queryKeys) {
+        const result = {};
+        if (queryKeys.length) {
+          const container = this._getObject(query.path);
+          _.each(queryKeys, key => {result[key] = container[key];});
+        }
+        return result;
+      } else {
+        this._bridge.once(this._rootUrl + query.path, query._terms, 'value').then(snap => {
+          const result = {};
+          const queryKeys = _.keys(snap.value);
+          if (queryKeys.length) {
+            this._coupler.couple(query.path);
+            try {
+              this._integrateSnapshot(snap);
+              const container = this._getObject(query.path);
+              _.each(queryKeys, key => {result[key] = container[key];});
+            } finally {
+              this._coupler.decouple(query.path);
+            }
+          }
+          return result;
+        });
+      }
+    });
+  }
+
+  isQueryReady(query) {
+    return this._coupler.isQueryReady(query);
+  }
+
+  _checkHandle(handle) {
+    if (handle._tree !== this) throw new Error('Reference belongs to another Truss instance');
   }
 
   /**
@@ -253,7 +309,7 @@ export default class Tree {
       _(pathOrSegments).split('/').map(unescapeKey).value() : pathOrSegments;
     for (let segment of segments) {
       object = segment ? object[segment] : this.root;
-      if (!object) return;
+      if (object === undefined) return;
     }
     return object;
   }
