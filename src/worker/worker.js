@@ -314,11 +314,6 @@ class Fireworker {
     this._send({msg: 'callback', id: callbackId, args: [errorToJson(error)]});
   }
 
-  once({url, terms, eventType, options}) {
-    return createRef(url, terms).once(eventType).then(
-      snapshot => snapshotToJson(snapshot, options));
-  }
-
   transaction({url, oldHash, newValue, options}) {
     const ref = createRef(url);
     let stale, currentValue, currentHash;

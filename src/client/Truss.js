@@ -1,4 +1,5 @@
 import _ from 'lodash';
+import Vue from 'vue';
 import angularCompatibility from './angularCompatibility.js';
 import Bridge from './Bridge.js';
 import Connector from './Connector.js';
@@ -7,7 +8,9 @@ import KeyGenerator from './KeyGenerator.js';
 import MetaTree from './MetaTree.js';
 import Reference from './Reference.js';
 import Tree from './Tree.js';
-import {escapeKey, unescapeKey, TIMESTAMP, ABORT_TRANSACTION_NOW} from './utils.js';
+import {
+  escapeKey, unescapeKey, wrapPromiseCallback, TIMESTAMP, ABORT_TRANSACTION_NOW
+} from './utils.js';
 
 
 let bridge;
@@ -77,6 +80,27 @@ export default class Truss {
     return new Connector(scope, connections, this._tree);
   }
 
+  // target is Reference, Query, or connection Object like above
+  peek(target, callback) {
+    callback = wrapPromiseCallback(callback);
+    return new Promise((resolve, reject) => {
+      const scope = {};
+      const connector = this.connect(scope, {result: target});
+      const vue = new Vue();
+      vue.$watch(() => connector.ready, ready => {
+        if (!ready) return;
+        vue.$destroy();
+        callback(scope.result).then(result => {
+          connector.destroy();
+          resolve(result);
+        }, error => {
+          connector.destroy();
+          reject(error);
+        });
+      });
+    });
+  }
+
   static get computedPropertyStats() {return this._tree.computedPropertyStats;}
 
   static connectWorker(webWorker) {
@@ -105,7 +129,10 @@ export default class Truss {
 
   static bounceConnection() {return bridge.bounceConnection();}
   static suspend() {return bridge.suspend();}
-  static debugPermissionDeniedErrors() {return bridge.debugPermissionDeniedErrors();}
+  static debugPermissionDeniedErrors(simulatedTokenGenerator, maxSimulationDuration, callFilter) {
+    return bridge.debugPermissionDeniedErrors(
+      simulatedTokenGenerator, maxSimulationDuration, callFilter);
+  }
 
   static escapeKey(key) {
     return escapeKey(key);

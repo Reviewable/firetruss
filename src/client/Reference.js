@@ -21,9 +21,17 @@ export class Handle {
     return this._annotations;
   }
 
+  peek(callback) {
+    return this._tree.truss.peek(this, callback);
+  }
+
   isEqual(that) {
     if (!(that instanceof Handle)) return false;
     return this._tree === that._tree && this.toString() === that.toString();
+  }
+
+  belongsTo(truss) {
+    return this._tree.truss === truss;
   }
 }
 
@@ -37,10 +45,6 @@ export class Query extends Handle {
   // Vue-bound
   get ready() {
     return this._tree.isQueryReady(this);
-  }
-
-  get() {
-    return this._tree.fetchQuery(this);
   }
 
   _copyAndValidateSpec(spec) {
@@ -150,10 +154,6 @@ export class Reference extends Handle {
 
   query(spec) {
     return new Query(this._tree, this._path, spec);
-  }
-
-  get() {
-    return this._tree.fetchReference(this);
   }
 
   set(value) {}  // TODO: implement

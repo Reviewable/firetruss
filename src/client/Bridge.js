@@ -1,4 +1,4 @@
-'use strict';
+/* global setImmediate */
 
 import {unescapeKey, ABORT_TRANSACTION_NOW} from './utils.js';
 
@@ -217,7 +217,6 @@ export default class Bridge {
         simulatedCalls.push({method: 'update', url: props.url, args: [props.value]});
         break;
       case 'on':
-      case 'once':
         simulatedCalls.push({method: 'once', url: props.url, terms: props.terms, args: ['value']});
         break;
       case 'transaction':
@@ -369,12 +368,6 @@ export default class Bridge {
     } else {
       handle.snapshotCallback.call(handle.context, new Snapshot(snapshotJson));
     }
-  }
-
-  once(url, terms, eventType, options) {
-    return this._send({msg: 'once', url, terms, eventType, options}).then(snapshotJson => {
-      return new Snapshot(snapshotJson);
-    });
   }
 
   transaction(url, updateFunction, options) {

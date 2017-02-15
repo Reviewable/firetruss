@@ -29,6 +29,10 @@ export default class Tree {
     return this._vue.$data.$root;
   }
 
+  get truss() {
+    return this._truss;
+  }
+
   destroy() {
     this._coupler.destroy();
     this._modeler.destroy();
@@ -58,23 +62,6 @@ export default class Tree {
     this._dispatcher.end(operation, error).catch(e => {});
   }
 
-  fetchReference(ref) {
-    this._checkHandle(ref);
-    return this._dispatcher.execute('read', 'get', ref, () => {
-      if (this.isReferenceReady(ref)) return this._getObject(ref.path);
-      this._bridge.once(this._rootUrl + ref.path, null, 'value').then(snap => {
-        this._coupler.couple(ref.path);
-        try {
-          this._integrateSnapshot(snap);
-          const result = this._getObject(ref.path);
-          return result;
-        } finally {
-          this._coupler.decouple(ref.path);
-        }
-      });
-    });
-  }
-
   isReferenceReady(ref) {
     this._checkHandle(ref);
     return this._coupler.isSubtreeReady(ref.path);
@@ -97,43 +84,14 @@ export default class Tree {
     this._dispatcher.end(operation, error).catch(e => {});
   }
 
-  fetchQuery(query) {
-    this._checkHandle(query);
-    return this._dispatcher.execute('read', 'get', query, () => {
-      const queryKeys = this._coupler.getQueryKeys(query);
-      if (queryKeys) {
-        const result = {};
-        if (queryKeys.length) {
-          const container = this._getObject(query.path);
-          _.each(queryKeys, key => {result[key] = container[key];});
-        }
-        return result;
-      } else {
-        this._bridge.once(this._rootUrl + query.path, query._terms, 'value').then(snap => {
-          const result = {};
-          const queryKeys = _.keys(snap.value);
-          if (queryKeys.length) {
-            this._coupler.couple(query.path);
-            try {
-              this._integrateSnapshot(snap);
-              const container = this._getObject(query.path);
-              _.each(queryKeys, key => {result[key] = container[key];});
-            } finally {
-              this._coupler.decouple(query.path);
-            }
-          }
-          return result;
-        });
-      }
-    });
-  }
-
   isQueryReady(query) {
     return this._coupler.isQueryReady(query);
   }
 
   _checkHandle(handle) {
-    if (handle._tree !== this) throw new Error('Reference belongs to another Truss instance');
+    if (!handle.belongsTo(this._truss)) {
+      throw new Error('Reference belongs to another Truss instance');
+    }
   }
 
   /**

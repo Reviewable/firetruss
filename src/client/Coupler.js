@@ -15,10 +15,6 @@ class QueryHandler {
     this.ready = false;
   }
 
-  getKeysIfReady() {
-    if (this.ready) return this._keys;
-  }
-
   attach(operation, keysCallback) {
     this._listen();
     this._listeners.push({operation, keysCallback});
@@ -364,9 +360,5 @@ export default class Coupler {
     return queryHandler && queryHandler.ready;
   }
 
-  getQueryKeys(query) {
-    const queryHandler = this._queryHandlers[query.toString()];
-    return queryHandler && queryHandler.getKeysIfReady();
-  }
 }
 

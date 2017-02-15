@@ -1,5 +1,5 @@
 import _ from 'lodash';
-
+import {wrapPromiseCallback} from './utils.js';
 
 class SlowHandle {
   constructor(operation, delay, callback) {
@@ -89,7 +89,7 @@ export default class Dispatcher {
   _addCallback(stage, operationType, callback) {
     if (!callback) return;
     const key = this._getCallbacksKey(operationType, stage);
-    (this._callbacks[key] || (this._callbacks[key] = [])).push(this._wrap(callback));
+    (this._callbacks[key] || (this._callbacks[key] = [])).push(wrapPromiseCallback(callback));
   }
 
   _getCallbacks(stage, operationType) {
@@ -100,18 +100,8 @@ export default class Dispatcher {
     return `${stage}_${operationType}`;
   }
 
-  _wrap(callback) {
-    return function() {
-      try {
-        return Promise.resolve(callback.apply(this, arguments));
-      } catch (e) {
-        return Promise.reject(e);
-      }
-    };
-  }
-
   execute(operationType, method, target, executor) {
-    executor = this._wrap(executor);
+    executor = wrapPromiseCallback(executor);
     const operation = this.createOperation(operationType, method, target);
     return this.begin(operation).then(() => {
       const executeWithRetries = () => {
