@@ -217,7 +217,7 @@ export default class Bridge {
         simulatedCalls.push({method: 'update', url: props.url, args: [props.value]});
         break;
       case 'on':
-        simulatedCalls.push({method: 'once', url: props.url, terms: props.terms, args: ['value']});
+        simulatedCalls.push({method: 'once', url: props.url, spec: props.spec, args: ['value']});
         break;
       case 'transaction':
         simulatedCalls.push({method: 'once', url: props.url, args: ['value']});
@@ -309,9 +309,9 @@ export default class Bridge {
   set(url, value) {return this._send({msg: 'set', url, value});}
   update(url, value) {return this._send({msg: 'update', url, value});}
 
-  on(listenerKey, url, terms, eventType, snapshotCallback, cancelCallback, context, options) {
+  on(listenerKey, url, spec, eventType, snapshotCallback, cancelCallback, context, options) {
     const handle = {
-      listenerKey, eventType, snapshotCallback, cancelCallback, context, msg: 'on', url, terms,
+      listenerKey, eventType, snapshotCallback, cancelCallback, context, msg: 'on', url, spec,
       timeouts: this._slowCallbacks.read.map(record => new SlownessTracker(record))
     };
     const callback = this._onCallback.bind(this, handle);
@@ -320,13 +320,13 @@ export default class Bridge {
     snapshotCallback.__callbackIds = snapshotCallback.__callbackIds || [];
     snapshotCallback.__callbackIds.push(handle.id);
     this._send({
-      msg: 'on', listenerKey, url, terms, eventType, callbackId: handle.id, options
+      msg: 'on', listenerKey, url, spec, eventType, callbackId: handle.id, options
     }).catch(error => {
       callback(error);
     });
   }
 
-  off(listenerKey, url, terms, eventType, snapshotCallback, context) {
+  off(listenerKey, url, spec, eventType, snapshotCallback, context) {
     const idsToDeregister = [];
     let callbackId;
     if (snapshotCallback) {
@@ -350,7 +350,7 @@ export default class Bridge {
     // callbacks in flight from the worker to be invoked while the off() is processing, but we don't
     // want them to throw an exception either.
     for (let id of idsToDeregister) this._nullifyCallback(id);
-    return this._send({msg: 'off', listenerKey, url, terms, eventType, callbackId}).then(() => {
+    return this._send({msg: 'off', listenerKey, url, spec, eventType, callbackId}).then(() => {
       for (let id of idsToDeregister) this._deregisterCallback(id);
     });
   }

@@ -30,14 +30,15 @@ class QueryHandler {
   _listen() {
     if (this._listening) return;
     this._coupler._bridge.on(
-      this._query.toString(), this._url, this._query._terms, 'value',
+      this._query.toString(), this._url, this._query.constraints, 'value',
       this._handleSnapshot, this._handleError.bind(this._query.path), this, {sync: true});
     this._listening = true;
   }
 
   destroy() {
     this._coupler._bridge.off(
-      this._query.toString(), this._url, this._query._terms, 'value', this._handleSnapshot, this);
+      this._query.toString(), this._url, this._query.constraints, 'value', this._handleSnapshot,
+      this);
     this._listening = false;
     this.ready = false;
     angularCompatibility.digest();

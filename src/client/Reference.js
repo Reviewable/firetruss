@@ -47,54 +47,46 @@ export class Query extends Handle {
     return this._tree.isQueryReady(this);
   }
 
+  get constraints() {
+    return this._spec;
+  }
+
   _copyAndValidateSpec(spec) {
     if (!spec.by) throw new Error('Query needs "by" clause: ' + JSON.stringify(spec));
-    if (!!spec.at + !!spec.from + !!spec.to > 1) {
+    if (('at' in spec) + ('from' in spec) + ('to' in spec) > 1) {
       throw new Error(
         'Query must contain at most one of "at", "from", or "to" clauses: ' + JSON.stringify(spec));
     }
-    if (!!spec.first + !!spec.last > 1) {
+    if (('first' in spec) + ('last' in spec) > 1) {
       throw new Error(
         'Query must contain at most one of "first" or "last" clauses: ' + JSON.stringify(spec));
     }
-    return _.clone(spec);
-  }
-
-  get _terms() {  // warning: accessed directly by Coupler
-    const terms = [];
-
-    switch (this._spec.by) {
-      case '$key': terms.push('orderByKey'); break;
-      case '$value': terms.push('orderByValue'); break;
-      default: {
-        if (!(this._spec.by instanceof Reference)) {
-          throw new Error('Query "by" value must be a reference: ' + this._spec.by);
-        }
-        let childPath = this._spec.by.toString();
-        if (!_.startsWith(childPath, this._path)) {
-          throw new Error(
-            'Query "by" value must be a descendant of target reference: ' + this._spec.by);
-        }
-        childPath = childPath.slice(this._path.length).replace(/^\/?/, '');
-        if (childPath.indexOf('/') === -1) {
-          throw new Error(
-            'Query "by" value must not be a direct child of target reference: ' + this._spec.by);
-        }
-        childPath = childPath.replace(/.*?\//, '');
-        terms.push(['orderByChild', childPath]);
-        break;
-      }
+    if (!_.some(['at', 'from', 'to', 'first', 'last'], clause => clause in spec)) {
+      throw new Error(
+        'Query must contain at least one of "at", "from", "to", "first", or "last" clauses: ' +
+        JSON.stringify(spec));
     }
-
-    if (this._spec.at) terms.push(['equalTo', this._spec.at]);
-    else if (this._spec.from) terms.push(['startAt', this._spec.from]);
-    else if (this._spec.to) terms.push(['endAt', this._spec.to]);
-
-    if (this._spec.first) terms.push(['limitToFirst', this._spec.first]);
-    else if (this._spec.last) terms.push(['limitToLast', this._spec.last]);
-
-    return terms;
+    spec = _.clone(spec);
+    if (spec.by !== '$key' && spec.by !== '$value') {
+      if (!(spec.by instanceof Reference)) {
+        throw new Error('Query "by" value must be a reference: ' + spec.by);
+      }
+      let childPath = spec.by.toString();
+      if (!_.startsWith(childPath, this._path)) {
+        throw new Error(
+          'Query "by" value must be a descendant of target reference: ' + spec.by);
+      }
+      childPath = childPath.slice(this._path.length).replace(/^\/?/, '');
+      if (childPath.indexOf('/') === -1) {
+        throw new Error(
+          'Query "by" value must not be a direct child of target reference: ' + spec.by);
+      }
+      spec.by = childPath.replace(/.*?\//, '');
+    }
+    Object.freeze(spec);
+    return spec;
   }
+
 
   toString() {
     if (!this._string) {

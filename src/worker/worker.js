@@ -245,20 +245,20 @@ class Fireworker {
     return createRef(url).update(value);
   }
 
-  on({listenerKey, url, terms, eventType, callbackId, options}) {
+  on({listenerKey, url, spec, eventType, callbackId, options}) {
     options = options || {};
     if (options.sync) options.branch = new Branch();
     const snapshotCallback = this._callbacks[callbackId] =
       this._onSnapshotCallback.bind(this, callbackId, options);
     snapshotCallback.listenerKey = listenerKey;
     snapshotCallback.eventType = eventType;
-    snapshotCallback.cancel = this.off.bind(this, {listenerKey, url, terms, eventType, callbackId});
+    snapshotCallback.cancel = this.off.bind(this, {listenerKey, url, spec, eventType, callbackId});
     const cancelCallback = this._onCancelCallback.bind(this, callbackId);
-    createRef(url, terms).on(eventType, snapshotCallback, cancelCallback);
+    createRef(url, spec).on(eventType, snapshotCallback, cancelCallback);
     if (options.sync) options.omitValue = true;
   }
 
-  off({listenerKey, url, terms, eventType, callbackId}) {
+  off({listenerKey, url, spec, eventType, callbackId}) {
     let snapshotCallback;
     if (callbackId) {
       // Callback IDs will not be reused across on() calls, so it's safe to just delete it.
@@ -274,7 +274,7 @@ class Fireworker {
         }
       }
     }
-    createRef(url, terms).off(eventType, snapshotCallback);
+    createRef(url, spec).off(eventType, snapshotCallback);
   }
 
   _onSnapshotCallback(callbackId, options, snapshot) {
@@ -444,15 +444,24 @@ function snapshotToJson(snapshot, options) {
   }
 }
 
-function createRef(url, terms, context) {
+function createRef(url, spec, context) {
   try {
     let ref = new Firebase(url, context);
-    if (terms) {
-      for (let term of terms) ref = ref[term[0]].apply(ref, term.slice(1));
+    if (spec) {
+      switch (spec.by) {
+        case '$key': ref = ref.orderByKey(); break;
+        case '$value': ref = ref.orderByValue(); break;
+        default: ref = ref.orderByChild(spec.by); break;
+      }
+      if (spec.at) ref = ref.equalTo(spec.at);
+      else if (spec.from) ref = ref.startAt(spec.from);
+      else if (spec.to) ref = ref.endAt(spec.to);
+      if (spec.first) ref = ref.limitToFirst(spec.first);
+      else if (spec.last) ref = ref.limitToLast(spec.last);
     }
     return ref;
   } catch (e) {
-    e.extra = {url, terms, context};
+    e.extra = {url, spec, context};
     throw e;
   }
 }
@@ -514,10 +523,6 @@ function _hashJson(json, sha1) {
   }
 }
 
-function getUrlRoot(url) {
-  const k = url.indexOf('/', 8);
-  return k >= 8 ? url.slice(0, k) : url;
-}
 
 function acceptConnections() {
   if (typeof onconnect !== 'undefined') {
