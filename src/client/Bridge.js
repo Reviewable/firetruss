@@ -6,30 +6,6 @@ import {unescapeKey, ABORT_TRANSACTION_NOW} from './utils.js';
 
 let bridge;
 
-class SlownessTracker {
-  constructor(record) {
-    this.record = record;
-    this.counted = false;
-    this.canceled = false;
-    this.handle = setTimeout(this.handleTimeout.bind(this), record.timeout);
-  }
-
-  handleTimeout() {
-    if (this.canceled) return;
-    this.counted = true;
-    this.record.callback(++this.record.count, 1, this.record.timeout);
-  }
-
-  handleDone() {
-    this.canceled = true;
-    if (this.counted) {
-      this.record.callback(--this.record.count, -1, this.record.timeout);
-    } else {
-      clearTimeout(this.handle);
-    }
-  }
-}
-
 
 class Snapshot {
   constructor({path, value, valueError, exists}) {
@@ -71,8 +47,6 @@ export default class Bridge {
     this._suspended = false;
     this._servers = {};
     this._callbacks = {};
-    this._errorCallbacks = [];
-    this._slowCallbacks = {read: [], write: [], auth: []};
     this._simulatedTokenGenerator = null;
     this._maxSimulationDuration = 5000;
     this._simulatedCallFilter = null;
@@ -137,7 +111,7 @@ export default class Bridge {
       promise.sent = new Promise(resolve => {
         deferred.resolveSent = resolve;
       });
-      for (let name in message) if (message.hasOwnProperty(name)) deferred[name] = message[name];
+      deferred.params = message;
     }
     if (!this._outboundMessages.length && !this._suspended) setImmediate(this._flushMessageQueue);
     this._outboundMessages.push(message);
@@ -173,34 +147,26 @@ export default class Bridge {
 
   resolve(message) {
     const deferred = this._deferreds[message.id];
-    if (!deferred) throw new Error('fireworker received resolution to inexistent call');
+    if (!deferred) throw new Error('Received resolution to inexistent Firebase call');
     delete this._deferreds[message.id];
     deferred.resolve(message.result);
   }
 
   reject(message) {
     const deferred = this._deferreds[message.id];
-    if (!deferred) throw new Error('fireworker received rejection of inexistent call');
+    if (!deferred) throw new Error('Received rejection of inexistent Firebase call');
     delete this._deferreds[message.id];
-    this._hydrateError(message.error, deferred).then(error => {
-      deferred.reject(error);
-      this._emitError(error);
-    });
+    deferred.reject(errorFromJson(message.error, deferred.params));
   }
 
-  _hydrateError(json, props) {
-    const error = errorFromJson(json);
-    const code = json.code || json.message;
-    if (code && code.toLowerCase() === 'permission_denied') {
-      return this._simulateCall(props).then(securityTrace => {
-        if (securityTrace) {
-          error.extra = error.extra || {};
-          error.extra.debug = securityTrace;
-        }
-        return error;
+  probeError(error) {
+    const code = error.code || error.message;
+    if (error.params && code && code.toLowerCase() === 'permission_denied') {
+      return this._simulateCall(error.params).then(securityTrace => {
+        if (securityTrace) error.permissionDeniedDetails = securityTrace;
       });
     } else {
-      return Promise.resolve(error);
+      return Promise.resolve();
     }
   }
 
@@ -311,8 +277,8 @@ export default class Bridge {
 
   on(listenerKey, url, spec, eventType, snapshotCallback, cancelCallback, context, options) {
     const handle = {
-      listenerKey, eventType, snapshotCallback, cancelCallback, context, msg: 'on', url, spec,
-      timeouts: this._slowCallbacks.read.map(record => new SlownessTracker(record))
+      listenerKey, eventType, snapshotCallback, cancelCallback, context,
+      params: {msg: 'on', listenerKey, url, spec, eventType, options}
     };
     const callback = this._onCallback.bind(this, handle);
     this._registerCallback(callback, handle);
@@ -356,15 +322,14 @@ export default class Bridge {
   }
 
   _onCallback(handle, error, snapshotJson) {
-    if (handle.timeouts) {
-      for (let timeout of handle.timeouts) timeout.handleDone();
-    }
     if (error) {
       this._deregisterCallback(handle.id);
-      this._hydrateError(error, handle).then(error => {
-        if (handle.cancelCallback) handle.cancelCallback.call(handle.context, error);
-        this._emitError(error);
-      });
+      const e = errorFromJson(error, handle.params);
+      if (handle.cancelCallback) {
+        handle.cancelCallback.call(handle.context, e);
+      } else {
+        console.error(e);
+      }
     } else {
       handle.snapshotCallback.call(handle.context, new Snapshot(snapshotJson));
     }
@@ -420,10 +385,6 @@ export default class Bridge {
   }
 
   _nullifyCallback(id) {
-    const handle = this._callbacks[id];
-    if (handle.timeouts) {
-      for (let timeout of handle.timeouts) timeout.handleDone();
-    }
     this._callbacks[id].callback = noop;
   }
 
@@ -448,73 +409,15 @@ export default class Bridge {
       i += 1;
     }
   }
-
-  onError(callback) {
-    this._errorCallbacks.push(callback);
-    return callback;
-  }
-
-  offError(callback) {
-    var k = this._errorCallbacks.indexOf(callback);
-    if (k !== -1) this._errorCallbacks.splice(k, 1);
-  }
-
-  onSlow(operationKind, timeout, callback) {
-    const kinds = operationKind === 'all' ? Object.keys(this._slowCallbacks) : [operationKind];
-    for (let kind of kinds) this._slowCallbacks[kind].push({timeout, callback, count: 0});
-    return callback;
-  }
-
-  offSlow(operationKind, callback) {
-    const kinds = operationKind === 'all' ? Object.keys(this._slowCallbacks) : [operationKind];
-    for (let kind of kinds) {
-      const records = this._slowCallbacks[kind];
-      for (let i = 0; i < records.length; i++) {
-        if (records[i].callback === callback) {
-          records.splice(i, 1);
-          break;
-        }
-      }
-    }
-  }
-
-  trackSlowness(promise, operationKind) {
-    const records = this._slowCallbacks[operationKind];
-    if (!records.length) return promise;
-
-    const timeouts = records.map(record => new SlownessTracker(record));
-
-    function opDone() {
-      for (let timeout of timeouts) timeout.handleDone();
-    }
-
-    promise = promise.then(result => {
-      opDone();
-      return result;
-    }, error => {
-      opDone();
-      return Promise.reject(error);
-    });
-
-    return promise;
-  }
-
-  _emitError(error) {
-    if (this._errorCallbacks.length) {
-      setTimeout(() => {
-        for (let callback of this._errorCallbacks) callback(error);
-      }, 0);
-    }
-  }
-
 }
 
 
 function noop() {}
 
-function errorFromJson(json) {
+function errorFromJson(json, params) {
   if (!json || json instanceof Error) return json;
   const error = new Error(json.message);
+  error.params = params;
   for (let propertyName in json) {
     if (propertyName === 'message' || !json.hasOwnProperty(propertyName)) continue;
     try {

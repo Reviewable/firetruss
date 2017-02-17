@@ -35,7 +35,7 @@ export default class Truss {
     }
     this._rootUrl = rootUrl.replace(/\/$/, '');
     this._keyGenerator = new KeyGenerator();
-    this._dispatcher = new Dispatcher();
+    this._dispatcher = new Dispatcher(bridge);
 
     this._metaTree = new MetaTree(this._rootUrl, bridge);
     Object.defineProperty(this, 'meta', {

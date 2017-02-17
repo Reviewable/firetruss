@@ -3,10 +3,18 @@ import {escapeKey, unescapeKey} from './utils.js';
 import _ from 'lodash';
 
 
+const EMPTY_ANNOTATIONS = {};
+Object.freeze(EMPTY_ANNOTATIONS);
+
+
 export class Handle {
-  constructor(tree, path) {
+  constructor(tree, path, annotations) {
     this._tree = tree;
     this._path = path.replace(/^\/*/, '/').replace(/\/$/, '');
+    if (annotations) {
+      this._annotations = annotations;
+      Object.freeze(annotations);
+    }
   }
 
   get key() {
@@ -17,8 +25,7 @@ export class Handle {
   get parent() {return new Reference(this._tree, this._path.replace(/\/[^/]*$/, ''));}
 
   get annotations() {
-    if (!this._annotations) this._annotations = {};
-    return this._annotations;
+    return this._annotations || EMPTY_ANNOTATIONS;
   }
 
   peek(callback) {
@@ -37,8 +44,8 @@ export class Handle {
 
 
 export class Query extends Handle {
-  constructor(tree, path, spec) {
-    super(tree, path);
+  constructor(tree, path, spec, annotations) {
+    super(tree, path, annotations);
     this._spec = this._copyAndValidateSpec(spec);
   }
 
@@ -49,6 +56,11 @@ export class Query extends Handle {
 
   get constraints() {
     return this._spec;
+  }
+
+  annotate(annotations) {
+    return new Query(
+      this._tree, this._path, this._spec, _.extend({}, this._annotations, annotations));
   }
 
   _copyAndValidateSpec(spec) {
@@ -116,6 +128,10 @@ export class Reference extends Handle {
 
   toString() {
     return this._path;
+  }
+
+  annotate(annotations) {
+    return new Reference(this._tree, this._path, _.extend({}, this._annotations, annotations));
   }
 
   child() {

@@ -67,7 +67,8 @@ class Operation {
 
 
 export default class Dispatcher {
-  constructor() {
+  constructor(bridge) {
+    this._bridge = bridge;
     this._callbacks = {};
   }
 
@@ -165,13 +166,15 @@ export default class Dispatcher {
     this.markReady(operation);
     if (operation.error) {
       const onFailureCallbacks = this._getCallbacks('onFailure', operation.type);
-      if (onFailureCallbacks) {
-        setTimeout(0, () => {
-          _.each(onFailureCallbacks, onFailure => onFailure(operation));
-        });
-      }
+      return this._bridge.probeError(operation.error).then(() => {
+        if (onFailureCallbacks) {
+          setTimeout(0, () => {
+            _.each(onFailureCallbacks, onFailure => onFailure(operation));
+          });
+        }
+        return Promise.reject(operation.error);
+      });
     }
-    if (operation.error) return Promise.reject(operation.error);
   }
 }
 
