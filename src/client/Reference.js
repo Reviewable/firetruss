@@ -22,10 +22,44 @@ export class Handle {
     return this._key;
   }
   get path() {return this._path;}
-  get parent() {return new Reference(this._tree, this._path.replace(/\/[^/]*$/, ''));}
+  get _pathPrefix() {return this._path === '/' ? '' : this._path;}
+  get parent() {
+    return new Reference(this._tree, this._path.replace(/\/[^/]*$/, ''), this._annotations);
+  }
 
   get annotations() {
     return this._annotations || EMPTY_ANNOTATIONS;
+  }
+
+  child() {
+    if (!arguments.length) return this;
+    return new Reference(
+      this._tree, `${this._pathPrefix}/${_.map(arguments, key => escapeKey(key)).join('/')}`,
+      this._annotations
+    );
+  }
+
+  children() {
+    if (!arguments.length) return this;
+    const escapedKeys = [];
+    for (let i = 0; i < arguments.length; i++) {
+      const arg = arguments[i];
+      if (_.isArray(arg)) {
+        const mapping = {};
+        const subPath = `${this._pathPrefix}/${escapedKeys.join('/')}`;
+        const rest = _.slice(arguments, i + 1);
+        for (let key of arg) {
+          const subRef =
+            new Reference(this._tree, `${subPath}/${escapeKey(key)}`, this._annotations);
+          mapping[key] = subRef.children.apply(subRef, rest);
+        }
+        return mapping;
+      } else {
+        escapedKeys.push(escapeKey(arg));
+      }
+    }
+    return new Reference(
+      this._tree, `${this._pathPrefix}/${escapedKeys.join('/')}`, this._annotations);
   }
 
   peek(callback) {
@@ -117,8 +151,8 @@ export class Query extends Handle {
 export class Reference extends Handle {
 // jshint latedef:nofunc
 
-  constructor(tree, path) {
-    super(tree, path);
+  constructor(tree, path, annotations) {
+    super(tree, path, annotations);
   }
 
   // Vue-bound
@@ -134,32 +168,6 @@ export class Reference extends Handle {
     return new Reference(this._tree, this._path, _.extend({}, this._annotations, annotations));
   }
 
-  child() {
-    if (!arguments.length) return this;
-    return new Reference(
-      this._tree, `${this._path}/${_.map(arguments, key => escapeKey(key)).join('/')}`);
-  }
-
-  children() {
-    if (!arguments.length) return this;
-    const escapedKeys = [];
-    _.each(arguments, (arg, i) => {
-      if (_.isArray(arg)) {
-        const mapping = {};
-        const subPath = `${this._path}/${escapedKeys.join('/')}`;
-        const rest = _.slice(arguments, i + 1);
-        _.each(arg, key => {
-          const subRef = new Reference(this._tree, `${subPath}/${escapeKey(key)}`);
-          mapping[key] = subRef.children.apply(subRef, rest);
-        });
-        return mapping;
-      } else {
-        escapedKeys.push(escapeKey(arg));
-      }
-    });
-    return new Reference(this._tree, `${this._path}/${escapedKeys.join('/')}`);
-  }
-
   query(spec) {
     return new Query(this._tree, this._path, spec);
   }
@@ -167,7 +175,7 @@ export class Reference extends Handle {
   set(value) {}  // TODO: implement
   update(values) {}  // TODO: implement
 
-  commit(options, updateFunction) {
+  commit(updateFunction) {
     // TODO: revise
     // const options = {
     //   applyLocally: applyLocally === undefined ? updateFunction.applyLocally : applyLocally
