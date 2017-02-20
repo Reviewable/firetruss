@@ -172,8 +172,19 @@ export class Reference extends Handle {
     return new Query(this._tree, this._path, spec);
   }
 
-  set(value) {}  // TODO: implement
-  update(values) {}  // TODO: implement
+  set(value) {
+    return this._tree.update({[this.path]: value}, 'set', this);
+  }
+
+  update(values) {
+    const rootPath = this._pathPrefix + '/';
+    _.each(values, (value, key) => {
+      if (!(_.startsWith(key, rootPath) && key.length > rootPath.length)) {
+        throw new Error(`Update item is not a descendant of target ref: ${key}`);
+      }
+    });
+    return this._tree.update(values, 'update', this);
+  }
 
   commit(updateFunction) {
     // TODO: revise

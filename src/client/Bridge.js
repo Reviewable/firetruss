@@ -272,8 +272,8 @@ export default class Bridge {
     return this._send({msg: 'unauth', url});
   }
 
-  set(url, value) {return this._send({msg: 'set', url, value});}
-  update(url, value) {return this._send({msg: 'update', url, value});}
+  set(url, value, writeSerial) {return this._send({msg: 'set', url, value, writeSerial});}
+  update(url, value, writeSerial) {return this._send({msg: 'update', url, value, writeSerial});}
 
   on(listenerKey, url, spec, eventType, snapshotCallback, cancelCallback, context, options) {
     const handle = {

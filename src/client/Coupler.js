@@ -212,8 +212,8 @@ class Node {
   }
 
   collectCoupledDescendantPaths(paths) {
-    if (paths) paths[this.path] = this.active;
-    if (!paths) paths = [];
+    if (!paths) paths = {};
+    paths[this.path] = this.active;
     if (!this.active) {
       _.each(this.children, child => {child.collectCoupledDescendantPaths(paths);});
     }
@@ -306,7 +306,7 @@ export default class Coupler {
       if (node.listening) node.unlisten();
     }
     if (!node.active) {
-      const coupledDescendantPaths = node.collectCoupledDescendantPaths(segments);
+      const coupledDescendantPaths = node.collectCoupledDescendantPaths();
       this._prunePath(segments.join('/'), coupledDescendantPaths);
       for (let i = ancestors.length - 1; i > 0; i--) {
         node = ancestors[i];
@@ -343,6 +343,16 @@ export default class Coupler {
       if (node.active) return true;
     }
     return false;
+  }
+
+  findCoupledDescendantPaths(path) {
+    const segments = path.split('/');
+    let node;
+    for (let segment of segments) {
+      node = segment ? node.children && node.children[segment] : this._root;
+      if (!node) break;
+    }
+    return node ? node.collectCoupledDescendantPaths() : {};
   }
 
   isSubtreeReady(path) {

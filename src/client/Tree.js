@@ -13,6 +13,8 @@ export default class Tree {
     this._bridge = bridge;
     this._dispatcher = dispatcher;
     this._firebasePropertyEditAllowed = false;
+    this._writeSerial = 0;
+    this._localWrites = {};
     this._coupler = new Coupler(
       rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
     this._vue = new Vue({data: {$root: undefined}});
@@ -94,6 +96,74 @@ export default class Tree {
     }
   }
 
+  update(values, method, ref) {
+    const numValues = _.size(values);
+    if (!numValues) return;
+    this._applyLocalWrite(values);
+    const url = this.rootUrl + this._extractCommonPathPrefix(values);
+    return this._dispatcher.execute('write', method, ref, () => {
+      if (numValues === 1) {
+        return this._bridge.set(url, values[''], this._writeSerial);
+      } else {
+        return this._bridge.update(url, values, this._writeSerial);
+      }
+    });
+  }
+
+  _applyLocalWrite(values) {
+    // TODO: correctly apply local writes that impact queries.  Currently, a local write will update
+    // any objects currently selected by a query, but won't add or remove results.
+    this._writeSerial++;
+    _.each(values, (value, path) => {
+      const coupledDescendantPaths = this._coupler.findCoupledDescendantPaths(path);
+      if (_.isEmpty(coupledDescendantPaths)) return;
+      const offset = (path === '/' ? 0 : path.length) + 1;
+      for (let descendantPath of coupledDescendantPaths) {
+        const subPath = descendantPath.slice(offset);
+        let subValue = value;
+        if (subPath) {
+          const segments = subPath.split('/');
+          for (let segment of segments) {
+            subValue = subValue[unescapeKey(segment)];
+            if (subValue === undefined) break;
+          }
+        }
+        if (subValue === undefined || subValue === null) {
+          this._prune(subPath);
+        } else {
+          const key = unescapeKey(_.last(descendantPath.split('/')));
+          this._plantValue(descendantPath, key, subValue, this._scaffoldAncestors(descendantPath));
+        }
+        this._localWrites[descendantPath] = this._writeSerial;
+      }
+    });
+  }
+
+  _extractCommonPathPrefix(values) {
+    let prefixSegments;
+    _.each(values, (value, path) => {
+      const segments = path === '/' ? [] : path.split('/');
+      if (prefixSegments) {
+        let firstMismatchIndex = 0;
+        const maxIndex = Math.min(prefixSegments.length, segments.length);
+        while (firstMismatchIndex < maxIndex &&
+               prefixSegments[firstMismatchIndex] === segments[firstMismatchIndex]) {
+          firstMismatchIndex++;
+        }
+        prefixSegments = prefixSegments.slice(0, firstMismatchIndex);
+        if (!prefixSegments.length) return false;
+      } else {
+        prefixSegments = segments;
+      }
+    });
+    const pathPrefix = '/' + prefixSegments.join('/');
+    _.each(_.keys(values), key => {
+      values[key.slice(pathPrefix.length + 1)] = values[key];
+      delete values[key];
+    });
+    return pathPrefix;
+  }
+
   /**
    * Creates a Truss object and sets all its basic properties: path segment variables, user-defined
    * properties, and computed properties.  The latter two will be enumerable so that Vue will pick
@@ -147,31 +217,38 @@ export default class Tree {
   }
 
   _integrateSnapshot(snap) {
+    _.each(_.keys(this._localWrites), (writeSerial, path) => {
+      if (snap.writeSerial >= writeSerial) delete this._localWrites[path];
+    });
     if (snap.exists) {
-      this._plantValue(snap.path, snap.key, snap.value, this._scaffoldAncestors(snap.path));
+      const parent = this._scaffoldAncestors(snap.path, true);
+      if (parent) this._plantValue(snap.path, snap.key, snap.value, parent, true);
     } else {
-      this._prune(snap.path);
+      this._prune(snap.path, null, true);
     }
   }
 
-  _scaffoldAncestors(path) {
+  _scaffoldAncestors(path, remoteWrite) {
     let object;
     const segments = _(path).split('/').dropRight().value();
     _.each(segments, (segment, i) => {
       const childKey = unescapeKey(segment);
       let child = childKey ? object[childKey] : this.root;
       if (!child) {
-        child = this._plantValue(segments.slice(0, i + 1).join('/'), childKey, {}, object);
+        const ancestorPath = segments.slice(0, i + 1).join('/');
+        if (remoteWrite && this._localWrites[ancestorPath || '/']) return;
+        child = this._plantValue(ancestorPath, childKey, {}, object);
       }
       object = child;
     });
     return object;
   }
 
-  _plantValue(path, key, value, parent) {
+  _plantValue(path, key, value, parent, remoteWrite) {
     if (value === null || value === undefined) {
       throw new Error('Snapshot includes invalid value: ' + value);
     }
+    if (remoteWrite && this._localWrites[path]) return;
     if (!_.isArray(value) && !_.isObject(value)) {
       this._setFirebaseProperty(parent, key, value);
       return;
@@ -183,12 +260,13 @@ export default class Tree {
       this._completeCreateObject(object);
     }
     _.each(value, (item, escapedChildKey) => {
-      this._plantValue(joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object);
+      this._plantValue(
+        joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite);
     });
     _.each(object, (item, childKey) => {
       const escapedChildKey = escapeKey(childKey);
       if (!value.hasOwnProperty(escapedChildKey)) {
-        this._prune(joinPath(path, escapedChildKey));
+        this._prune(joinPath(path, escapedChildKey), null, remoteWrite);
       }
     });
     this._plantPlaceholders(object, path);
@@ -204,12 +282,33 @@ export default class Tree {
     });
   }
 
-  _prune(path, coupledDescendantPaths) {
+  _prune(path, lockedDescendantPaths, remoteWrite) {
+    lockedDescendantPaths = lockedDescendantPaths || {};
     const object = this._getObject(path);
-    if (coupledDescendantPaths && coupledDescendantPaths.length || !this._pruneAncestors(object)) {
+    if (!object) return;
+    if (remoteWrite && this._avoidLocalWritePaths(path, lockedDescendantPaths)) return;
+    if (!_.isEmpty(lockedDescendantPaths) || !this._pruneAncestors(object)) {
       // The target object is a placeholder, and all ancestors are placeholders or otherwise needed
       // as well, so we can't delete it.  Instead, dive into its descendants to delete what we can.
-      this._pruneDescendants(object, coupledDescendantPaths);
+      this._pruneDescendants(object, lockedDescendantPaths);
+    }
+  }
+
+  _avoidLocalWritePaths(path, lockedDescendantPaths) {
+    for (let localWritePath in this._localWrites) {
+      if (!this._localWrites.hasOwnProperty(localWritePath)) continue;
+      if (path === localWritePath || localWritePath === '/' ||
+          _.startsWith(path, localWritePath + '/')) return true;
+      if (path === '/' || _.startsWith(localWritePath, path + '/')) {
+        const segments = localWritePath.split('/');
+        for (let i = segments.length; i > 0; i--) {
+          const subPath = segments.slice(0, i).join('/');
+          const active = i === segments.length;
+          if (lockedDescendantPaths[subPath] || lockedDescendantPaths[subPath] === active) break;
+          lockedDescendantPaths[subPath] = active;
+          if (subPath === path) break;
+        }
+      }
     }
   }
 
@@ -237,26 +336,26 @@ export default class Tree {
     return _.some(object, value => this._holdsConcreteData(value, ghostObjects));
   }
 
-  _pruneDescendants(object, coupledDescendantPaths) {
-    if (coupledDescendantPaths[object.$path]) return true;
+  _pruneDescendants(object, lockedDescendantPaths) {
+    if (lockedDescendantPaths[object.$path]) return true;
     let coupledDescendantFound = false;
     _.each(object, (value, key) => {
       let shouldDelete = true;
-      let valueCoupled;
-      if (coupledDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
+      let valueLocked;
+      if (lockedDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
         shouldDelete = false;
-        valueCoupled = true;
+        valueLocked = true;
       } else if (value.$truss) {
         if (this._modeler.isPlaceholder(value.$path)) {
-          valueCoupled = this._pruneDescendants(value, coupledDescendantPaths);
+          valueLocked = this._pruneDescendants(value, lockedDescendantPaths);
           shouldDelete = false;
-        } else if (_.has(coupledDescendantPaths, value.$path)) {
-          valueCoupled = this._pruneDescendants(value);
-          shouldDelete = !valueCoupled;
+        } else if (_.has(lockedDescendantPaths, value.$path)) {
+          valueLocked = this._pruneDescendants(value);
+          shouldDelete = !valueLocked;
         }
       }
       if (shouldDelete) this._deleteFirebaseProperty(object, key);
-      coupledDescendantFound = coupledDescendantFound || valueCoupled;
+      coupledDescendantFound = coupledDescendantFound || valueLocked;
     });
     return coupledDescendantFound;
   }

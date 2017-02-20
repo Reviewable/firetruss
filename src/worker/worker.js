@@ -136,6 +136,7 @@ class Fireworker {
   constructor(port) {
     this.ping();
     this._port = port;
+    this._lastWriteSerial = 0;
     this._callbacks = {};
     this._messages = [];
     this._flushMessageQueue = this._flushMessageQueue.bind(this);
@@ -183,6 +184,7 @@ class Fireworker {
     try {
       const fn = this[message.msg];
       if (typeof fn !== 'function') throw new Error('Unknown message: ' + message.msg);
+      if (message.writeSerial) this._lastWriteSerial = message.writeSerial;
       promise = Promise.resolve(fn.call(this, message));
     } catch(e) {
       promise = Promise.reject(e);
@@ -300,11 +302,9 @@ class Fireworker {
         });
       }
     } else {
-      const snapshotJson = snapshotToJson(snapshot, options);
+      const snapshotJson = this._snapshotToJson(snapshot, options);
       if (options.sync) options.branch.set(snapshotJson.value);
-      this._send({
-        msg: 'callback', id: callbackId, args: [null, snapshotJson]
-      });
+      this._send({msg: 'callback', id: callbackId, args: [null, snapshotJson]});
       options.rest = true;
     }
   }
@@ -330,7 +330,8 @@ class Fireworker {
         return {stale, value: currentValue, hash: currentHash};
       } else {
         return {
-          stale: false, committed: result.committed, snapshotJson: snapshotToJson(result.snapshot)
+          stale: false, committed: result.committed,
+          snapshotJson: this._snapshotToJson(result.snapshot)
         };
       }
     }, error => {
@@ -340,6 +341,25 @@ class Fireworker {
       }
       return Promise.reject(error);
     });
+  }
+
+  _snapshotToJson(snapshot, options) {
+    const path =
+      decodeURIComponent(snapshot.ref().toString().replace(/.*?:\/\/[^/]*/, '').replace(/\/$/, ''));
+    if (options && options.omitValue) {
+      return {path, exists: snapshot.exists(), writeSerial: this._lastWriteSerial};
+    } else {
+      try {
+        return {
+          path, value: normalizeFirebaseValue(snapshot.val()), writeSerial: this._lastWriteSerial
+        };
+      } catch (e) {
+        return {
+          path, exists: snapshot.exists(), valueError: errorToJson(e),
+          writeSerial: this._lastWriteSerial
+        };
+      }
+    }
   }
 
   onDisconnect({url, method, value}) {
@@ -428,20 +448,6 @@ function errorToJson(error) {
     json[propertyName] = error[propertyName];
   }
   return json;
-}
-
-function snapshotToJson(snapshot, options) {
-  const path =
-    decodeURIComponent(snapshot.ref().toString().replace(/.*?:\/\/[^/]*/, '').replace(/\/$/, ''));
-  if (options && options.omitValue) {
-    return {path, exists: snapshot.exists()};
-  } else {
-    try {
-      return {path, value: normalizeFirebaseValue(snapshot.val())};
-    } catch (e) {
-      return {path, exists: snapshot.exists(), valueError: errorToJson(e)};
-    }
-  }
 }
 
 function createRef(url, spec, context) {
