@@ -104,18 +104,22 @@ export default class Connector {
     if (!descriptor) return;
     if (descriptor instanceof Reference) {
       const updateFn = this._scope ? this._updateScopeRef.bind(this, key) : null;
-      this._disconnects[key] = this._tree.connectReference(descriptor, updateFn);
+      this._disconnects[key] = this._tree.connectReference(descriptor, updateFn, this._method);
     } else if (descriptor instanceof Query) {
       const updateFn = this._scope ? this._updateScopeQuery.bind(this, key) : null;
-      this._disconnects[key] = this._tree.connectQuery(descriptor, updateFn);
+      this._disconnects[key] = this._tree.connectQuery(descriptor, updateFn, this._method);
     } else {
       const subScope = {};
+      const subConnector = this._subConnectors[key] =
+        new Connector(subScope, descriptor, this._tree, this._method);
       if (this._scope) {
-        // TODO: set only after subconnector is ready (initial values filled in)
-        Vue.set(this._scope, key, subScope);
-        angular.digest();
+        const unwatch = this._vue.$watch(() => subConnector.ready, subReady => {
+          if (!subReady) return;
+          unwatch();
+          Vue.set(this._scope, key, subScope);
+          angular.digest();
+        }, {immediate: true});
       }
-      this._subConnectors[key] = new Connector(subScope, descriptor, this._tree, this._method);
     }
   }
 

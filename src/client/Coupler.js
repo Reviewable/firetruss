@@ -229,16 +229,11 @@ export default class Coupler {
     this._dispatcher = dispatcher;
     this._applySnapshot = applySnapshot;
     this._prunePath = prunePath;
-    this._vue = new Vue({data: {$root: new Node(this, '/'), $queryHandlers: {}}});
+    this._vue = new Vue({data: {root: new Node(this, '/'), queryHandlers: {}}});
   }
 
-  get _root() {
-    return this._vue.$data.$root;  // Access indirectly to leave dependency trace.
-  }
-
-  get _queryHandler() {
-    return this._vue.$data.$queryHandlers;  // Access indirectly to leave dependency trace.
-  }
+  get _root() {return this._vue.root;}
+  get _queryHandlers() {return this._vue.queryHandlers;}
 
   destroy() {
     _.each(this._queryHandlers, queryHandler => {queryHandler.destroy();});
