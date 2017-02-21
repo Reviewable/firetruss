@@ -132,13 +132,12 @@ export default class Truss {
       simulatedTokenGenerator, maxSimulationDuration, callFilter);
   }
 
-  static escapeKey(key) {
-    return escapeKey(key);
+  static debounceAngularDigest(wait) {
+    angularCompatibility.debounceDigest(wait);
   }
 
-  static unescapeKey(escapedKey) {
-    return unescapeKey(escapedKey);
-  }
+  static escapeKey(key) {return escapeKey(key);}
+  static unescapeKey(escapedKey) {return unescapeKey(escapedKey);}
 
   static get SERVER_TIMESTAMP() {return SERVER_TIMESTAMP;}
 }
