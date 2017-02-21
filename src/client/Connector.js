@@ -6,12 +6,12 @@ import Vue from 'vue';
 
 
 export default class Connector {
-  constructor(scope, connections, tree) {
-    // TODO: allow digest options, etc.
+  constructor(scope, connections, tree, method) {
     connections.freeze();
     this._scope = scope;
     this._connections = connections;
     this._tree = tree;
+    this._method = method;
     this._subConnectors = {};
     this._currentDescriptors = {};
     this._disconnects = {};
@@ -115,7 +115,7 @@ export default class Connector {
         Vue.set(this._scope, key, subScope);
         angular.digest();
       }
-      this._subConnectors[key] = new Connector(subScope, descriptor, this._tree);
+      this._subConnectors[key] = new Connector(subScope, descriptor, this._tree, this._method);
     }
   }
 

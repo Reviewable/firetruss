@@ -75,7 +75,7 @@ export default class Truss {
       connections = scope;
       scope = undefined;
     }
-    return new Connector(scope, connections, this._tree);
+    return new Connector(scope, connections, this._tree, 'connect');
   }
 
   // target is Reference, Query, or connection Object like above
@@ -83,7 +83,7 @@ export default class Truss {
     callback = wrapPromiseCallback(callback);
     return new Promise((resolve, reject) => {
       const scope = {};
-      const connector = this.connect(scope, {result: target});
+      const connector = new Connector(scope, {result: target}, this._tree, 'peek');
       const vue = new Vue();
       vue.$watch(() => connector.ready, ready => {
         if (!ready) return;

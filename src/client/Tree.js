@@ -75,9 +75,9 @@ export default class Tree {
     this._vue.$destroy();
   }
 
-  connectReference(ref, valueCallback) {
+  connectReference(ref, valueCallback, method) {
     this._checkHandle(ref);
-    const operation = this._dispatcher.createOperation('read', 'connect', ref);
+    const operation = this._dispatcher.createOperation('read', method, ref);
     let unwatch;
     if (valueCallback) {
       const segments = _(ref.path).split('/').map(segment => unescapeKey(segment)).value();
@@ -103,9 +103,9 @@ export default class Tree {
     return this._coupler.isSubtreeReady(ref.path);
   }
 
-  connectQuery(query, keysCallback) {
+  connectQuery(query, keysCallback, method) {
     this._checkHandle(query);
-    const operation = this._dispatcher.createOperation('read', 'connect', query);
+    const operation = this._dispatcher.createOperation('read', method, query);
     operation._disconnect = this._disconnectQuery.bind(this, query, operation);
     this._dispatcher.begin(operation).then(() => {
       if (operation.running) this._coupler.subscribe(query, operation, keysCallback);
@@ -177,7 +177,9 @@ export default class Tree {
       });
     };
 
-    return this._truss.peek(ref, attemptTransaction);
+    return this._truss.peek(ref, () => {
+      return this._dispatcher.execute('write', 'commit', ref, attemptTransaction);
+    });
   }
 
   _applyLocalWrite(values) {
