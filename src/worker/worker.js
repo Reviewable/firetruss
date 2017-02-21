@@ -1,4 +1,4 @@
-/* globals Firebase, CryptoJS, setImmediate, setInterval */
+/* globals Firebase, setImmediate, setInterval */
 
 const fireworkers = [];
 let simulationQueue = Promise.resolve(), consoleIntercepted = false, simulationConsoleLogs;
@@ -314,31 +314,38 @@ class Fireworker {
     this._send({msg: 'callback', id: callbackId, args: [errorToJson(error)]});
   }
 
-  transaction({url, oldHash, newValue, options}) {
+  transaction({url, oldValue, relativeUpdates}) {
     const ref = createRef(url);
-    let stale, currentValue, currentHash;
+    let stale;
 
     return ref.transaction(value => {
-      currentValue = value;
-      currentHash = hashJson(value);
-      stale = oldHash !== currentHash;
+      value = normalizeFirebaseValue(value);
+      stale = !areEqualNormalFirebaseValues(value, oldValue);
       if (stale) return;
-      if (newValue === undefined && options.safeAbort) return value;
-      return newValue;
-    }, undefined, options.applyLocally).then(result => {
-      if (stale) {
-        return {stale, value: currentValue, hash: currentHash};
-      } else {
-        return {
-          stale: false, committed: result.committed,
-          snapshotJson: this._snapshotToJson(result.snapshot)
-        };
+      if (relativeUpdates) {
+        for (let relativePath in relativeUpdates) {
+          if (!relativeUpdates.hasOwnProperty(relativePath)) continue;
+          if (relativePath) {
+            const segments = relativePath.split('/');
+            if (value === undefined || value === null) value = {};
+            let object = value;
+            for (let i = 0; i < segments.length - 1; i++) {
+              const key = segments[i];
+              let child = object[key];
+              if (child === undefined || child === null) child = object[key] = {};
+              object = child;
+            }
+            object[segments[segments.length - 1]] = relativeUpdates[relativePath];
+          } else {
+            value = relativeUpdates[relativePath];
+          }
+        }
       }
+      return value;
+    }).then(result => {
+      return !stale;
     }, error => {
-      if (options.nonsequential && error.message === 'set') {
-        return ref.once('value').then(
-          value => ({stale: true, value: value, hash: hashJson(value)}));
-      }
+      if (error.message === 'set' || error.message === 'disconnect') return false;
       return Promise.reject(error);
     });
   }
@@ -490,45 +497,19 @@ function normalizeFirebaseValue(value) {
   return value;
 }
 
-function hashJson(json) {
-  if (json === null) return null;
-  const sha1 = CryptoJS.algo.SHA1.create();
-  _hashJson(json, sha1);
-  return 'sha1:' + sha1.finalize().toString();
-}
 
-function _hashJson(json, sha1) {
-  let type = typeof json;
-  if (type === 'object') {
-    if (json === null) type = 'null';
-    else if (Array.isArray(json)) type = 'array';
-    else if (json instanceof Boolean) type = 'boolean';
-    else if (json instanceof Number) type = 'number';
-    else if (json instanceof String) type = 'string';
+function areEqualNormalFirebaseValues(a, b) {
+  if (a === b) return true;
+  if (!(typeof a === 'object' && typeof b === 'object')) return false;
+  for (let key in a) {
+    if (!a.hasOwnProperty(key) || !b.hasOwnProperty(key)) return false;
+    if (!areEqualNormalFirebaseValues(a[key], b[key])) return false;
   }
-  switch (type) {
-    case 'undefined': sha1.update('u'); break;
-    case 'null': sha1.update('n'); break;
-    case 'boolean': sha1.update(json ? 't' : 'f'); break;
-    case 'number': sha1.update('x' + json); break;
-    case 'string': sha1.update('s' + json); break;
-    case 'array':
-      sha1.update('[');
-      for (let i = 0; i < json.length; i++) _hashJson(json[i], sha1);
-      sha1.update(']');
-      break;
-    case 'object':
-      sha1.update('{');
-      const keys = Object.keys(json);
-      keys.sort();
-      for (let i = 0; i < keys.length; i++) _hashJson(json[keys[i]], sha1);
-      sha1.update('}');
-      break;
-    default:
-      throw new Error(`Unable to hash non-JSON data of type ${type}: ${json}`);
+  for (let key in b) {
+    if (!a.hasOwnProperty(key) || !b.hasOwnProperty(key)) return false;
   }
+  return true;
 }
-
 
 function acceptConnections() {
   if (typeof onconnect !== 'undefined') {

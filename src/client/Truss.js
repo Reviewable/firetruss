@@ -8,9 +8,7 @@ import KeyGenerator from './KeyGenerator.js';
 import MetaTree from './MetaTree.js';
 import Reference from './Reference.js';
 import Tree from './Tree.js';
-import {
-  escapeKey, unescapeKey, wrapPromiseCallback, TIMESTAMP, ABORT_TRANSACTION_NOW
-} from './utils.js';
+import {escapeKey, unescapeKey, wrapPromiseCallback, SERVER_TIMESTAMP} from './utils.js';
 
 
 let bridge;
@@ -142,8 +140,7 @@ export default class Truss {
     return unescapeKey(escapedKey);
   }
 
-  static get TIMESTAMP() {return TIMESTAMP;}
-  static get ABORT_TRANSACTION_NOW() {return ABORT_TRANSACTION_NOW;}
+  static get SERVER_TIMESTAMP() {return SERVER_TIMESTAMP;}
 }
 
 angularCompatibility.defineModule(Truss);

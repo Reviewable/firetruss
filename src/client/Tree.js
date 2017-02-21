@@ -1,10 +1,43 @@
 import angularCompatibility from './angularCompatibility.js';
 import Coupler from './Coupler.js';
 import Modeler from './Modeler.js';
-import {escapeKey, unescapeKey} from './utils.js';
+import {escapeKey, unescapeKey, SERVER_TIMESTAMP} from './utils.js';
 
 import _ from 'lodash';
 import Vue from 'vue';
+
+
+class Transaction {
+  get outcome() {return this._outcome;}
+  get values() {return this._values;}
+
+  _setOutcome(value) {
+    if (this._outcome) throw new Error('Transaction already resolved with ' + this._outcome);
+    this._outcome = value;
+  }
+
+  abort() {
+    this._setOutcome('abort');
+  }
+
+  cancel() {
+    this._setOutcome('cancel');
+  }
+
+  set(value) {
+    if (value === undefined) throw new Error('Invalid argument: undefined');
+    this._setOutcome('set');
+    this._values = {'': value};
+  }
+
+  update(values) {
+    if (values === undefined) throw new Error('Invalid argument: undefined');
+    if (_.isEmpty(values)) return this.cancel();
+    this._setOutcome('update');
+    this._values = values;
+  }
+}
+
 
 export default class Tree {
   constructor(truss, rootUrl, bridge, dispatcher, classes) {
@@ -15,6 +48,7 @@ export default class Tree {
     this._firebasePropertyEditAllowed = false;
     this._writeSerial = 0;
     this._localWrites = {};
+    this._localWriteTimestamp = null;
     this._coupler = new Coupler(
       rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
     this._vue = new Vue({data: {$root: undefined}});
@@ -96,9 +130,10 @@ export default class Tree {
     }
   }
 
-  update(values, method, ref) {
+  update(ref, method, values) {
     const numValues = _.size(values);
     if (!numValues) return;
+    if (method === 'update') checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
     this._applyLocalWrite(values);
     const url = this.rootUrl + this._extractCommonPathPrefix(values);
     return this._dispatcher.execute('write', method, ref, () => {
@@ -110,10 +145,46 @@ export default class Tree {
     });
   }
 
+  commit(ref, updateFunction) {
+    const url = this._rootUrl + ref.path;
+    let tries = 0;
+
+    const attemptTransaction = () => {
+      if (tries++ >= 25) return Promise.reject(new Error('maxretry'));
+      const txn = new Transaction();
+      try {
+        updateFunction(txn);
+      } catch (e) {
+        return Promise.reject(e);
+      }
+      const oldValue = toFirebaseJson(this._getObject(ref.path));
+      switch (txn.outcome) {
+        case 'abort': return;
+        case 'cancel':
+          break;
+        case 'set':
+          this._applyLocalWrite({[ref.path]: txn.values['']});
+          break;
+        case 'update':
+          checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, txn.values);
+          this._applyLocalWrite(txn.values);
+          break;
+        default:
+          throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
+      }
+      return this._bridge.transaction(url, oldValue, txn.values).then(committed => {
+        if (!committed) return attemptTransaction();
+      });
+    };
+
+    return this._truss.peek(ref, attemptTransaction);
+  }
+
   _applyLocalWrite(values) {
     // TODO: correctly apply local writes that impact queries.  Currently, a local write will update
     // any objects currently selected by a query, but won't add or remove results.
     this._writeSerial++;
+    this._localWriteTimestamp = this._truss.now();
     _.each(values, (value, path) => {
       const coupledDescendantPaths = this._coupler.findCoupledDescendantPaths(path);
       if (_.isEmpty(coupledDescendantPaths)) return;
@@ -249,6 +320,7 @@ export default class Tree {
       throw new Error('Snapshot includes invalid value: ' + value);
     }
     if (remoteWrite && this._localWrites[path]) return;
+    if (value === SERVER_TIMESTAMP) value = this._localWriteTimestamp;
     if (!_.isArray(value) && !_.isObject(value)) {
       this._setFirebaseProperty(parent, key, value);
       return;
@@ -423,7 +495,7 @@ export default class Tree {
 
 function throwReadOnlyError() {throw new Error('Read-only property');}
 
-function joinPath() {
+export function joinPath() {
   const segments = [];
   for (let segment of arguments) {
     if (segment.charAt(0) === '/') segments.splice(0, segments.length);
@@ -431,5 +503,42 @@ function joinPath() {
   }
   if (segments[0] === '/') segments[0] = '';
   return segments.join('/');
+}
+
+export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativizePaths) {
+  const paths = _(values)
+    .keys().map(path => path === '/' ? '/' : (path + '/')).sortBy(path => path.length).value();
+  _.each(_.keys(values), path => {
+    if (path.charAt(0) !== '/') {
+      throw new Error('Update item does not have an absolute path: ' + path);
+    }
+    if (!(path === rootPath || rootPath === '/' ||
+          _.startsWith(path, rootPath + '/') && path.length > rootPath.length + 1)) {
+      throw new Error(`Update item is not a descendant of target ref: ${path}`);
+    }
+    for (let otherPath of paths) {
+      if (otherPath.length > path.length) break;
+      if (path !== otherPath && _.startsWith(path, otherPath)) {
+        throw new Error(`Update items overlap: ${otherPath} and ${path}`);
+      }
+    }
+    if (relativizePaths) {
+      values[path.slice(rootPath === '/' ? 1 : rootPath.length + 1)] = values[path];
+      delete values[path];
+    }
+  });
+}
+
+export function toFirebaseJson(object) {
+  if (typeof object === 'object') {
+    const result = {};
+    for (let key in object) {
+      if (!object.hasOwnProperty(key)) continue;
+      result[escapeKey(key)] = toFirebaseJson(object[key]);
+    }
+    return result;
+  } else {
+    return object;
+  }
 }
 

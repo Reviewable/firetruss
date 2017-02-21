@@ -173,43 +173,15 @@ export class Reference extends Handle {
   }
 
   set(value) {
-    return this._tree.update({[this.path]: value}, 'set', this);
+    return this._tree.update(this, 'set', {[this.path]: value});
   }
 
   update(values) {
-    const rootPath = this._pathPrefix + '/';
-    _.each(values, (value, key) => {
-      if (!(_.startsWith(key, rootPath) && key.length > rootPath.length)) {
-        throw new Error(`Update item is not a descendant of target ref: ${key}`);
-      }
-    });
-    return this._tree.update(values, 'update', this);
+    return this._tree.update(this, 'update', values);
   }
 
   commit(updateFunction) {
-    // TODO: revise
-    // const options = {
-    //   applyLocally: applyLocally === undefined ? updateFunction.applyLocally : applyLocally
-    // };
-    // ['nonsequential', 'safeAbort'].forEach(key => options[key] = updateFunction[key]);
-    for (let key in options) {
-      if (options.hasOwnProperty(key) && options[key] === undefined) {
-        options[key] = Truss.DefaultTransactionOptions[key];
-      }
-    }
-
-    // Hold the ref value live until transaction complete, otherwise it'll keep retrying on a null
-    // value.
-    this.on('value', noop);  // No error handling -- if this fails, so will the transaction.
-    return trackSlowness(
-      worker.transaction(this._url, updateFunction, options), 'write'
-    ).then(result => {
-      this.off('value', noop);
-      return result;
-    }, error => {
-      this.off('value', noop);
-      return Promise.reject(error);
-    });
+    return this._tree.commit(this, updateFunction);
   }
 }
 

@@ -1,6 +1,6 @@
 /* global setImmediate */
 
-import {unescapeKey, ABORT_TRANSACTION_NOW} from './utils.js';
+import {unescapeKey} from './utils.js';
 
 // jshint browser:true
 
@@ -335,31 +335,8 @@ export default class Bridge {
     }
   }
 
-  transaction(url, updateFunction, options) {
-    let tries = 0;
-
-    const attemptTransaction = (oldValue, oldHash) => {
-      if (tries++ >= 25) return Promise.reject(new Error('maxretry'));
-      let newValue;
-      try {
-        newValue = updateFunction(oldValue);
-      } catch (e) {
-        return Promise.reject(e);
-      }
-      if (newValue === ABORT_TRANSACTION_NOW ||
-          newValue === undefined && !options.safeAbort) {
-        return {committed: false, snapshot: new Snapshot({url, value: oldValue})};
-      }
-      return this._send({msg: 'transaction', url, oldHash, newValue, options}).then(result => {
-        if (result.stale) {
-          return attemptTransaction(result.value, result.hash);
-        } else {
-          return {committed: result.committed, snapshot: new Snapshot(result.snapshotJson)};
-        }
-      });
-    };
-
-    return attemptTransaction(null, null);
+  transaction(url, oldValue, relativeUpdates) {
+    return this._send({msg: 'transaction', url, oldValue, relativeUpdates});
   }
 
   onDisconnect(url, method, value) {

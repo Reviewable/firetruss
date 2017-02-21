@@ -22,5 +22,4 @@ export function wrapPromiseCallback(callback) {
   };
 }
 
-export const TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
-export const ABORT_TRANSACTION_NOW = Object.freeze(Object.create(null));
+export const SERVER_TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
