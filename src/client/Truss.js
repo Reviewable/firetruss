@@ -6,7 +6,7 @@ import Connector from './Connector.js';
 import Dispatcher from './Dispatcher.js';
 import KeyGenerator from './KeyGenerator.js';
 import MetaTree from './MetaTree.js';
-import Reference from './Reference.js';
+import {Handle, Reference} from './Reference.js';
 import Tree from './Tree.js';
 import {escapeKey, unescapeKey, wrapPromiseCallback, SERVER_TIMESTAMP} from './utils.js';
 
@@ -34,6 +34,7 @@ export default class Truss {
     this._rootUrl = rootUrl.replace(/\/$/, '');
     this._keyGenerator = new KeyGenerator();
     this._dispatcher = new Dispatcher(bridge);
+    this._vue = new Vue();
 
     this._metaTree = new MetaTree(this._rootUrl, bridge);
     Object.defineProperty(this, 'meta', {
@@ -47,6 +48,7 @@ export default class Truss {
   }
 
   destroy() {
+    this._vue.$destroy();
     this._tree.destroy();
     this._metaTree.destroy();
   }
@@ -74,6 +76,7 @@ export default class Truss {
     if (!connections) {
       connections = scope;
       scope = undefined;
+      if (connections instanceof Handle) connections = {_: connections};
     }
     return new Connector(scope, connections, this._tree, 'connect');
   }
@@ -84,10 +87,9 @@ export default class Truss {
     return new Promise((resolve, reject) => {
       const scope = {};
       const connector = new Connector(scope, {result: target}, this._tree, 'peek');
-      const vue = new Vue();
-      vue.$watch(() => connector.ready, ready => {
+      const unwatch = this._vue.$watch(() => connector.ready, ready => {
         if (!ready) return;
-        vue.$destroy();
+        unwatch();
         callback(scope.result).then(result => {
           connector.destroy();
           resolve(result);
