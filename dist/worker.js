@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  /* globals Firebase, CryptoJS, setImmediate, setInterval, self */
+  /* globals Firebase, setImmediate, setInterval */
 
   var fireworkers = [];
   var simulationQueue = Promise.resolve();
@@ -95,9 +95,64 @@
   self.localStorage = new LocalStorage();
 
 
+  var Branch = function Branch() {
+    this._root = null;
+  };
+
+  Branch.prototype.set = function set (value) {
+    this._root = value;
+  };
+
+  Branch.prototype.diff = function diff (value, pathPrefix) {
+    var updates = {};
+    var segments = pathPrefix === '/' ? [''] : pathPrefix.split('/');
+    if (this._diffRecursively(this._root, value, segments, updates)) {
+      this._root = value;
+      updates[pathPrefix] = value;
+    }
+    return updates;
+  };
+
+  Branch.prototype._diffRecursively = function _diffRecursively (oldValue, newValue, segments, updates) {
+      var this$1 = this;
+
+    if (oldValue === undefined) { oldValue = null; }
+    if (newValue === undefined) { newValue = null; }
+    if (oldValue === null) { return newValue !== null; }
+    if (oldValue instanceof Object && newValue instanceof Object) {
+      var replace = true;
+      var keysToReplace = [];
+      for (var childKey in newValue) {
+        if (!newValue.hasOwnProperty(childKey)) { continue; }
+        if (this$1._diffRecursively(
+            oldValue[childKey], newValue[childKey], segments.concat(childKey), updates)) {
+          keysToReplace.push(childKey);
+        } else {
+          replace = false;
+        }
+      }
+      if (replace) { return true; }
+      for (var childKey$1 in oldValue) {
+        if (!oldValue.hasOwnProperty(childKey$1) || newValue.hasOwnProperty(childKey$1)) { continue; }
+        updates[segments.concat(childKey$1).join('/')] = null;
+        delete oldValue[childKey$1];
+      }
+      for (var i = 0, list = keysToReplace; i < list.length; i += 1) {
+        var childKey$2 = list[i];
+
+          updates[segments.concat(childKey$2).join('/')] = newValue[childKey$2];
+        oldValue[childKey$2] = newValue[childKey$2];
+      }
+    } else {
+      return newValue !== oldValue;
+    }
+  };
+
+
   var Fireworker = function Fireworker(port) {
     this.ping();
     this._port = port;
+    this._lastWriteSerial = 0;
     this._callbacks = {};
     this._messages = [];
     this._flushMessageQueue = this._flushMessageQueue.bind(this);
@@ -109,7 +164,7 @@
       var url = ref.url;
 
     if (storage) { self.localStorage.init(storage); }
-    if (url) { new Firebase(url); }
+    if (url) { createRef(url); }
     return {
       exposedFunctionNames: Object.keys(Fireworker._exposed),
       firebaseSdkVersion: Firebase.SDK_VERSION
@@ -158,6 +213,7 @@
     try {
       var fn = this[message.msg];
       if (typeof fn !== 'function') { throw new Error('Unknown message: ' + message.msg); }
+      if (message.writeSerial) { this._lastWriteSerial = message.writeSerial; }
       promise = Promise.resolve(fn.call(this, message));
     } catch(e) {
       promise = Promise.reject(e);
@@ -201,22 +257,6 @@
     return createRef(url).authWithCustomToken(authToken, options);
   };
 
-  Fireworker.prototype.authAnonymously = function authAnonymously (ref) {
-      var url = ref.url;
-      var options = ref.options;
-
-    return createRef(url).authAnonymously(options);
-  };
-
-  Fireworker.prototype.authWithOAuthToken = function authWithOAuthToken (ref) {
-      var url = ref.url;
-      var provider = ref.provider;
-      var credentials = ref.credentials;
-      var options = ref.options;
-
-    return createRef(url).authWithOAuthToken(provider, credentials, options);
-  };
-
   Fireworker.prototype.unauth = function unauth (ref) {
       var url = ref.url;
 
@@ -257,38 +297,28 @@
   Fireworker.prototype.on = function on (ref) {
       var listenerKey = ref.listenerKey;
       var url = ref.url;
-      var terms = ref.terms;
+      var spec = ref.spec;
       var eventType = ref.eventType;
       var callbackId = ref.callbackId;
       var options = ref.options;
 
     options = options || {};
-    options.orderChildren = false;
-    if (terms) {
-      for (var i = 0, list = terms; i < list.length; i += 1) {
-        var term = list[i];
-
-          if (term[0] === 'orderByChild' || term[0] === 'orderByValue') {
-          options.orderChildren = true;
-          break;
-        }
-      }
-    }
+    if (options.sync) { options.branch = new Branch(); }
     var snapshotCallback = this._callbacks[callbackId] =
       this._onSnapshotCallback.bind(this, callbackId, options);
     snapshotCallback.listenerKey = listenerKey;
     snapshotCallback.eventType = eventType;
-    snapshotCallback.cancel = this.off.bind(this, {listenerKey: listenerKey, url: url, terms: terms, eventType: eventType, callbackId: callbackId});
+    snapshotCallback.cancel = this.off.bind(this, {listenerKey: listenerKey, url: url, spec: spec, eventType: eventType, callbackId: callbackId});
     var cancelCallback = this._onCancelCallback.bind(this, callbackId);
-    createRef(url, terms).on(eventType, snapshotCallback, cancelCallback);
-    options.skipCurrent = false;
+    createRef(url, spec).on(eventType, snapshotCallback, cancelCallback);
+    if (options.sync) { options.omitValue = true; }
   };
 
   Fireworker.prototype.off = function off (ref) {
       var this$1 = this;
       var listenerKey = ref.listenerKey;
       var url = ref.url;
-      var terms = ref.terms;
+      var spec = ref.spec;
       var eventType = ref.eventType;
       var callbackId = ref.callbackId;
 
@@ -309,14 +339,39 @@
         }
       }
     }
-    createRef(url, terms).off(eventType, snapshotCallback);
+    createRef(url, spec).off(eventType, snapshotCallback);
   };
 
   Fireworker.prototype._onSnapshotCallback = function _onSnapshotCallback (callbackId, options, snapshot) {
-    if (options.skipCurrent || options.skipCallback) { return; }
-    this._send({
-      msg: 'callback', id: callbackId, args: [null, snapshotToJson(snapshot, options)]
-    });
+      var this$1 = this;
+
+    if (options.sync && options.rest) {
+      var path = decodeURIComponent(
+        snapshot.ref().toString().replace(/.*?:\/\/[^/]*/, '').replace(/\/$/, ''));
+      var value;
+      try {
+        value = normalizeFirebaseValue(snapshot.val());
+      } catch (e) {
+        options.branch.set(null);
+        this._send({
+          msg: 'callback', id: callbackId,
+          args: [null, {path: path, exists: snapshot.exists(), valueError: errorToJson(e)}]
+        });
+      }
+      var updates = this.options.branch.diff(value, path);
+      for (var childPath in updates) {
+        if (!updates.hasOwnProperty(childPath)) { continue; }
+        this$1._send({
+          msg: 'callback', id: callbackId,
+          args: [null, {path: childPath, value: updates[childPath]}]
+        });
+      }
+    } else {
+      var snapshotJson = this._snapshotToJson(snapshot, options);
+      if (options.sync) { options.branch.set(snapshotJson.value); }
+      this._send({msg: 'callback', id: callbackId, args: [null, snapshotJson]});
+      options.rest = true;
+    }
   };
 
   Fireworker.prototype._onCancelCallback = function _onCancelCallback (callbackId, error) {
@@ -324,47 +379,63 @@
     this._send({msg: 'callback', id: callbackId, args: [errorToJson(error)]});
   };
 
-  Fireworker.prototype.once = function once (ref) {
-      var url = ref.url;
-      var terms = ref.terms;
-      var eventType = ref.eventType;
-      var options = ref.options;
-
-    return createRef(url, terms).once(eventType).then(
-      function (snapshot) { return snapshotToJson(snapshot, options); });
-  };
-
   Fireworker.prototype.transaction = function transaction (ref$1) {
       var url = ref$1.url;
-      var oldHash = ref$1.oldHash;
-      var newValue = ref$1.newValue;
-      var options = ref$1.options;
+      var oldValue = ref$1.oldValue;
+      var relativeUpdates = ref$1.relativeUpdates;
 
     var ref = createRef(url);
-    var stale, currentValue, currentHash;
+    var stale;
 
     return ref.transaction(function (value) {
-      currentValue = value;
-      currentHash = hashJson(value);
-      stale = oldHash !== currentHash;
+      value = normalizeFirebaseValue(value);
+      stale = !areEqualNormalFirebaseValues(value, oldValue);
       if (stale) { return; }
-      if (newValue === undefined && options.safeAbort) { return value; }
-      return newValue;
-    }, undefined, options.applyLocally).then(function (result) {
-      if (stale) {
-        return {stale: stale, value: currentValue, hash: currentHash};
-      } else {
-        return {
-          stale: false, committed: result.committed, snapshotJson: snapshotToJson(result.snapshot)
-        };
+      if (relativeUpdates) {
+        for (var relativePath in relativeUpdates) {
+          if (!relativeUpdates.hasOwnProperty(relativePath)) { continue; }
+          if (relativePath) {
+            var segments = relativePath.split('/');
+            if (value === undefined || value === null) { value = {}; }
+            var object = value;
+            for (var i = 0; i < segments.length - 1; i++) {
+              var key = segments[i];
+              var child = object[key];
+              if (child === undefined || child === null) { child = object[key] = {}; }
+              object = child;
+            }
+            object[segments[segments.length - 1]] = relativeUpdates[relativePath];
+          } else {
+            value = relativeUpdates[relativePath];
+          }
+        }
       }
+      return value;
+    }).then(function (result) {
+      return !stale;
     }, function (error) {
-      if (options.nonsequential && error.message === 'set') {
-        return ref.once('value').then(
-          function (value) { return ({stale: true, value: value, hash: hashJson(value)}); });
-      }
+      if (error.message === 'set' || error.message === 'disconnect') { return false; }
       return Promise.reject(error);
     });
+  };
+
+  Fireworker.prototype._snapshotToJson = function _snapshotToJson (snapshot, options) {
+    var path =
+      decodeURIComponent(snapshot.ref().toString().replace(/.*?:\/\/[^/]*/, '').replace(/\/$/, ''));
+    if (options && options.omitValue) {
+      return {path: path, exists: snapshot.exists(), writeSerial: this._lastWriteSerial};
+    } else {
+      try {
+        return {
+          path: path, value: normalizeFirebaseValue(snapshot.val()), writeSerial: this._lastWriteSerial
+        };
+      } catch (e) {
+        return {
+          path: path, exists: snapshot.exists(), valueError: errorToJson(e),
+          writeSerial: this._lastWriteSerial
+        };
+      }
+    }
   };
 
   Fireworker.prototype.onDisconnect = function onDisconnect (ref) {
@@ -465,87 +536,58 @@
     return json;
   }
 
-  function snapshotToJson(snapshot, options) {
-    var url = snapshot.ref().toString();
-    if (options && options.omitValue) {
-      return {url: url, exists: snapshot.exists(), hasChildren: snapshot.hasChildren()};
-    } else {
-      try {
-        var value = snapshot.val();
-        var childrenKeys;
-        if (options && options.orderChildren && typeof value === 'object') {
-          for (var key in value) {
-            if (!value.hasOwnProperty(key)) { continue; }
-            // Non-enumerable properties won't be transmitted when sending.
-            Object.defineProperty(value[key], '$key', {value: key});
-          }
-          childrenKeys = [];
-          snapshot.forEach(function (child) {childrenKeys.push(child.$key);});
-        }
-        return {url: url, value: value, childrenKeys: childrenKeys};
-      } catch (e) {
-        return {
-          url: url, exists: snapshot.exists(), hasChildren: snapshot.hasChildren(),
-          valueError: errorToJson(e)
-        };
-      }
-    }
-  }
-
-  function createRef(url, terms, context) {
+  function createRef(url, spec, context) {
     try {
       var ref = new Firebase(url, context);
-      if (terms) {
-        for (var i = 0, list = terms; i < list.length; i += 1) {
-          var term = list[i];
-
-          ref = ref[term[0]].apply(ref, term.slice(1));
+      if (spec) {
+        switch (spec.by) {
+          case '$key': ref = ref.orderByKey(); break;
+          case '$value': ref = ref.orderByValue(); break;
+          default: ref = ref.orderByChild(spec.by); break;
         }
+        if (spec.at) { ref = ref.equalTo(spec.at); }
+        else if (spec.from) { ref = ref.startAt(spec.from); }
+        else if (spec.to) { ref = ref.endAt(spec.to); }
+        if (spec.first) { ref = ref.limitToFirst(spec.first); }
+        else if (spec.last) { ref = ref.limitToLast(spec.last); }
       }
       return ref;
     } catch (e) {
-      e.extra = {url: url, terms: terms, context: context};
+      e.extra = {url: url, spec: spec, context: context};
       throw e;
     }
   }
 
-  function hashJson(json) {
-    if (json === null) { return null; }
-    var sha1 = CryptoJS.algo.SHA1.create();
-    _hashJson(json, sha1);
-    return 'sha1:' + sha1.finalize().toString();
+  function normalizeFirebaseValue(value) {
+    if (Array.isArray(value)) {
+      var normalValue = {};
+      for (var i = 0; i < value.length; i++) {
+        var item = value[i];
+        if (item === undefined || item === null) { continue; }
+        normalValue[i] = normalizeFirebaseValue(item);
+      }
+      return normalValue;
+    }
+    if (value instanceof Object) {
+      for (var key in value) {
+        if (value.hasOwnProperty(key)) { value[key] = normalizeFirebaseValue(value[key]); }
+      }
+    }
+    return value;
   }
 
-  function _hashJson(json, sha1) {
-    var type = typeof json;
-    if (type === 'object') {
-      if (json === null) { type = 'null'; }
-      else if (Array.isArray(json)) { type = 'array'; }
-      else if (json instanceof Boolean) { type = 'boolean'; }
-      else if (json instanceof Number) { type = 'number'; }
-      else if (json instanceof String) { type = 'string'; }
+
+  function areEqualNormalFirebaseValues(a, b) {
+    if (a === b) { return true; }
+    if (!(typeof a === 'object' && typeof b === 'object')) { return false; }
+    for (var key in a) {
+      if (!a.hasOwnProperty(key) || !b.hasOwnProperty(key)) { return false; }
+      if (!areEqualNormalFirebaseValues(a[key], b[key])) { return false; }
     }
-    switch (type) {
-      case 'undefined': sha1.update('u'); break;
-      case 'null': sha1.update('n'); break;
-      case 'boolean': sha1.update(json ? 't' : 'f'); break;
-      case 'number': sha1.update('x' + json); break;
-      case 'string': sha1.update('s' + json); break;
-      case 'array':
-        sha1.update('[');
-        for (var i = 0; i < json.length; i++) { _hashJson(json[i], sha1); }
-        sha1.update(']');
-        break;
-      case 'object':
-        sha1.update('{');
-        var keys = Object.keys(json);
-        keys.sort();
-        for (var i$1 = 0; i$1 < keys.length; i$1++) { _hashJson(json[keys[i$1]], sha1); }
-        sha1.update('}');
-        break;
-      default:
-        throw new Error(("Unable to hash non-JSON data of type " + type + ": " + json));
+    for (var key$1 in b) {
+      if (!a.hasOwnProperty(key$1) || !b.hasOwnProperty(key$1)) { return false; }
     }
+    return true;
   }
 
   function acceptConnections() {

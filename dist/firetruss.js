@@ -7,6 +7,38 @@
 	_ = 'default' in _ ? _['default'] : _;
 	Vue = 'default' in Vue ? Vue['default'] : Vue;
 
+	/* globals window */
+
+	var earlyDigestPending;
+	var bareDigest = function() {
+	  earlyDigestPending = true;
+	};
+
+	var angularProxy = {
+	  active: typeof window !== 'undefined' && window.angular,
+	  debounceDigest: function debounceDigest(wait) {
+	    if (wait) {
+	      angularProxy.digest = _.debounce(bareDigest, wait);
+	    } else {
+	      angularProxy.digest = bareDigest;
+	    }
+	  }
+	};
+	['digest', 'defineModule'].forEach(function (method) {angularProxy[method] = noop;});
+
+	if (angularProxy.active) {
+	  angularProxy.digest = bareDigest;
+	  window.angular.module('firetruss', []).run(['$rootScope', function($rootScope) {
+	    bareDigest = $rootScope.$evalAsync.bind($rootScope);
+	    if (earlyDigestPending) { bareDigest(); }
+	  }]);
+	  angularProxy.defineModule = function(Truss) {
+	    window.angular.module('firetruss').constant('Truss', Truss);
+	  };
+	}
+
+	function noop() {}
+
 	function escapeKey(key) {
 	  if (!key) { return key; }
 	  return key.toString().replace(/[\\\.\$\#\[\]\/]/g, function(char) {
@@ -21,123 +53,1572 @@
 	  });
 	}
 
-	var Query = function Query(truss, path, terms) {
-	  this._truss = truss;
-	  this._path = path.replace(/^\/?/, '/').replace(/\/$/, '');
-	  this._terms = terms;
+	function wrapPromiseCallback(callback) {
+	  return function() {
+	    try {
+	      return Promise.resolve(callback.apply(this, arguments));
+	    } catch (e) {
+	      return Promise.reject(e);
+	    }
+	  };
+	}
+
+	var SERVER_TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
+
+	/* global setImmediate */
+
+	// jshint browser:true
+
+	var bridge$1;
+
+
+	var Snapshot = function Snapshot(ref) {
+	  var path = ref.path;
+	  var value = ref.value;
+	  var valueError = ref.valueError;
+	  var exists = ref.exists;
+
+	  this._path = path;
+	  this._value = value;
+	  this._valueError = errorFromJson(valueError);
+	  this._exists = value === undefined ? exists || false : value !== null;
 	};
 
-	var prototypeAccessors$2 = { key: {},path: {},parent: {},ready: {} };
+	var prototypeAccessors$1 = { path: {},exists: {},value: {},key: {} };
 
-	prototypeAccessors$2.key.get = function () {
+	prototypeAccessors$1.path.get = function () {
+	  return this._path;
+	};
+
+	prototypeAccessors$1.exists.get = function () {
+	  return this._exists;
+	};
+
+	prototypeAccessors$1.value.get = function () {
+	  this._checkValue();
+	  return this._value;
+	};
+
+	prototypeAccessors$1.key.get = function () {
+	  if (this._key === undefined) { this._key = unescapeKey(this._path.replace(/.*\//, '')); }
+	  return this._key;
+	};
+
+	Snapshot.prototype._checkValue = function _checkValue () {
+	  if (this._valueError) { throw this._valueError; }
+	  if (this._value === undefined) { throw new Error('Value omitted from snapshot'); }
+	};
+
+	Object.defineProperties( Snapshot.prototype, prototypeAccessors$1 );
+
+
+	var Bridge = function Bridge(webWorker) {
+	  var this$1 = this;
+
+	  this._idCounter = 0;
+	  this._deferreds = {};
+	  this._suspended = false;
+	  this._servers = {};
+	  this._callbacks = {};
+	  this._simulatedTokenGenerator = null;
+	  this._maxSimulationDuration = 5000;
+	  this._simulatedCallFilter = null;
+	  this._inboundMessages = [];
+	  this._outboundMessages = [];
+	  this._flushMessageQueue = this._flushMessageQueue.bind(this);
+	  this._port = webWorker.port || webWorker;
+	  this._shared = !!webWorker.port;
+	  this._port.onmessage = this._receive.bind(this);
+	  window.addEventListener('unload', function () {this$1._send({msg: 'destroy'});});
+	  setInterval(function () {this$1._send({msg: 'ping'});}, 60 * 1000);
+	};
+
+	var staticAccessors$1 = { instance: {} };
+
+	Bridge.init = function init (webWorker) {
+	  var items = [];
+	  try {
+	    var storage = window.localStorage || window.sessionStorage;
+	    if (!storage) { return; }
+	    for (var i = 0; i < storage.length; i++) {
+	      var key = storage.key(i);
+	      items.push({key: key, value: storage.getItem(key)});
+	    }
+	  } catch (e) {
+	    // Some browsers don't like us accessing local storage -- nothing we can do.
+	  }
+	  return this._send({msg: 'init', storage: items});
+	};
+
+	staticAccessors$1.instance.get = function () {
+	  if (!bridge$1) { throw new Error('No web worker connected, please call Truss.connectWorker first'); }
+	  return bridge$1;
+	};
+
+	Bridge.prototype.suspend = function suspend (suspended) {
+	  if (suspended === undefined) { suspended = true; }
+	  if (this._suspended === suspended) { return; }
+	  this._suspended = suspended;
+	  if (!suspended) {
+	    this._receiveMessages(this._inboundMessages);
+	    this._inboundMessages = [];
+	    if (this._outboundMessages.length) { setImmediate(this._flushMessageQueue); }
+	  }
+	};
+
+	Bridge.prototype.debugPermissionDeniedErrors = function debugPermissionDeniedErrors (simulatedTokenGenerator, maxSimulationDuration, callFilter) {
+	  this._simulatedTokenGenerator = simulatedTokenGenerator;
+	  if (maxSimulationDuration !== undefined) { this._maxSimulationDuration = maxSimulationDuration; }
+	  this._simulatedCallFilter = callFilter || function() {return true;};
+	};
+
+	Bridge.prototype._send = function _send (message) {
+	    var this$1 = this;
+
+	  message.id = ++this._idCounter;
+	  var promise;
+	  if (message.oneWay) {
+	    promise = Promise.resolve();
+	  } else {
+	    promise = new Promise(function (resolve, reject) {
+	      this$1._deferreds[message.id] = {resolve: resolve, reject: reject};
+	    });
+	    var deferred = this._deferreds[message.id];
+	    deferred.promise = promise;
+	    promise.sent = new Promise(function (resolve) {
+	      deferred.resolveSent = resolve;
+	    });
+	    deferred.params = message;
+	  }
+	  if (!this._outboundMessages.length && !this._suspended) { setImmediate(this._flushMessageQueue); }
+	  this._outboundMessages.push(message);
+	  return promise;
+	};
+
+	Bridge.prototype._flushMessageQueue = function _flushMessageQueue () {
+	  this._port.postMessage(this._outboundMessages);
+	  this._outboundMessages = [];
+	};
+
+	Bridge.prototype._receive = function _receive (event) {
+	  if (this._suspended) {
+	    this._inboundMessages = this._inboundMessages.concat(event.data);
+	  } else {
+	    this._receiveMessages(event.data);
+	  }
+	};
+
+	Bridge.prototype._receiveMessages = function _receiveMessages (messages) {
+	    var this$1 = this;
+
+	  for (var i = 0, list = messages; i < list.length; i += 1) {
+	    var message = list[i];
+
+	      var fn = this$1[message.msg];
+	    if (typeof fn !== 'function') { throw new Error('Unknown message: ' + message.msg); }
+	    fn.call(this$1, message);
+	  }
+	};
+
+	Bridge.prototype.bindExposedFunction = function bindExposedFunction (name) {
+	  return (function() {
+	    return this._send({msg: 'call', name: name, args: Array.prototype.slice.call(arguments)});
+	  }).bind(this);
+	};
+
+	Bridge.prototype.resolve = function resolve (message) {
+	  var deferred = this._deferreds[message.id];
+	  if (!deferred) { throw new Error('Received resolution to inexistent Firebase call'); }
+	  delete this._deferreds[message.id];
+	  deferred.resolve(message.result);
+	};
+
+	Bridge.prototype.reject = function reject (message) {
+	  var deferred = this._deferreds[message.id];
+	  if (!deferred) { throw new Error('Received rejection of inexistent Firebase call'); }
+	  delete this._deferreds[message.id];
+	  deferred.reject(errorFromJson(message.error, deferred.params));
+	};
+
+	Bridge.prototype.probeError = function probeError (error) {
+	  var code = error.code || error.message;
+	  if (error.params && code && code.toLowerCase() === 'permission_denied') {
+	    return this._simulateCall(error.params).then(function (securityTrace) {
+	      if (securityTrace) { error.permissionDeniedDetails = securityTrace; }
+	    });
+	  } else {
+	    return Promise.resolve();
+	  }
+	};
+
+	Bridge.prototype._simulateCall = function _simulateCall (props) {
+	    var this$1 = this;
+
+	  if (!(this._simulatedTokenGenerator && this._maxSimulationDuration > 0)) {
+	    return Promise.resolve();
+	  }
+	  var simulatedCalls = [];
+	  switch (props.msg) {
+	    case 'set':
+	      simulatedCalls.push({method: 'set', url: props.url, args: [props.value]});
+	      break;
+	    case 'update':
+	      simulatedCalls.push({method: 'update', url: props.url, args: [props.value]});
+	      break;
+	    case 'on':
+	      simulatedCalls.push({method: 'once', url: props.url, spec: props.spec, args: ['value']});
+	      break;
+	    case 'transaction':
+	      simulatedCalls.push({method: 'once', url: props.url, args: ['value']});
+	      simulatedCalls.push({method: 'set', url: props.url, args: [props.newValue]});
+	      break;
+	  }
+	  if (!simulatedCalls.length || !this._simulatedCallFilter(props.msg, props.url)) {
+	    return Promise.resolve();
+	  }
+	  var auth = this.getAuth(getUrlRoot(props.url));
+	  var simulationPromise = this._simulatedTokenGenerator(auth && auth.uid).then(function (token) {
+	    return Promise.all(simulatedCalls.map(function (message) {
+	      message.msg = 'simulate';
+	      message.token = token;
+	      return this$1._send(message);
+	    }));
+	  }).then(function (securityTraces) {
+	    if (securityTraces.every(function (trace) { return trace === null; })) {
+	      return 'Unable to reproduce error in simulation';
+	    }
+	    return securityTraces.filter(function (trace) { return trace; }).join('\n\n');
+	  }).catch(function (e) {
+	    return 'Error running simulation: ' + e;
+	  });
+	  var timeoutPromise = new Promise(function (resolve) {
+	    setTimeout(resolve.bind(null, 'Simulated call timed out'), this$1._maxSimulationDuration);
+	  });
+	  return Promise.race([simulationPromise, timeoutPromise]);
+	};
+
+	Bridge.prototype.updateLocalStorage = function updateLocalStorage (items) {
+	  try {
+	    var storage = window.localStorage || window.sessionStorage;
+	    for (var item in items) {
+	      if (item.value === null) {
+	        storage.removeItem(item.key);
+	      } else {
+	        storage.setItem(item.key, item.value);
+	      }
+	    }
+	  } catch (e) {
+	    // If we're denied access, there's nothing we can do.
+	  }
+	};
+
+	Bridge.prototype.trackServer = function trackServer (rootUrl) {
+	  if (this._servers.hasOwnProperty(rootUrl)) { return; }
+	  var server = this._servers[rootUrl] = {authListeners: []};
+	  var authCallbackId = this._registerCallback(this._authCallback.bind(this, server));
+	  this._send({msg: 'onAuth', url: rootUrl, callbackId: authCallbackId});
+	};
+
+	Bridge.prototype._authCallback = function _authCallback (server, auth) {
+	  server.auth = auth;
+	  for (var i = 0, list = server.authListeners; i < list.length; i += 1) {
+	      var listener = list[i];
+
+	      listener(auth);
+	    }
+	};
+
+	Bridge.prototype.onAuth = function onAuth (rootUrl, callback, context) {
+	  var listener = callback.bind(context);
+	  listener.callback = callback;
+	  listener.context = context;
+	  this._servers[rootUrl].authListeners.push(listener);
+	  listener(this.getAuth(rootUrl));
+	};
+
+	Bridge.prototype.offAuth = function offAuth (rootUrl, callback, context) {
+	  var authListeners = this._servers[rootUrl].authListeners;
+	  for (var i = 0; i < authListeners.length; i++) {
+	    var listener = authListeners[i];
+	    if (listener.callback === callback && listener.context === context) {
+	      authListeners.splice(i, 1);
+	      break;
+	    }
+	  }
+	};
+
+	Bridge.prototype.getAuth = function getAuth (rootUrl) {
+	  return this._servers[rootUrl].auth;
+	};
+
+	Bridge.prototype.authWithCustomToken = function authWithCustomToken (url, authToken, options) {
+	  return this._send({msg: 'authWithCustomToken', url: url, authToken: authToken, options: options});
+	};
+
+	Bridge.prototype.unauth = function unauth (url) {
+	  return this._send({msg: 'unauth', url: url});
+	};
+
+	Bridge.prototype.set = function set (url, value, writeSerial) {return this._send({msg: 'set', url: url, value: value, writeSerial: writeSerial});};
+	Bridge.prototype.update = function update (url, value, writeSerial) {return this._send({msg: 'update', url: url, value: value, writeSerial: writeSerial});};
+
+	Bridge.prototype.on = function on (listenerKey, url, spec, eventType, snapshotCallback, cancelCallback, context, options) {
+	  var handle = {
+	    listenerKey: listenerKey, eventType: eventType, snapshotCallback: snapshotCallback, cancelCallback: cancelCallback, context: context,
+	    params: {msg: 'on', listenerKey: listenerKey, url: url, spec: spec, eventType: eventType, options: options}
+	  };
+	  var callback = this._onCallback.bind(this, handle);
+	  this._registerCallback(callback, handle);
+	  // Keep multiple IDs to allow the same snapshotCallback to be reused.
+	  snapshotCallback.__callbackIds = snapshotCallback.__callbackIds || [];
+	  snapshotCallback.__callbackIds.push(handle.id);
+	  this._send({
+	    msg: 'on', listenerKey: listenerKey, url: url, spec: spec, eventType: eventType, callbackId: handle.id, options: options
+	  }).catch(function (error) {
+	    callback(error);
+	  });
+	};
+
+	Bridge.prototype.off = function off (listenerKey, url, spec, eventType, snapshotCallback, context) {
+	    var this$1 = this;
+
+	  var idsToDeregister = [];
+	  var callbackId;
+	  if (snapshotCallback) {
+	    callbackId = this._findAndRemoveCallbackId(
+	      snapshotCallback,
+	      function (handle) { return handle.listenerKey === listenerKey && handle.eventType === eventType &&
+	        handle.context === context; }
+	    );
+	    if (!callbackId) { return Promise.resolve(); }// no-op, never registered or already deregistered
+	    idsToDeregister.push(callbackId);
+	  } else {
+	    for (var i = 0, list = Object.keys(this._callbacks); i < list.length; i += 1) {
+	      var id = list[i];
+
+	        var handle = this$1._callbacks[id];
+	      if (handle.listenerKey === listenerKey && (!eventType || handle.eventType === eventType)) {
+	        idsToDeregister.push(id);
+	      }
+	    }
+	  }
+	  // Nullify callbacks first, then deregister after off() is complete.We don't want any
+	  // callbacks in flight from the worker to be invoked while the off() is processing, but we don't
+	  // want them to throw an exception either.
+	  for (var i$1 = 0, list$1 = idsToDeregister; i$1 < list$1.length; i$1 += 1) {
+	      var id$1 = list$1[i$1];
+
+	      this$1._nullifyCallback(id$1);
+	    }
+	  return this._send({msg: 'off', listenerKey: listenerKey, url: url, spec: spec, eventType: eventType, callbackId: callbackId}).then(function () {
+	    for (var i = 0, list = idsToDeregister; i < list.length; i += 1) {
+	        var id = list[i];
+
+	        this$1._deregisterCallback(id);
+	      }
+	  });
+	};
+
+	Bridge.prototype._onCallback = function _onCallback (handle, error, snapshotJson) {
+	  if (error) {
+	    this._deregisterCallback(handle.id);
+	    var e = errorFromJson(error, handle.params);
+	    if (handle.cancelCallback) {
+	      handle.cancelCallback.call(handle.context, e);
+	    } else {
+	      console.error(e);
+	    }
+	  } else {
+	    handle.snapshotCallback.call(handle.context, new Snapshot(snapshotJson));
+	  }
+	};
+
+	Bridge.prototype.transaction = function transaction (url, oldValue, relativeUpdates) {
+	  return this._send({msg: 'transaction', url: url, oldValue: oldValue, relativeUpdates: relativeUpdates});
+	};
+
+	Bridge.prototype.onDisconnect = function onDisconnect (url, method, value) {
+	  return this._send({msg: 'onDisconnect', url: url, method: method, value: value});
+	};
+
+	Bridge.prototype.bounceConnection = function bounceConnection () {
+	  return this._send({msg: 'bounceConnection'});
+	};
+
+	Bridge.prototype.callback = function callback (ref) {
+	    var id = ref.id;
+	    var args = ref.args;
+
+	  var handle = this._callbacks[id];
+	  if (!handle) { throw new Error('Unregistered callback: ' + id); }
+	  handle.callback.apply(null, args);
+	};
+
+	Bridge.prototype._registerCallback = function _registerCallback (callback, handle) {
+	  handle = handle || {};
+	  handle.callback = callback;
+	  handle.id = "cb" + (++this._idCounter);
+	  this._callbacks[handle.id] = handle;
+	  return handle.id;
+	};
+
+	Bridge.prototype._nullifyCallback = function _nullifyCallback (id) {
+	  this._callbacks[id].callback = noop$1;
+	};
+
+	Bridge.prototype._deregisterCallback = function _deregisterCallback (id) {
+	  delete this._callbacks[id];
+	};
+
+	Bridge.prototype._findAndRemoveCallbackId = function _findAndRemoveCallbackId (callback, predicate) {
+	    var this$1 = this;
+
+	  if (!callback.__callbackIds) { return; }
+	  var i = 0;
+	  while (i < callback.__callbackIds.length) {
+	    var id = callback.__callbackIds[i];
+	    var handle = this$1._callbacks[id];
+	    if (!handle) {
+	      callback.__callbackIds.splice(i, 1);
+	      continue;
+	    }
+	    if (predicate(handle)) {
+	      callback.__callbackIds.splice(i, 1);
+	      return id;
+	    }
+	    i += 1;
+	  }
+	};
+
+	Object.defineProperties( Bridge, staticAccessors$1 );
+
+	function noop$1() {}
+
+	function errorFromJson(json, params) {
+	  if (!json || json instanceof Error) { return json; }
+	  var error = new Error(json.message);
+	  error.params = params;
+	  for (var propertyName in json) {
+	    if (propertyName === 'message' || !json.hasOwnProperty(propertyName)) { continue; }
+	    try {
+	      error[propertyName] = json[propertyName];
+	    } catch (e) {
+	      e.extra = {propertyName: propertyName};
+	      throw e;
+	    }
+	  }
+	  return error;
+	}
+
+	function getUrlRoot(url) {
+	  var k = url.indexOf('/', 8);
+	  return k >= 8 ? url.slice(0, k) : url;
+	}
+
+	var EMPTY_ANNOTATIONS = {};
+	Object.freeze(EMPTY_ANNOTATIONS);
+
+
+	var Handle = function Handle(tree, path, annotations) {
+	  this._tree = tree;
+	  this._path = path.replace(/^\/*/, '/').replace(/\/$/, '');
+	  if (annotations) {
+	    this._annotations = annotations;
+	    Object.freeze(annotations);
+	  }
+	};
+
+	var prototypeAccessors$3 = { key: {},path: {},_pathPrefix: {},parent: {},annotations: {} };
+
+	prototypeAccessors$3.key.get = function () {
 	  if (!this._key) { this._key = unescapeKey(this._path.replace(/.*\//, '')); }
 	  return this._key;
 	};
-	prototypeAccessors$2.path.get = function () {return this._path;};
-	prototypeAccessors$2.parent.get = function () {return new Reference(this._truss, this._path.replace(/\/[^/]*$/, ''));};
-
-	prototypeAccessors$2.ready.get = function () {};// TODO: implement
-	Query.prototype.waitUntilReady = function waitUntilReady () {};// TODO: implement
-
-	Query.prototype.get = function get () {
-	  // TODO: implement
-	  if (this.ready) { return Promise.resolve(); }
-	  return trackSlowness(worker.once(this._url, this._terms, 'value'), 'read');
+	prototypeAccessors$3.path.get = function () {return this._path;};
+	prototypeAccessors$3._pathPrefix.get = function () {return this._path === '/' ? '' : this._path;};
+	prototypeAccessors$3.parent.get = function () {
+	  return new Reference(this._tree, this._path.replace(/\/[^/]*$/, ''), this._annotations);
 	};
 
-	Query.prototype.connect = function connect () {};// TODO: implement
-	Query.prototype.disconnect = function disconnect () {};// TODO: implement
+	prototypeAccessors$3.annotations.get = function () {
+	  return this._annotations || EMPTY_ANNOTATIONS;
+	};
 
-	Query.prototype.toString = function toString () {
-	  var result = this._path;
-	  if (this._terms) {
-	    var queryTerms = this._terms.map(function (term) {
-	      var queryTerm = term[0];
-	      if (term.length > 1) {
-	        queryTerm +=
-	          '=' + encodeURIComponent(term.slice(1).map(function (x) { return JSON.stringify(x); }).join(','));
+	Handle.prototype.child = function child () {
+	  if (!arguments.length) { return this; }
+	  return new Reference(
+	    this._tree, ((this._pathPrefix) + "/" + (_.map(arguments, function (key) { return escapeKey(key); }).join('/'))),
+	    this._annotations
+	  );
+	};
+
+	Handle.prototype.children = function children () {
+	    var arguments$1 = arguments;
+	    var this$1 = this;
+
+	  if (!arguments.length) { return this; }
+	  var escapedKeys = [];
+	  for (var i = 0; i < arguments.length; i++) {
+	    var arg = arguments$1[i];
+	    if (_.isArray(arg)) {
+	      var mapping = {};
+	      var subPath = (this$1._pathPrefix) + "/" + (escapedKeys.join('/'));
+	      var rest = _.slice(arguments$1, i + 1);
+	      for (var i$1 = 0, list = arg; i$1 < list.length; i$1 += 1) {
+	        var key = list[i$1];
+
+	          var subRef =
+	          new Reference(this$1._tree, (subPath + "/" + (escapeKey(key))), this$1._annotations);
+	        mapping[key] = subRef.children.apply(subRef, rest);
 	      }
-	      return queryTerm;
-	    });
-	    queryTerms.sort();
-	    result += '?' + queryTerms.join('&');
+	      return mapping;
+	    } else {
+	      escapedKeys.push(escapeKey(arg));
+	    }
 	  }
-	  return result;
+	  return new Reference(
+	    this._tree, ((this._pathPrefix) + "/" + (escapedKeys.join('/'))), this._annotations);
 	};
 
-	Query.prototype.orderByChild = function orderByChild (ref) {
-	  if (ref._terms) {
-	    throw new Error('orderByChild must be called with a reference, not a query: ' + ref);
-	  }
-	  var relativePath = ref.toString();
-	  if (_.startsWith(relativePath, this._path)) {
-	    relativePath = relativePath.slice(this._path.length);
-	  }
-	  var terms = this._terms ? this._terms.slice() : [];
-	  terms.push(['orderByChild', relativePath]);
-	  return new Query(this._truss, this._path, terms);
+	Handle.prototype.peek = function peek (callback) {
+	  return this._tree.truss.peek(this, callback);
 	};
 
-	Object.defineProperties( Query.prototype, prototypeAccessors$2 );
+	Handle.prototype.isEqual = function isEqual (that) {
+	  if (!(that instanceof Handle)) { return false; }
+	  return this._tree === that._tree && this.toString() === that.toString();
+	};
 
-	[
-	  'orderByKey', 'orderByValue', 'startAt', 'endAt', 'equalTo', 'limitToFirst', 'limitToLast'
-	].forEach(function (methodName) {
-	  Query.prototype[methodName] = function() {
-	    var term = Array.prototype.slice.call(arguments);
-	    term.unshift(methodName);
-	    var terms = this._terms ? this._terms.slice() : [];
-	    terms.push(term);
-	    return new Query(this._url, terms);
+	Handle.prototype.belongsTo = function belongsTo (truss) {
+	  return this._tree.truss === truss;
+	};
+
+	Object.defineProperties( Handle.prototype, prototypeAccessors$3 );
+
+
+	var Query = (function (Handle) {
+	  function Query(tree, path, spec, annotations) {
+	    Handle.call(this, tree, path, annotations);
+	    this._spec = this._copyAndValidateSpec(spec);
+	  }
+
+	  if ( Handle ) Query.__proto__ = Handle;
+	  Query.prototype = Object.create( Handle && Handle.prototype );
+	  Query.prototype.constructor = Query;
+
+	  var prototypeAccessors$1 = { ready: {},constraints: {} };
+
+	  // Vue-bound
+	  prototypeAccessors$1.ready.get = function () {
+	    return this._tree.isQueryReady(this);
 	  };
-	});
+
+	  prototypeAccessors$1.constraints.get = function () {
+	    return this._spec;
+	  };
+
+	  Query.prototype.annotate = function annotate (annotations) {
+	    return new Query(
+	      this._tree, this._path, this._spec, _.extend({}, this._annotations, annotations));
+	  };
+
+	  Query.prototype._copyAndValidateSpec = function _copyAndValidateSpec (spec) {
+	    if (!spec.by) { throw new Error('Query needs "by" clause: ' + JSON.stringify(spec)); }
+	    if (('at' in spec) + ('from' in spec) + ('to' in spec) > 1) {
+	      throw new Error(
+	        'Query must contain at most one of "at", "from", or "to" clauses: ' + JSON.stringify(spec));
+	    }
+	    if (('first' in spec) + ('last' in spec) > 1) {
+	      throw new Error(
+	        'Query must contain at most one of "first" or "last" clauses: ' + JSON.stringify(spec));
+	    }
+	    if (!_.some(['at', 'from', 'to', 'first', 'last'], function (clause) { return clause in spec; })) {
+	      throw new Error(
+	        'Query must contain at least one of "at", "from", "to", "first", or "last" clauses: ' +
+	        JSON.stringify(spec));
+	    }
+	    spec = _.clone(spec);
+	    if (spec.by !== '$key' && spec.by !== '$value') {
+	      if (!(spec.by instanceof Reference)) {
+	        throw new Error('Query "by" value must be a reference: ' + spec.by);
+	      }
+	      var childPath = spec.by.toString();
+	      if (!_.startsWith(childPath, this._path)) {
+	        throw new Error(
+	          'Query "by" value must be a descendant of target reference: ' + spec.by);
+	      }
+	      childPath = childPath.slice(this._path.length).replace(/^\/?/, '');
+	      if (childPath.indexOf('/') === -1) {
+	        throw new Error(
+	          'Query "by" value must not be a direct child of target reference: ' + spec.by);
+	      }
+	      spec.by = childPath.replace(/.*?\//, '');
+	    }
+	    Object.freeze(spec);
+	    return spec;
+	  };
+
+
+	  Query.prototype.toString = function toString () {
+	    if (!this._string) {
+	      var queryTerms = _(this._spec)
+	        .map(function (value, key) { return (key + "=" + (encodeURIComponent(JSON.stringify(value)))); })
+	        .sortBy()
+	        .join('&');
+	      this._string = (this._path) + "?" + queryTerms;
+	    }
+	    return this._string;
+	  };
+
+	  Object.defineProperties( Query.prototype, prototypeAccessors$1 );
+
+	  return Query;
+	}(Handle));
 
 
 	// jshint latedef:false
-	var Reference = (function (Query) {
-	  function Reference(truss, path) {
-	    Query.call(this, truss, path);
+	var Reference = (function (Handle) {
+	  function Reference(tree, path, annotations) {
+	    Handle.call(this, tree, path, annotations);
 	  }
 
-	  if ( Query ) Reference.__proto__ = Query;
-	  Reference.prototype = Object.create( Query && Query.prototype );
+	  if ( Handle ) Reference.__proto__ = Handle;
+	  Reference.prototype = Object.create( Handle && Handle.prototype );
 	  Reference.prototype.constructor = Reference;
 
-	  Reference.prototype.child = function child () {};  // TODO: implement
-	  Reference.prototype.children = function children () {};  // TODO: implement
-	  Reference.prototype.set = function set (value) {};  // TODO: implement
-	  Reference.prototype.update = function update (values) {};  // TODO: implement
+	  var prototypeAccessors$2 = { ready: {} };
 
-	  Reference.prototype.commit = function commit (options, updateFunction) {
-	    var this$1 = this;
-
-	    // TODO: revise
-	    // const options = {
-	    //   applyLocally: applyLocally === undefined ? updateFunction.applyLocally : applyLocally
-	    // };
-	    // ['nonsequential', 'safeAbort'].forEach(key => options[key] = updateFunction[key]);
-	    for (var key in options) {
-	      if (options.hasOwnProperty(key) && options[key] === undefined) {
-	        options[key] = Truss.DefaultTransactionOptions[key];
-	      }
-	    }
-
-	    // Hold the ref value live until transaction complete, otherwise it'll keep retrying on a null
-	    // value.
-	    this.on('value', noop);  // No error handling -- if this fails, so will the transaction.
-	    return trackSlowness(
-	      worker.transaction(this._url, updateFunction, options), 'write'
-	    ).then(function (result) {
-	      this$1.off('value', noop);
-	      return result;
-	    }, function (error) {
-	      this$1.off('value', noop);
-	      return Promise.reject(error);
-	    });
+	  // Vue-bound
+	  prototypeAccessors$2.ready.get = function () {
+	    return this._tree.isReferenceReady(this);
 	  };
 
+	  Reference.prototype.toString = function toString () {
+	    return this._path;
+	  };
+
+	  Reference.prototype.annotate = function annotate (annotations) {
+	    return new Reference(this._tree, this._path, _.extend({}, this._annotations, annotations));
+	  };
+
+	  Reference.prototype.query = function query (spec) {
+	    return new Query(this._tree, this._path, spec);
+	  };
+
+	  Reference.prototype.set = function set (value) {
+	    return this._tree.update(this, 'set', ( obj = {}, obj[this.path] = value, obj ));
+	    var obj;
+	  };
+
+	  Reference.prototype.update = function update (values) {
+	    return this._tree.update(this, 'update', values);
+	  };
+
+	  Reference.prototype.commit = function commit (updateFunction) {
+	    return this._tree.commit(this, updateFunction);
+	  };
+
+	  Object.defineProperties( Reference.prototype, prototypeAccessors$2 );
+
 	  return Reference;
-	}(Query));
+	}(Handle));
+
+	var Connector = function Connector(scope, connections, tree, method) {
+	  var this$1 = this;
+
+	  connections.freeze();
+	  this._scope = scope;
+	  this._connections = connections;
+	  this._tree = tree;
+	  this._method = method;
+	  this._subConnectors = {};
+	  this._currentDescriptors = {};
+	  this._disconnects = {};
+	  this._vue = new Vue({data: _.mapValues(connections, _.constant(undefined))});
+
+	  this._linkScopeProperties();
+
+	  _.each(connections, function (descriptor, key) {
+	    if (_.isFunction(descriptor)) {
+	      this$1._bindComputedConnection(key, descriptor);
+	    } else {
+	      this$1._connect(key, descriptor);
+	    }
+	  });
+
+	  if (angularProxy.active && scope.$on && scope.$$id) { scope.$on('$destroy', function () {this$1.destroy();}); }
+	};
+
+	var prototypeAccessors$2 = { ready: {} };
+
+	prototypeAccessors$2.ready.get = function () {
+	    var this$1 = this;
+
+	  return _.every(this._currentDescriptors, function (descriptor, key) {
+	    if (!descriptor) { return false; }
+	    if (descriptor instanceof Handle) { return descriptor.ready; }
+	    return this$1._subConnectors[key].ready;
+	  });
+	};
+
+	Connector.prototype.destroy = function destroy () {
+	    var this$1 = this;
+
+	  this._unlinkScopeProperties();
+	  _.each(this._angularUnwatches, function (unwatch) {unwatch();});
+	  _.each(this._connections, function (descriptor, key) {this$1._disconnect(key);});
+	};
+
+	Connector.prototype._linkScopeProperties = function _linkScopeProperties () {
+	    var this$1 = this;
+
+	  if (!this._scope) { return; }
+	  var duplicateKey = _.find(this._connections, function (descriptor, key) { return key in this$1._scope; });
+	  if (duplicateKey) {
+	    throw new Error(("Property already defined on connection target: " + duplicateKey));
+	  }
+	  Object.defineProperties(this._scope, _.mapValues(this._connections, function (descriptor, key) { return ({
+	    configurable: true, enumerable: true, get: function () { return this$1._vue.$data[key]; }
+	  }); }));
+	};
+
+	Connector.prototype._unlinkScopeProperties = function _unlinkScopeProperties () {
+	    var this$1 = this;
+
+	  if (!this._scope) { return; }
+	  _.each(this._connections, function (descriptor, key) {
+	    delete this$1._scope[key];
+	  });
+	};
+
+	Connector.prototype._bindComputedConnection = function _bindComputedConnection (key, fn) {
+	  fn = fn.bind(this._scope);
+	  var update = this._updateComputedConnection.bind(this, key);
+	  this._vue.$watch(fn, update, {immediate: !angularProxy.active});
+	  if (angularProxy.active) {
+	    if (!this._angularUnwatches) { this._angularUnwatches = []; }
+	    this._angularUnwatches.push(angularProxy.watch(fn, update));
+	  }
+	};
+
+	Connector.prototype._updateComputedConnection = function _updateComputedConnection (key, newDescriptor) {
+	  var oldDescriptor = this._currentDescriptors[key];
+	  if (oldDescriptor === newDescriptor ||
+	      newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) { return; }
+	  if (!newDescriptor) {
+	    this._disconnect(key);
+	    return;
+	  }
+	  if (newDescriptor instanceof Handle || !_.has(this._subConnectors, key)) {
+	    this._disconnect(key);
+	    this._connect(key, newDescriptor);
+	  } else {
+	    this._subConnectors[key]._updateConnections(newDescriptor);
+	  }
+	  this._currentDescriptors[key] = newDescriptor;
+	};
+
+	Connector.prototype._updateConnections = function _updateConnections (connections) {
+	    var this$1 = this;
+
+	  _.each(connections, function (descriptor, key) {
+	    this$1._updateComputedConnection(key, descriptor);
+	  });
+	  _.each(this._connections, function (descriptor, key) {
+	    if (!_.has(connections, key)) { this$1._updateComputedConnection(key); }
+	  });
+	  this._connections = connections;
+	};
+
+	Connector.prototype._connect = function _connect (key, descriptor) {
+	    var this$1 = this;
+
+	  this._currentDescriptors[key] = descriptor;
+	  if (!descriptor) { return; }
+	  if (descriptor instanceof Reference) {
+	    var updateFn = this._scope ? this._updateScopeRef.bind(this, key) : null;
+	    this._disconnects[key] = this._tree.connectReference(descriptor, updateFn, this._method);
+	  } else if (descriptor instanceof Query) {
+	    var updateFn$1 = this._scope ? this._updateScopeQuery.bind(this, key) : null;
+	    this._disconnects[key] = this._tree.connectQuery(descriptor, updateFn$1, this._method);
+	  } else {
+	    var subScope = {};
+	    var subConnector = this._subConnectors[key] =
+	      new Connector(subScope, descriptor, this._tree, this._method);
+	    if (this._scope) {
+	      var unwatch = this._vue.$watch(function () { return subConnector.ready; }, function (subReady) {
+	        if (!subReady) { return; }
+	        unwatch();
+	        Vue.set(this$1._scope, key, subScope);
+	        angularProxy.digest();
+	      }, {immediate: true});
+	    }
+	  }
+	};
+
+	Connector.prototype._disconnect = function _disconnect (key) {
+	  if (this._scope) {
+	    Vue.delete(this._scope, key);
+	    angularProxy.digest();
+	  }
+	  if (_.has(this._subConnectors, key)) {
+	    this._subConnectors[key].destroy();
+	    delete this._subConnectors[key];
+	  }
+	  if (this._disconnects[key]) { this._disconnects[key](); }
+	  delete this._disconnects[key];
+	  delete this._currentDescriptors[key];
+	};
+
+	Connector.prototype._updateScopeRef = function _updateScopeRef (key, value) {
+	  if (this._scope[key] !== value) {
+	    Vue.set(this._scope, key, value);
+	    angularProxy.digest();
+	  }
+	};
+
+	Connector.prototype._updateScopeQuery = function _updateScopeQuery (key, childKeys) {
+	    var this$1 = this;
+
+	  var changed = false;
+	  if (!this._scope[key]) {
+	    Vue.set(this._scope, key, {});
+	    changed = true;
+	  }
+	  var subScope = this._scope[key];
+	  for (var childKey in subScope) {
+	    if (!subScope.hasOwnProperty(childKey)) { continue; }
+	    if (!_.contains(childKeys, childKey)) {
+	      Vue.delete(subScope, childKey);
+	      changed = true;
+	    }
+	  }
+	  var object;
+	  for (var i = 0, list = this._currentDescriptors[key].path.split('/'); i < list.length; i += 1) {
+	    var segment = list[i];
+
+	      object = segment ? object[segment] : this$1._tree.root;
+	  }
+	  for (var i$1 = 0, list$1 = childKeys; i$1 < list$1.length; i$1 += 1) {
+	    var childKey$1 = list$1[i$1];
+
+	      if (subScope.hasOwnProperty(childKey$1)) { continue; }
+	    Vue.set(subScope, childKey$1, object[childKey$1]);
+	    changed = true;
+	  }
+	  if (changed) { angularProxy.digest(); }
+	};
+
+	Object.defineProperties( Connector.prototype, prototypeAccessors$2 );
+
+	var SlowHandle = function SlowHandle(operation, delay, callback) {
+	  this._operation = operation;
+	  this._delay = delay;
+	  this._callback = callback;
+	  this._fired = false;
+	};
+
+	SlowHandle.prototype.initiate = function initiate () {
+	    var this$1 = this;
+
+	  this.cancel();
+	  var elapsed = Date.now() - this._operation._startTimestamp;
+	  this._timeoutId = setTimeout(this._delay - elapsed, function () {
+	    this$1._fired = true;
+	    this$1._callback(this$1._operation);
+	  });
+	};
+
+	SlowHandle.prototype.cancel = function cancel () {
+	  if (this._fired) { this._callback(this._operation); }
+	  if (this._timeoutId) { clearTimeout(this._timeoutId); }
+	};
+
+
+	var Operation = function Operation(type, method, target) {
+	  this._type = type;
+	  this._method = method;
+	  this._target = target;
+	  this._ready = false;
+	  this._running = false;
+	  this._startTimestamp = Date.now();
+	  this._slowHandles = [];
+	};
+
+	var prototypeAccessors$4 = { type: {},method: {},target: {},ready: {},running: {},error: {} };
+
+	prototypeAccessors$4.type.get = function () {return this._type;};
+	prototypeAccessors$4.method.get = function () {return this._method;};
+	prototypeAccessors$4.target.get = function () {return this._target;};
+	prototypeAccessors$4.ready.get = function () {return this._ready;};
+	prototypeAccessors$4.running.get = function () {return this._running;};
+	prototypeAccessors$4.error.get = function () {return this._error;};
+
+	Operation.prototype.onSlow = function onSlow (delay, callback) {
+	  var handle = new SlowHandle(this, delay, callback);
+	  this._slowHandles.push(handle);
+	  handle.initiate();
+	};
+
+	Operation.prototype._setRunning = function _setRunning (value) {
+	  this._running = value;
+	};
+
+	Operation.prototype._markReady = function _markReady () {
+	  this._ready = true;
+	  _.each(this._slowHandles, function (handle) { return handle.cancel(); });
+	};
+
+	Operation.prototype._clearReady = function _clearReady () {
+	  this._ready = false;
+	  this._startTimestamp = Date.now();
+	  _.each(this._slowHandles, function (handle) { return handle.initiate(); });
+	};
+
+	Object.defineProperties( Operation.prototype, prototypeAccessors$4 );
+
+
+	var Dispatcher = function Dispatcher(bridge) {
+	  this._bridge = bridge;
+	  this._callbacks = {};
+	};
+
+	Dispatcher.prototype.intercept = function intercept (operationType, callbacks) {
+	  if (!_.contains(['read', 'write', 'auth'], operationType)) {
+	    throw new Error('Unknown intercept operation type: ' + operationType);
+	  }
+	  var badCallbackKeys =
+	    _.difference(_.keys(callbacks), ['onBefore', 'onAfter', 'onError', 'onFailure']);
+	  if (badCallbackKeys.length) {
+	    throw new Error('Unknown intercept callback types: ' + badCallbackKeys.join(', '));
+	  }
+	  this._addCallback('onBefore', operationType, callbacks.onBefore);
+	  this._addCallback('onAfter', operationType, callbacks.onAfter);
+	  this._addCallback('onError', operationType, callbacks.onError);
+	  this._addCallback('onFailure', operationType, callbacks.onFailure);
+	};
+
+	Dispatcher.prototype._addCallback = function _addCallback (stage, operationType, callback) {
+	  if (!callback) { return; }
+	  var key = this._getCallbacksKey(operationType, stage);
+	  (this._callbacks[key] || (this._callbacks[key] = [])).push(wrapPromiseCallback(callback));
+	};
+
+	Dispatcher.prototype._getCallbacks = function _getCallbacks (stage, operationType) {
+	  return this._callbacks[this._getCallbacksKey(stage, operationType)];
+	};
+
+	Dispatcher.prototype._getCallbacksKey = function _getCallbacksKey (stage, operationType) {
+	  return (stage + "_" + operationType);
+	};
+
+	Dispatcher.prototype.execute = function execute (operationType, method, target, executor) {
+	    var this$1 = this;
+
+	  executor = wrapPromiseCallback(executor);
+	  var operation = this.createOperation(operationType, method, target);
+	  return this.begin(operation).then(function () {
+	    var executeWithRetries = function () {
+	      return executor().catch(function (e) { return this$1._retryOrEnd(operation, e).then(executeWithRetries); });
+	    };
+	    return executeWithRetries();
+	  }).then(function (result) { return this$1.end(operation).then(function () { return result; }); });
+	};
+
+	Dispatcher.prototype.createOperation = function createOperation (operationType, method, target) {
+	  return new Operation(operationType, method, target);
+	};
+
+	Dispatcher.prototype.begin = function begin (operation) {
+	    var this$1 = this;
+
+	  return Promise.all(
+	    _.map(this._getCallbacks('onBefore', operation.type), function (onBefore) { return onBefore(operation); })
+	  ).then(function () {operation._setRunning(true);}, function (e) { return this$1.end(operation, e); });
+	};
+
+	Dispatcher.prototype.markReady = function markReady (operation) {
+	  operation._markReady();
+	};
+
+	Dispatcher.prototype.clearReady = function clearReady (operation) {
+	  operation._clearReady();
+	};
+
+	Dispatcher.prototype.retry = function retry (operation, error) {
+	  return Promise.all(
+	    _.map(this._getCallbacks('onError', operation.type), function (onError) {
+	      try {
+	        return Promise.resolve(onError(operation, error));
+	      } catch (e) {
+	        return Promise.reject(e);
+	      }
+	    })
+	  ).then(function (results) { return _.some(results); });
+	};
+
+	Dispatcher.prototype._retryOrEnd = function _retryOrEnd (operation, error) {
+	    var this$1 = this;
+
+	  return this.retry(operation, error).then(function (result) {
+	    if (!result) { return this$1.end(operation, error); }
+	  }, function (e) { return this$1.end(operation, e); });
+	};
+
+	Dispatcher.prototype.end = function end (operation, error) {
+	    var this$1 = this;
+
+	  operation._setRunning(false);
+	  if (error) { operation._error = error; }
+	  return Promise.all(
+	    _.map(this._getCallbacks('onAfter', operation.type), function (onAfter) { return onAfter(operation); })
+	  ).then(
+	    function () { return this$1._afterEnd(operation); },
+	    function (e) {
+	      operation._error = e;
+	      return this$1._afterEnd(operation);
+	    }
+	  );
+	};
+
+	Dispatcher.prototype._afterEnd = function _afterEnd (operation) {
+	  this.markReady(operation);
+	  if (operation.error) {
+	    var onFailureCallbacks = this._getCallbacks('onFailure', operation.type);
+	    return this._bridge.probeError(operation.error).then(function () {
+	      if (onFailureCallbacks) {
+	        setTimeout(0, function () {
+	          _.each(onFailureCallbacks, function (onFailure) { return onFailure(operation); });
+	        });
+	      }
+	      return Promise.reject(operation.error);
+	    });
+	  }
+	};
+
+	var ALPHABET = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz';
+
+	var KeyGenerator = function KeyGenerator() {
+	  this._lastUniqueKeyTime = 0;
+	  this._lastRandomValues = [];
+	};
+
+	KeyGenerator.prototype.generateUniqueKey = function generateUniqueKey (now) {
+	    var this$1 = this;
+
+	  now = now || Date.now();
+	  var chars = new Array(20);
+	  var prefix = now;
+	  for (var i = 7; i >= 0; i--) {
+	    chars[i] = ALPHABET.charAt(prefix & 0x3f);
+	    prefix = Math.floor(prefix / 64);
+	  }
+	  if (now === this._lastUniqueKeyTime) {
+	    var i$1 = 11;
+	    while (i$1 >= 0 && this._lastRandomValues[i$1] === 63) {
+	      this$1._lastRandomValues[i$1] = 0;
+	      i$1 -= 1;
+	    }
+	    if (i$1 === -1) {
+	      throw new Error('Internal assertion failure: ran out of unique IDs for this millisecond');
+	    }
+	    this._lastRandomValues[i$1] += 1;
+	  } else {
+	    this._lastUniqueKeyTime = now;
+	    for (var i$2 = 0; i$2 < 12; i$2++) {
+	      // Make sure to leave some space for incrementing in the top nibble.
+	      this$1._lastRandomValues[i$2] = Math.floor(Math.random() * (i$2 ? 64 : 16));
+	    }
+	  }
+	  for (var i$3 = 0; i$3 < 12; i$3++) {
+	    chars[i$3 + 8] = ALPHABET[this$1._lastRandomValues[i$3]];
+	  }
+	  return chars.join('');
+	};
+
+	var MetaTree = function MetaTree(rootUrl, bridge) {
+	  this._rootUrl = rootUrl;
+	  this._bridge = bridge;
+	  this._vue = new Vue({data: {$root: {
+	    connected: undefined, timeOffset: 0, user: undefined, uid: undefined,
+	    updateNowAtIntervals: function updateNowAtIntervals(name, intervalMillis) {
+	      var this$1 = this;
+
+	      if (this.hasOwnProperty(name)) { throw new Error(("Property \"" + name + "\" already defined")); }
+	      Vue.set(this, name, Date.now() + this.timeOffset);
+	      setInterval(function () {
+	        this$1[name] = Date.now() + this$1.timeOffset;
+	      }, intervalMillis);
+	    }
+	  }}});
+
+	  if (angularProxy.active) {
+	    this._vue.$watch('$data', angularProxy.digest, {deep: true});
+	  }
+
+	  bridge.trackAuth(rootUrl);
+	  bridge.onAuth(rootUrl, this._handleAuthChange, this);
+
+	  this._connectInfoProperty('serverTimeOffset', 'timeOffset');
+	  this._connectInfoProperty('connected', 'connected');
+	};
+
+	var prototypeAccessors$5 = { root: {} };
+
+	prototypeAccessors$5.root.get = function () {
+	  return this._vue.$data.$root;
+	};
+
+	MetaTree.prototype.destroy = function destroy () {
+	  this._bridge.offAuth(this._rootUrl, this._handleAuthChange, this);
+	  this._vue.$destroy();
+	};
+
+	MetaTree.prototype._handleAuthChange = function _handleAuthChange (user) {
+	  this.root.user = user;
+	  this.root.uid = user && user.uid;
+	};
+
+	MetaTree.prototype._connectInfoProperty = function _connectInfoProperty (property, attribute) {
+	    var this$1 = this;
+
+	  var propertyUrl = (this._rootUrl) + "/.info/{property}";
+	  this._bridge.on(propertyUrl, propertyUrl, null, 'value', function (snap) {
+	    this$1.root[attribute] = snap.value;
+	  });
+	};
+
+	Object.defineProperties( MetaTree.prototype, prototypeAccessors$5 );
+
+	var QueryHandler = function QueryHandler(coupler, query) {
+	  this._coupler = coupler;
+	  this._query = query;
+	  this._listeners = [];
+	  this._keys = [];
+	  this._url = this._coupler._rootUrl + query.path;
+	  this._segments = query.path.split('/');
+	  this._listening = false;
+	  this.ready = false;
+	};
+
+	QueryHandler.prototype.attach = function attach (operation, keysCallback) {
+	  this._listen();
+	  this._listeners.push({operation: operation, keysCallback: keysCallback});
+	  keysCallback(this._keys);
+	};
+
+	QueryHandler.prototype.detach = function detach (operation) {
+	  var k = _.findIndex(this._listeners, {operation: operation});
+	  if (k >= 0) { this._listeners.splice(k, 1); }
+	  return this._listeners.length;
+	};
+
+	QueryHandler.prototype._listen = function _listen () {
+	  if (this._listening) { return; }
+	  this._coupler._bridge.on(
+	    this._query.toString(), this._url, this._query.constraints, 'value',
+	    this._handleSnapshot, this._handleError.bind(this._query.path), this, {sync: true});
+	  this._listening = true;
+	};
+
+	QueryHandler.prototype.destroy = function destroy () {
+	    var this$1 = this;
+
+	  this._coupler._bridge.off(
+	    this._query.toString(), this._url, this._query.constraints, 'value', this._handleSnapshot,
+	    this);
+	  this._listening = false;
+	  this.ready = false;
+	  angularProxy.digest();
+	  for (var i = 0, list = this._keys; i < list.length; i += 1) {
+	    var key = list[i];
+
+	      this$1._coupler._decoupleSegments(this$1._segments.concat(key));
+	  }
+	};
+
+	QueryHandler.prototype._handleSnapshot = function _handleSnapshot (snap) {
+	    var this$1 = this;
+
+	  // Order is important here: first couple any new subpaths so _handleSnapshot will update the
+	  // tree, then tell the client to update its keys, pulling values from the tree.
+	  if (!this._listeners.length || !this._listening) { return; }
+	  var updatedKeys = this._updateKeys(snap);
+	  this._coupler._applySnapshot(snap);
+	  if (!this.ready) {
+	    this.ready = true;
+	    angularProxy.digest();
+	    for (var i = 0, list = this._listeners; i < list.length; i += 1) {
+	        var listener = list[i];
+
+	        this$1._coupler._dispatcher.markReady(listener.operation);
+	      }
+	  }
+	  if (updatedKeys) {
+	    for (var i$1 = 0, list$1 = this._listeners; i$1 < list$1.length; i$1 += 1) {
+	        var listener$1 = list$1[i$1];
+
+	        listener$1.keysCallback(updatedKeys);
+	      }
+	  }
+	};
+
+	QueryHandler.prototype._updateKeys = function _updateKeys (snap) {
+	    var this$1 = this;
+
+	  var updatedKeys;
+	  if (snap.path === this._query.path) {
+	    updatedKeys = _.keys(snap.value);
+	    updatedKeys.sort();
+	    if (_.isEqual(this._keys, updatedKeys)) {
+	      updatedKeys = null;
+	    } else {
+	      for (var i = 0, list = _.difference(updatedKeys, this._keys); i < list.length; i += 1) {
+	        var key = list[i];
+
+	          this$1._coupler._coupleSegments(this$1._segments.concat(key));
+	      }
+	      for (var i$1 = 0, list$1 = _.difference(this._keys, updatedKeys); i$1 < list$1.length; i$1 += 1) {
+	        var key$1 = list$1[i$1];
+
+	          this$1._coupler._decoupleSegments(this$1._segments.concat(key$1));
+	      }
+	      this._keys = updatedKeys;
+	    }
+	  } else if (snap.path.replace(/\/[^/]+/, '') === this._query.path) {
+	    var hasKey = _.contains(this._keys, snap.key);
+	    if (snap.value) {
+	      if (!hasKey) {
+	        this._coupler._coupleSegments(this._segments.concat(snap.key));
+	        this._keys.push(snap.key);
+	        this._keys.sort();
+	        updatedKeys = this._keys;
+	      }
+	    } else {
+	      if (hasKey) {
+	        this._coupler._decoupleSegments(this._segments.concat(snap.key));
+	        _.pull(this._keys, snap.key);
+	        this._keys.sort();
+	        updatedKeys = this._keys;
+	      }
+	    }
+	  }
+	  return updatedKeys;
+	};
+
+	QueryHandler.prototype._handleError = function _handleError (error) {
+	    var this$1 = this;
+
+	  if (!this._listeners.length || !this._listening) { return; }
+	  this._listening = false;
+	  Promise.all(_.map(this._listeners, function (listener) {
+	    this$1._coupler._dispatcher.clearReady(listener.operation);
+	    return this$1._coupler._dispatcher.retry(listener.operation, error).catch(function (e) {
+	      listener.operation._disconnect(e);
+	      return false;
+	    });
+	  })).then(function (results) {
+	    if (_.some(results)) {
+	      if (this$1._listeners.length) { this$1._listen(); }
+	    } else {
+	      for (var i = 0, list = this$1._listeners; i < list.length; i += 1) {
+	          var listener = list[i];
+
+	          listener.operation._disconnect(error);
+	        }
+	    }
+	  });
+	};
+
+
+	var Node = function Node(coupler, path) {
+	  this._coupler = coupler;
+	  this.path = path;
+	  this.url = this._coupler._rootUrl + path;
+	  this.operations = [];
+	  this.queryCount = 0;
+	  this.listening = false;
+	  this.ready = false;
+	  this.children = {};
+	};
+
+	var prototypeAccessors$7 = { active: {},count: {} };
+
+	prototypeAccessors$7.active.get = function () {
+	  return this.count || this.queryCount;
+	};
+
+	prototypeAccessors$7.count.get = function () {
+	  return this.operations.length;
+	};
+
+	Node.prototype.listen = function listen (skip) {
+	    var this$1 = this;
+
+	  if (!skip && this.count) {
+	    if (this.listening) { return; }
+	    _.each(this.operations, function (op) {this$1._coupler._dispatcher.clearReady(op);});
+	    this._coupler._bridge.on(
+	      this.url, this.url, null, 'value', this._handleSnapshot, this._handleError.bind(this),
+	      this, {sync: true});
+	    this.listening = true;
+	  } else {
+	    _.each(this.children, function (child) {child.listen();});
+	  }
+	};
+
+	Node.prototype.unlisten = function unlisten (skip) {
+	  if (!skip && this.listening) {
+	    this._coupler._bridge.off(this.url, this.url, null, 'value', this._handleSnapshot, this);
+	    this.listening = false;
+	    this._forAllDescendants(function (node) {
+	      if (node.ready) {
+	        node.ready = false;
+	        angularProxy.digest();
+	      }
+	    });
+	  } else {
+	    _.each(this.children, function (child) {child.unlisten();});
+	  }
+	};
+
+	Node.prototype._handleSnapshot = function _handleSnapshot (snap) {
+	    var this$1 = this;
+
+	  if (!this.listening || !this._coupler.isTrunkCoupled(snap.path)) { return; }
+	  this._coupler._applySnapshot(snap);
+	  if (!this.ready && snap.path === this.path) {
+	    this.ready = true;
+	    angularProxy.digest();
+	    this.unlisten(true);
+	    this._forAllDescendants(function (node) {
+	      for (var i = 0, list = this$1.operations; i < list.length; i += 1) {
+	          var op = list[i];
+
+	          this$1._coupler._dispatcher.markReady(op);
+	        }
+	    });
+	  }
+	};
+
+	Node.prototype._handleError = function _handleError (error) {
+	    var this$1 = this;
+
+	  if (!this.count || !this.listening) { return; }
+	  this.listening = false;
+	  this._forAllDescendants(function (node) {
+	    if (node.ready) {
+	      node.ready = false;
+	      angularProxy.digest();
+	    }
+	    for (var i = 0, list = this$1.operations; i < list.length; i += 1) {
+	        var op = list[i];
+
+	        this$1._coupler._dispatcher.clearReady(op);
+	      }
+	  });
+	  return Promise.all(_.map(this.operations, function (op) {
+	    return this$1._coupler._dispatcher.retry(op, error).catch(function (e) {
+	      op._disconnect(e);
+	      return false;
+	    });
+	  })).then(function (results) {
+	    if (_.some(results)) {
+	      if (this$1.count) { this$1.listen(); }
+	    } else {
+	      for (var i = 0, list = this$1.operations; i < list.length; i += 1) {
+	          var op = list[i];
+
+	          op._disconnect(error);
+	        }
+	      // Pulling all the operations will automatically get us listening on descendants.
+	    }
+	  });
+	};
+
+	Node.prototype._forAllDescendants = function _forAllDescendants (iteratee) {
+	  iteratee(this);
+	  _.each(this.children, function (child) { return child._forAllDescendants(iteratee); });
+	};
+
+	Node.prototype.collectCoupledDescendantPaths = function collectCoupledDescendantPaths (paths) {
+	  if (!paths) { paths = {}; }
+	  paths[this.path] = this.active;
+	  if (!this.active) {
+	    _.each(this.children, function (child) {child.collectCoupledDescendantPaths(paths);});
+	  }
+	  return paths;
+	};
+
+	Object.defineProperties( Node.prototype, prototypeAccessors$7 );
+
+
+	var Coupler = function Coupler(rootUrl, bridge, dispatcher, applySnapshot, prunePath) {
+	  this._rootUrl = rootUrl;
+	  this._bridge = bridge;
+	  this._dispatcher = dispatcher;
+	  this._applySnapshot = applySnapshot;
+	  this._prunePath = prunePath;
+	  this._vue = new Vue({data: {root: new Node(this, '/'), queryHandlers: {}}});
+	};
+
+	var prototypeAccessors$1$2 = { _root: {},_queryHandlers: {} };
+
+	prototypeAccessors$1$2._root.get = function () {return this._vue.root;};
+	prototypeAccessors$1$2._queryHandlers.get = function () {return this._vue.queryHandlers;};
+
+	Coupler.prototype.destroy = function destroy () {
+	  _.each(this._queryHandlers, function (queryHandler) {queryHandler.destroy();});
+	  this._root.unlisten();
+	  this._vue.$destroy();
+	};
+
+	Coupler.prototype.couple = function couple (path, operation) {
+	  return this._coupleSegments(path.split('/'), operation);
+	};
+
+	Coupler.prototype._coupleSegments = function _coupleSegments (segments, operation) {
+	    var this$1 = this;
+
+	  var node;
+	  var superseded = !operation;
+	  var ready = false;
+	  for (var i = 0, list = segments; i < list.length; i += 1) {
+	    var segment = list[i];
+
+	      var child = segment ? node.children && node.children[segment] : this$1._root;
+	    if (!child) {
+	      child = new Node(this$1, ((node.path === '/' ? '' : node.path) + "/" + segment));
+	      Vue.set(node.children, segment, child);
+	    }
+	    superseded = superseded || child.listening;
+	    ready = ready || child.ready;
+	    node = child;
+	  }
+	  if (operation) {
+	    node.operations.push(operation);
+	  } else {
+	    node.queryCount++;
+	  }
+	  if (superseded) {
+	    if (operation && ready) { this._dispatcher.markReady(operation); }
+	  } else {
+	    node.listen();// node will call unlisten() on descendants when ready
+	  }
+	};
+
+	Coupler.prototype.decouple = function decouple (path, operation) {
+	  return this._decoupleSegments(path.split('/'), operation);
+	};
+
+	Coupler.prototype._decoupleSegments = function _decoupleSegments (segments, operation) {
+	    var this$1 = this;
+
+	  var ancestors = [];
+	  var node;
+	  for (var i$1 = 0, list = segments; i$1 < list.length; i$1 += 1) {
+	    var segment = list[i$1];
+
+	      node = segment ? node.children && node.children[segment] : this$1._root;
+	    if (!node) { break; }
+	    ancestors.push(node);
+	  }
+	  if (!node || !(operation ? node.count : node.queryCount)) {
+	    throw new Error(("Path not coupled: " + (segments.join('/'))));
+	  }
+	  if (operation) {
+	    _.pull(node.operations, operation);
+	  } else {
+	    node.queryCount--;
+	  }
+	  if (operation && !node.count) {
+	    // Ideally, we wouldn't resync the full values here since we probably already have the current
+	    // value for all children.But making sure that's true is tricky in an async system (what if
+	    // the node's value changes and the update crosses the 'off' call in transit?) and this
+	    // situation should be sufficiently rare that the optimization is probably not worth it right
+	    // now.
+	    node.listen();
+	    if (node.listening) { node.unlisten(); }
+	  }
+	  if (!node.active) {
+	    var coupledDescendantPaths = node.collectCoupledDescendantPaths();
+	    this._prunePath(segments.join('/'), coupledDescendantPaths);
+	    for (var i = ancestors.length - 1; i > 0; i--) {
+	      node = ancestors[i];
+	      if (node === this$1._root || node.active || !_.isEmpty(node.children)) { break; }
+	      Vue.delete(ancestors[i - 1].children, segments[i]);
+	    }
+	  }
+	};
+
+	Coupler.prototype.subscribe = function subscribe (query, operation, keysCallback) {
+	  var queryHandler = this._queryHandlers[query.toString()];
+	  if (!queryHandler) {
+	    queryHandler = new QueryHandler(this, query);
+	    Vue.set(this._queryHandlers, query.toString(), queryHandler);
+	  }
+	  queryHandler.attach(operation, keysCallback);
+	 };
+
+	Coupler.prototype.unsubscribe = function unsubscribe (query, operation) {
+	  var queryHandler = this._queryHandlers[query.toString()];
+	  if (queryHandler && !queryHandler.detach(operation)) {
+	    queryHandler.destroy();
+	    Vue.delete(this._queryHandlers, query.toString());
+	  }
+	};
+
+	// Return whether the node at path or any ancestors are coupled.
+	Coupler.prototype.isTrunkCoupled = function isTrunkCoupled (path) {
+	    var this$1 = this;
+
+	  var segments = path.split('/');
+	  var node;
+	  for (var i = 0, list = segments; i < list.length; i += 1) {
+	    var segment = list[i];
+
+	      node = segment ? node.children && node.children[segment] : this$1._root;
+	    if (!node) { return false; }
+	    if (node.active) { return true; }
+	  }
+	  return false;
+	};
+
+	Coupler.prototype.findCoupledDescendantPaths = function findCoupledDescendantPaths (path) {
+	    var this$1 = this;
+
+	  var segments = path.split('/');
+	  var node;
+	  for (var i = 0, list = segments; i < list.length; i += 1) {
+	    var segment = list[i];
+
+	      node = segment ? node.children && node.children[segment] : this$1._root;
+	    if (!node) { break; }
+	  }
+	  return node ? node.collectCoupledDescendantPaths() : {};
+	};
+
+	Coupler.prototype.isSubtreeReady = function isSubtreeReady (path) {
+	    var this$1 = this;
+
+	  var segments = path.split('/');
+	  var node;
+	  for (var i = 0, list = segments; i < list.length; i += 1) {
+	    var segment = list[i];
+
+	      node = segment ? node.children && node.children[segment] : this$1._root;
+	    if (!node) { return false; }
+	    if (node.ready) { return true; }
+	  }
+	  return false;
+	};
+
+	Coupler.prototype.isQueryReady = function isQueryReady (query) {
+	  var queryHandler = this._queryHandlers[query.toString()];
+	  return queryHandler && queryHandler.ready;
+	};
+
+	Object.defineProperties( Coupler.prototype, prototypeAccessors$1$2 );
 
 	var commonjsGlobal = typeof window !== 'undefined' ? window : typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : {};
 
@@ -192,50 +1673,47 @@
 
 	var Value = function Value () {};
 
-	var prototypeAccessors$1 = { $ref: {},$refs: {},$keys: {},$values: {},$root: {} };
+	var prototypeAccessors$8 = { $ref: {},$refs: {},$keys: {},$values: {},$root: {} };
 
-	prototypeAccessors$1.$ref.get = function () {return new Reference(this.$truss, this.$path);};
-	prototypeAccessors$1.$refs.get = function () {return [this.$ref];};
-	prototypeAccessors$1.$keys.get = function () {return _.keys(this);};
-	prototypeAccessors$1.$values.get = function () {return _.values(this);};
-	prototypeAccessors$1.$root.get = function () {return this.$truss._vue.$data.$root;};// access via $data to leave dependency trace
+	prototypeAccessors$8.$ref.get = function () {
+	  Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
+	};
+	prototypeAccessors$8.$refs.get = function () {return [this.$ref];};
+	prototypeAccessors$8.$keys.get = function () {return _.keys(this);};
+	prototypeAccessors$8.$values.get = function () {return _.values(this);};
+	prototypeAccessors$8.$root.get = function () {return this.$truss.root;};// access indirectly to leave dependency trace
 	Value.prototype.$set = function $set (value) {return this.$ref.set(value);};
 	Value.prototype.$update = function $update (values) {return this.$ref.update(values);};
 	Value.prototype.$commit = function $commit (options, updateFn) {return this.$ref.commit(options, updateFn);};
 
-	Object.defineProperties( Value.prototype, prototypeAccessors$1 );
-
+	Object.defineProperties( Value.prototype, prototypeAccessors$8 );
 
 	var ComputedPropertyStats = function ComputedPropertyStats(name) {
 	  _.extend(this, {name: name, numRecomputes: 0, numUpdates: 0, runtime: 0});
 	};
 
 
-	var Tree = function Tree(truss, classes) {
+	var Modeler = function Modeler(classes) {
 	  var this$1 = this;
 
-	  this._truss = truss;
-	  this._firebasePropertyEditAllowed = false;
-	  this._vue = new Vue({data: {$root: null}});
-	  this._mounts = _(classes).map(function (Class) { return this$1._mountClass(Class); }).flatten().value();
-	  this._vue.$data.$root = this._createObject('/', '');
-	  // console.log(this._vue.$data.$root);
-	  this._completeCreateObject(this.root);
-	  this._plantPlaceholders(this.root, '/');
+	  this._mounts = _(classes).uniq().map(function (Class) { return this$1._mountClass(Class); }).flatten().value();
+	  var patterns = _.map(this._mounts, function (mount) { return mount.regex.toString(); });
+	  if (patterns.length !== _.uniq(patterns).length) {
+	    var badPaths = _(patterns)
+	      .groupBy()
+	      .map(function (group, key) { return group.length === 1 ? null : key.replace(/\(\[\^\/\]\+\)/g, '$').slice(1, -1); })
+	      .compact()
+	      .value();
+	    throw new Error('Paths have multiple mounted classes: ' + badPaths.join(', '));
+	  }
 	};
 
-	var prototypeAccessors$1$1 = { root: {} };
-	var staticAccessors$1 = { computedPropertyStats: {} };
+	var staticAccessors$3 = { computedPropertyStats: {} };
 
-	prototypeAccessors$1$1.root.get = function () {
-	  return this._vue.$data.$root;
+	Modeler.prototype.destroy = function destroy () {
 	};
 
-	Tree.prototype.destroy = function destroy () {
-	  this._vue.$destroy();
-	};
-
-	Tree.prototype._augmentClass = function _augmentClass (Class) {
+	Modeler.prototype._augmentClass = function _augmentClass (Class) {
 	  var computedProperties;
 	  var proto = Class.prototype;
 	  while (proto && proto.constructor !== Object) {
@@ -263,16 +1741,14 @@
 	  for (var i$1 = 0, list$1 = Object.getOwnPropertyNames(Value.prototype); i$1 < list$1.length; i$1 += 1) {
 	    var name$1 = list$1[i$1];
 
-	      if (name$1 === 'constructor') { continue; }
+	      if (name$1 === 'constructor' || Class.prototype.hasOwnProperty(name$1)) { continue; }
 	    Object.defineProperty(
 	      Class.prototype, name$1, Object.getOwnPropertyDescriptor(Value.prototype, name$1));
 	  }
 	  return computedProperties;
 	};
 
-	Tree.prototype._mountClass = function _mountClass (Class) {
-	  if (Class.$$truss) { throw new Error(("Class " + (Class.name) + " already mounted")); }
-	  Class.$$truss = true;
+	Modeler.prototype._mountClass = function _mountClass (Class) {
 	  var computedProperties = this._augmentClass(Class);
 	  var mounts = Class.$trussMount;
 	  if (!mounts) { throw new Error(("Class " + (Class.name) + " lacks a $trussMount static property")); }
@@ -313,17 +1789,8 @@
 	 * them up and make the reactive, so you should call _completeCreateObject once it's done so and
 	 * before any Firebase properties are added.
 	 */
-	Tree.prototype._createObject = function _createObject (path, key, parent) {
+	Modeler.prototype.createObject = function createObject (path, properties, touchThis) {
 	    var this$1 = this;
-
-	  if (parent && _.has(parent, key)) { throw new Error(("Duplicate object created for " + path)); }
-	  var properties = {
-	    $truss: {value: this._truss, writable: false, configurable: false, enumerable: false},
-	    // We want Vue to wrap this; we'll hide it in _completeCreateObject.
-	    $parent: {value: parent, writable: false, configurable: true, enumerable: true},
-	    $key: {value: key, writable: false, configurable: false, enumerable: false},
-	    $path: {value: path, writable: false, configurable: false, enumerable: false}
-	  };
 
 	  var Class = Value;
 	  var computedProperties;
@@ -348,19 +1815,15 @@
 	  var object = new Class();
 
 	  if (computedProperties) {
-	    var touchThis = parent ? function () { return parent[key]; } : function () { return this$1._vue.$data.$root; };
 	    _.each(computedProperties, function (prop) {
 	      properties[prop.name] = this$1._buildComputedPropertyDescriptor(object, prop, touchThis);
 	    });
 	  }
 
-	  Object.defineProperties(object, properties);
 	  return object;
 	};
 
-	Tree.prototype._buildComputedPropertyDescriptor = function _buildComputedPropertyDescriptor (object, prop, touchThis) {
-	    var this$1 = this;
-
+	Modeler.prototype._buildComputedPropertyDescriptor = function _buildComputedPropertyDescriptor (object, prop, touchThis) {
 	  if (!computedPropertyStats[prop.fullName]) {
 	    Object.defineProperty(computedPropertyStats, prop.fullName, {
 	      value: new ComputedPropertyStats(prop.fullName), writable: false, enumerable: true,
@@ -370,17 +1833,17 @@
 	  var stats = computedPropertyStats[prop.fullName];
 
 	  function computeValue() {
+	    // jshint validthis: true
 	    // Touch this object, since a failed access to a missing property doesn't get captured as a
 	    // dependency.
 	    touchThis();
 
 	    var startTime = performanceNow();
-	    // jshint validthis: true
 	    var result = prop.get.call(this);
-	    // jshint validthis: false
 	    stats.runtime += performanceNow() - startTime;
 	    stats.numRecomputes += 1;
 	    return result;
+	    // jshint validthis: false
 	  }
 
 	  var value;
@@ -395,15 +1858,15 @@
 	    Object.defineProperty(object, '__initializers__', {
 	      value: [], writable: false, enumerable: false, configurable: false});
 	  }
-	  object.__initializers__.push(function () {
+	  object.__initializers__.push(function (vue) {
 	    object.__destructors__.push(
-	      this$1._vue.$watch(computeValue.bind(object), function (newValue) {
+	      vue.$watch(computeValue.bind(object), function (newValue) {
 	        if (firstCallback) {
 	          stats.numUpdates += 1;
 	          value = newValue;
 	          firstCallback = false;
 	        } else {
-	          if (_.isEqual(value, newValue, this$1._isTrussEqual, this$1)) { return; }
+	          if (_.isEqual(value, newValue, isTrussValueEqual)) { return; }
 	          stats.numUpdates += 1;
 	          writeAllowed = true;
 	          object[prop.name] = newValue;
@@ -422,13 +1885,309 @@
 	  };
 	};
 
-	Tree.prototype._isTrussEqual = function _isTrussEqual (a, b) {
+	Modeler.prototype.isPlaceholder = function isPlaceholder (path) {
+	  // TODO: optimize by precomputing a single all-placeholder-paths regex
+	  return _.some(this._mounts, function (mount) { return mount.placeholder && mount.regex.test(path); });
+	};
+
+	Modeler.prototype.forEachPlaceholderChild = function forEachPlaceholderChild (path, iteratee) {
+	  _.each(this._mounts, function (mount) {
+	    if (mount.placeholder && mount.parentRegex.test(path)) {
+	      iteratee(mount.escapedKey, mount.placeholder);
+	    }
+	  });
+	};
+
+	staticAccessors$3.computedPropertyStats.get = function () {
+	  return computedPropertyStats;
+	};
+
+	Object.defineProperties( Modeler, staticAccessors$3 );
+
+	function isTrussValueEqual(a, b) {
 	  if (a && a.$truss || b && b.$truss) { return a === b; }
+	}
+
+	var Transaction = function Transaction () {};
+
+	var prototypeAccessors$6 = { outcome: {},values: {} };
+
+	prototypeAccessors$6.outcome.get = function () {return this._outcome;};
+	prototypeAccessors$6.values.get = function () {return this._values;};
+
+	Transaction.prototype._setOutcome = function _setOutcome (value) {
+	  if (this._outcome) { throw new Error('Transaction already resolved with ' + this._outcome); }
+	  this._outcome = value;
+	};
+
+	Transaction.prototype.abort = function abort () {
+	  this._setOutcome('abort');
+	};
+
+	Transaction.prototype.cancel = function cancel () {
+	  this._setOutcome('cancel');
+	};
+
+	Transaction.prototype.set = function set (value) {
+	  if (value === undefined) { throw new Error('Invalid argument: undefined'); }
+	  this._setOutcome('set');
+	  this._values = {'': value};
+	};
+
+	Transaction.prototype.update = function update (values) {
+	  if (values === undefined) { throw new Error('Invalid argument: undefined'); }
+	  if (_.isEmpty(values)) { return this.cancel(); }
+	  this._setOutcome('update');
+	  this._values = values;
+	};
+
+	Object.defineProperties( Transaction.prototype, prototypeAccessors$6 );
+
+
+	var Tree = function Tree(truss, rootUrl, bridge, dispatcher, classes) {
+	  this._truss = truss;
+	  this._rootUrl = rootUrl;
+	  this._bridge = bridge;
+	  this._dispatcher = dispatcher;
+	  this._firebasePropertyEditAllowed = false;
+	  this._writeSerial = 0;
+	  this._localWrites = {};
+	  this._localWriteTimestamp = null;
+	  this._coupler = new Coupler(
+	    rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
+	  this._vue = new Vue({data: {$root: undefined}});
+	  if (angularProxy.active) {
+	    this._vue.$watch('$data', angularProxy.digest, {deep: true});
+	  }
+	  this._modeler = new Modeler(classes);
+	  this._vue.$data.$root = this._createObject('/', '');
+	  this._completeCreateObject(this.root);
+	  this._plantPlaceholders(this.root, '/');
+	};
+
+	var prototypeAccessors$1$1 = { root: {},truss: {} };
+	var staticAccessors$2 = { computedPropertyStats: {} };
+
+	prototypeAccessors$1$1.root.get = function () {
+	  return this._vue.$data.$root;
+	};
+
+	prototypeAccessors$1$1.truss.get = function () {
+	  return this._truss;
+	};
+
+	Tree.prototype.destroy = function destroy () {
+	  this._coupler.destroy();
+	  this._modeler.destroy();
+	  this._vue.$destroy();
+	};
+
+	Tree.prototype.connectReference = function connectReference (ref, valueCallback, method) {
+	    var this$1 = this;
+
+	  this._checkHandle(ref);
+	  var operation = this._dispatcher.createOperation('read', method, ref);
+	  var unwatch;
+	  if (valueCallback) {
+	    var segments = _(ref.path).split('/').map(function (segment) { return unescapeKey(segment); }).value();
+	    unwatch = this._vue.$watch(this._getObject.bind(segments), valueCallback);
+	  }
+	  operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
+	  this._dispatcher.begin(operation).then(function () {
+	    if (operation.running) { this$1._coupler.couple(ref.path, operation); }
+	  }).catch(function (e) {});// ignore exception, let onFailure handlers deal with it
+	  return operation._disconnect;
+	};
+
+	Tree.prototype._disconnectReference = function _disconnectReference (ref, operation, unwatch, error) {
+	  if (operation._disconnected) { return; }
+	  operation._disconnected = true;
+	  if (unwatch) { unwatch(); }
+	  this._coupler.decouple(ref.path, operation);// will call back to _prune if necessary
+	  this._dispatcher.end(operation, error).catch(function (e) {});
+	};
+
+	Tree.prototype.isReferenceReady = function isReferenceReady (ref) {
+	  this._checkHandle(ref);
+	  return this._coupler.isSubtreeReady(ref.path);
+	};
+
+	Tree.prototype.connectQuery = function connectQuery (query, keysCallback, method) {
+	    var this$1 = this;
+
+	  this._checkHandle(query);
+	  var operation = this._dispatcher.createOperation('read', method, query);
+	  operation._disconnect = this._disconnectQuery.bind(this, query, operation);
+	  this._dispatcher.begin(operation).then(function () {
+	    if (operation.running) { this$1._coupler.subscribe(query, operation, keysCallback); }
+	  }).catch(function (e) {});// ignore exception, let onFailure handlers deal with it
+	  return operation._disconnect;
+	};
+
+	Tree.prototype._disconnectQuery = function _disconnectQuery (query, operation, error) {
+	  if (operation._disconnected) { return; }
+	  operation._disconnected = true;
+	  this._coupler.unsubscribe(query, operation);// will call back to _prune if necessary
+	  this._dispatcher.end(operation, error).catch(function (e) {});
+	};
+
+	Tree.prototype.isQueryReady = function isQueryReady (query) {
+	  return this._coupler.isQueryReady(query);
+	};
+
+	Tree.prototype._checkHandle = function _checkHandle (handle) {
+	  if (!handle.belongsTo(this._truss)) {
+	    throw new Error('Reference belongs to another Truss instance');
+	  }
+	};
+
+	Tree.prototype.update = function update (ref, method, values) {
+	    var this$1 = this;
+
+	  var numValues = _.size(values);
+	  if (!numValues) { return; }
+	  if (method === 'update') { checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values); }
+	  this._applyLocalWrite(values);
+	  var url = this.rootUrl + this._extractCommonPathPrefix(values);
+	  return this._dispatcher.execute('write', method, ref, function () {
+	    if (numValues === 1) {
+	      return this$1._bridge.set(url, values[''], this$1._writeSerial);
+	    } else {
+	      return this$1._bridge.update(url, values, this$1._writeSerial);
+	    }
+	  });
+	};
+
+	Tree.prototype.commit = function commit (ref, updateFunction) {
+	    var this$1 = this;
+
+	  var url = this._rootUrl + ref.path;
+	  var tries = 0;
+
+	  var attemptTransaction = function () {
+	    if (tries++ >= 25) { return Promise.reject(new Error('maxretry')); }
+	    var txn = new Transaction();
+	    try {
+	      updateFunction(txn);
+	    } catch (e) {
+	      return Promise.reject(e);
+	    }
+	    var oldValue = toFirebaseJson(this$1._getObject(ref.path));
+	    switch (txn.outcome) {
+	      case 'abort': return;
+	      case 'cancel':
+	        break;
+	      case 'set':
+	        this$1._applyLocalWrite(( obj = {}, obj[ref.path] = txn.values[''], obj ));
+	      var obj;
+	        break;
+	      case 'update':
+	        checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, txn.values);
+	        this$1._applyLocalWrite(txn.values);
+	        break;
+	      default:
+	        throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
+	    }
+	    return this$1._bridge.transaction(url, oldValue, txn.values).then(function (committed) {
+	      if (!committed) { return attemptTransaction(); }
+	    });
+	  };
+
+	  return this._truss.peek(ref, function () {
+	    return this$1._dispatcher.execute('write', 'commit', ref, attemptTransaction);
+	  });
+	};
+
+	Tree.prototype._applyLocalWrite = function _applyLocalWrite (values) {
+	    var this$1 = this;
+
+	  // TODO: correctly apply local writes that impact queries.Currently, a local write will update
+	  // any objects currently selected by a query, but won't add or remove results.
+	  this._writeSerial++;
+	  this._localWriteTimestamp = this._truss.now();
+	  _.each(values, function (value, path) {
+	    var coupledDescendantPaths = this$1._coupler.findCoupledDescendantPaths(path);
+	    if (_.isEmpty(coupledDescendantPaths)) { return; }
+	    var offset = (path === '/' ? 0 : path.length) + 1;
+	    for (var i = 0, list = coupledDescendantPaths; i < list.length; i += 1) {
+	      var descendantPath = list[i];
+
+	        var subPath = descendantPath.slice(offset);
+	      var subValue = value;
+	      if (subPath) {
+	        var segments = subPath.split('/');
+	        for (var i$1 = 0, list$1 = segments; i$1 < list$1.length; i$1 += 1) {
+	          var segment = list$1[i$1];
+
+	            subValue = subValue[unescapeKey(segment)];
+	          if (subValue === undefined) { break; }
+	        }
+	      }
+	      if (subValue === undefined || subValue === null) {
+	        this$1._prune(subPath);
+	      } else {
+	        var key = unescapeKey(_.last(descendantPath.split('/')));
+	        this$1._plantValue(descendantPath, key, subValue, this$1._scaffoldAncestors(descendantPath));
+	      }
+	      this$1._localWrites[descendantPath] = this$1._writeSerial;
+	    }
+	  });
+	};
+
+	Tree.prototype._extractCommonPathPrefix = function _extractCommonPathPrefix (values) {
+	  var prefixSegments;
+	  _.each(values, function (value, path) {
+	    var segments = path === '/' ? [] : path.split('/');
+	    if (prefixSegments) {
+	      var firstMismatchIndex = 0;
+	      var maxIndex = Math.min(prefixSegments.length, segments.length);
+	      while (firstMismatchIndex < maxIndex &&
+	             prefixSegments[firstMismatchIndex] === segments[firstMismatchIndex]) {
+	        firstMismatchIndex++;
+	      }
+	      prefixSegments = prefixSegments.slice(0, firstMismatchIndex);
+	      if (!prefixSegments.length) { return false; }
+	    } else {
+	      prefixSegments = segments;
+	    }
+	  });
+	  var pathPrefix = '/' + prefixSegments.join('/');
+	  _.each(_.keys(values), function (key) {
+	    values[key.slice(pathPrefix.length + 1)] = values[key];
+	    delete values[key];
+	  });
+	  return pathPrefix;
+	};
+
+	/**
+	 * Creates a Truss object and sets all its basic properties: path segment variables, user-defined
+	 * properties, and computed properties.The latter two will be enumerable so that Vue will pick
+	 * them up and make the reactive, so you should call _completeCreateObject once it's done so and
+	 * before any Firebase properties are added.
+	 */
+	Tree.prototype._createObject = function _createObject (path, key, parent) {
+	    var this$1 = this;
+
+	  if (parent && _.has(parent, key)) { throw new Error(("Duplicate object created for " + path)); }
+	  var properties = {
+	    $truss: {value: this._truss, writable: false, configurable: false, enumerable: false},
+	    // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
+	    $parent: {value: parent, writable: false, configurable: true, enumerable: true},
+	    $key: {value: key, writable: false, configurable: false, enumerable: false},
+	    $path: {value: path, writable: false, configurable: false, enumerable: false}
+	  };
+
+	  var touchThis = parent ? function () { return parent[key]; } : function () { return this$1._vue.$data.$root; };
+	  var object = this._modeler.createObject(path, properties, touchThis);
+	  Object.defineProperties(object, properties);
+	  return object;
 	};
 
 	// To be called on the result of _createObject after it's been inserted into the _vue hierarchy
 	// and Vue has had a chance to initialize it.
 	Tree.prototype._completeCreateObject = function _completeCreateObject (object) {
+	    var this$1 = this;
+
 	  for (var i = 0, list = Object.getOwnPropertyNames(object); i < list.length; i += 1) {
 	    var name = list[i];
 
@@ -446,7 +2205,7 @@
 	    for (var i$1 = 0, list$1 = object.__initializers__; i$1 < list$1.length; i$1 += 1) {
 	        var fn = list$1[i$1];
 
-	        fn();
+	        fn(this$1._vue);
 	      }
 	  }
 	};
@@ -454,6 +2213,7 @@
 	Tree.prototype._destroyObject = function _destroyObject (object) {
 	    var this$1 = this;
 
+	  if (!(object && object.$truss)) { return; }
 	  if (object.__destructors__) {
 	    for (var i = 0, list = object.__destructors__; i < list.length; i += 1) {
 	        var fn = list[i];
@@ -463,30 +2223,69 @@
 	  }
 	  for (var key in object) {
 	    if (!Object.hasOwnProperty(object, key)) { continue; }
-	    var value = object[key];
-	    if (value && value.$truss) { this$1._destroyObject(value); }
+	    this$1._destroyObject(object[key]);
 	  }
 	};
 
-	Tree.prototype._plantSnapshotValue = function _plantSnapshotValue (snap, parent) {
-	  return this._plantValue(
-	    pathFromUrl(snap.ref().toString()), unescapeKey(snap.key()), snap.val(), parent);
-	};
-
-	Tree.prototype._plantValue = function _plantValue (path, key, value, parent) {
+	Tree.prototype._integrateSnapshot = function _integrateSnapshot (snap) {
 	    var this$1 = this;
 
+	  _.each(_.keys(this._localWrites), function (writeSerial, path) {
+	    if (snap.writeSerial >= writeSerial) { delete this$1._localWrites[path]; }
+	  });
+	  if (snap.exists) {
+	    var parent = this._scaffoldAncestors(snap.path, true);
+	    if (parent) { this._plantValue(snap.path, snap.key, snap.value, parent, true); }
+	  } else {
+	    this._prune(snap.path, null, true);
+	  }
+	};
+
+	Tree.prototype._scaffoldAncestors = function _scaffoldAncestors (path, remoteWrite) {
+	    var this$1 = this;
+
+	  var object;
+	  var segments = _(path).split('/').dropRight().value();
+	  _.each(segments, function (segment, i) {
+	    var childKey = unescapeKey(segment);
+	    var child = childKey ? object[childKey] : this$1.root;
+	    if (!child) {
+	      var ancestorPath = segments.slice(0, i + 1).join('/');
+	      if (remoteWrite && this$1._localWrites[ancestorPath || '/']) { return; }
+	      child = this$1._plantValue(ancestorPath, childKey, {}, object);
+	    }
+	    object = child;
+	  });
+	  return object;
+	};
+
+	Tree.prototype._plantValue = function _plantValue (path, key, value, parent, remoteWrite) {
+	    var this$1 = this;
+
+	  if (value === null || value === undefined) {
+	    throw new Error('Snapshot includes invalid value: ' + value);
+	  }
+	  if (remoteWrite && this._localWrites[path]) { return; }
+	  if (value === SERVER_TIMESTAMP) { value = this._localWriteTimestamp; }
 	  if (!_.isArray(value) && !_.isObject(value)) {
 	    this._setFirebaseProperty(parent, key, value);
 	    return;
 	  }
-	  var object = this._createObject(path, key, parent);
-	  this._setFirebaseProperty(parent, key, object);
-	  this._completeCreateObject(object);
+	  var object = parent[key];
+	  if (object === undefined) {
+	    object = this._createObject(path, key, parent);
+	    this._setFirebaseProperty(parent, key, object);
+	    this._completeCreateObject(object);
+	  }
 	  _.each(value, function (item, escapedChildKey) {
-	    if (item === null || item === undefined) { return; }
 	    this$1._plantValue(
-	      ("" + (joinPath(path, escapedChildKey))), unescapeKey(escapedChildKey), item, object);
+	      joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite);
+	  });
+	  _.each(object, function (item, childKey) {
+	    var escapedChildKey = escapeKey(childKey);
+	    if (!value.hasOwnProperty(escapedChildKey)) {
+	      this$1._prune(joinPath(path, escapedChildKey), null, remoteWrite);
+	    }
 	  });
 	  this._plantPlaceholders(object, path);
 	  return object;
@@ -495,15 +2294,116 @@
 	Tree.prototype._plantPlaceholders = function _plantPlaceholders (object, path) {
 	    var this$1 = this;
 
-	  _.each(this._mounts, function (mount) {
-	    var key = unescapeKey(mount.escapedKey);
-	    if (!object.hasOwnProperty(key) && mount.placeholder && mount.parentRegex.test(path)) {
-	      this$1._plantValue(("" + (joinPath(path, mount.escapedKey))), key, mount.placeholder, object);
+	  this._modeler.forEachPlaceholderChild(path, function (escapedKey, placeholder) {
+	    var key = unescapeKey(escapedKey);
+	    if (!object.hasOwnProperty(key)) {
+	      this$1._plantValue(joinPath(path, escapedKey), key, placeholder, object);
 	    }
 	  });
 	};
 
-	Tree.prototype._setFirebaseProperty = function _setFirebaseProperty (object, key, value) {
+	Tree.prototype._prune = function _prune (path, lockedDescendantPaths, remoteWrite) {
+	  lockedDescendantPaths = lockedDescendantPaths || {};
+	  var object = this._getObject(path);
+	  if (!object) { return; }
+	  if (remoteWrite && this._avoidLocalWritePaths(path, lockedDescendantPaths)) { return; }
+	  if (!_.isEmpty(lockedDescendantPaths) || !this._pruneAncestors(object)) {
+	    // The target object is a placeholder, and all ancestors are placeholders or otherwise needed
+	    // as well, so we can't delete it.Instead, dive into its descendants to delete what we can.
+	    this._pruneDescendants(object, lockedDescendantPaths);
+	  }
+	};
+
+	Tree.prototype._avoidLocalWritePaths = function _avoidLocalWritePaths (path, lockedDescendantPaths) {
+	    var this$1 = this;
+
+	  for (var localWritePath in this._localWrites) {
+	    if (!this$1._localWrites.hasOwnProperty(localWritePath)) { continue; }
+	    if (path === localWritePath || localWritePath === '/' ||
+	        _.startsWith(path, localWritePath + '/')) { return true; }
+	    if (path === '/' || _.startsWith(localWritePath, path + '/')) {
+	      var segments = localWritePath.split('/');
+	      for (var i = segments.length; i > 0; i--) {
+	        var subPath = segments.slice(0, i).join('/');
+	        var active = i === segments.length;
+	        if (lockedDescendantPaths[subPath] || lockedDescendantPaths[subPath] === active) { break; }
+	        lockedDescendantPaths[subPath] = active;
+	        if (subPath === path) { break; }
+	      }
+	    }
+	  }
+	};
+
+	Tree.prototype._pruneAncestors = function _pruneAncestors (targetObject) {
+	    var this$1 = this;
+
+	  // Destroy the child (unless it's a placeholder that's still needed) and any ancestors that
+	  // are no longer needed to keep this child rooted, and have no other reason to exist.
+	  var deleted = false;
+	  var object = targetObject;
+	  while (object && object !== this.root) {
+	    if (!this$1._modeler.isPlaceholder(object.$path)) {
+	      var ghostObjects = deleted ? null : [targetObject];
+	      if (!this$1._holdsConcreteData(object, ghostObjects)) {
+	        deleted = true;
+	        this$1._deleteFirebaseProperty(object.$parent, object.$key);
+	      }
+	    }
+	    object = object.$parent;
+	  }
+	  return deleted;
+	};
+
+	Tree.prototype._holdsConcreteData = function _holdsConcreteData (object, ghostObjects) {
+	    var this$1 = this;
+
+	  if (ghostObjects && _.contains(ghostObjects, object)) { return false; }
+	  if (_.some(object, function (value) { return !value.$truss; })) { return true; }
+	  return _.some(object, function (value) { return this$1._holdsConcreteData(value, ghostObjects); });
+	};
+
+	Tree.prototype._pruneDescendants = function _pruneDescendants (object, lockedDescendantPaths) {
+	    var this$1 = this;
+
+	  if (lockedDescendantPaths[object.$path]) { return true; }
+	  var coupledDescendantFound = false;
+	  _.each(object, function (value, key) {
+	    var shouldDelete = true;
+	    var valueLocked;
+	    if (lockedDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
+	      shouldDelete = false;
+	      valueLocked = true;
+	    } else if (value.$truss) {
+	      if (this$1._modeler.isPlaceholder(value.$path)) {
+	        valueLocked = this$1._pruneDescendants(value, lockedDescendantPaths);
+	        shouldDelete = false;
+	      } else if (_.has(lockedDescendantPaths, value.$path)) {
+	        valueLocked = this$1._pruneDescendants(value);
+	        shouldDelete = !valueLocked;
+	      }
+	    }
+	    if (shouldDelete) { this$1._deleteFirebaseProperty(object, key); }
+	    coupledDescendantFound = coupledDescendantFound || valueLocked;
+	  });
+	  return coupledDescendantFound;
+	};
+
+	Tree.prototype._getObject = function _getObject (pathOrSegments) {
+	    var this$1 = this;
+
+	  var object;
+	  var segments = _.isString(pathOrSegments) ?
+	    _(pathOrSegments).split('/').map(unescapeKey).value() : pathOrSegments;
+	  for (var i = 0, list = segments; i < list.length; i += 1) {
+	    var segment = list[i];
+
+	      object = segment ? object[segment] : this$1.root;
+	    if (object === undefined) { return; }
+	  }
+	  return object;
+	};
+
+	Tree.prototype._getFirebasePropertyDescriptor = function _getFirebasePropertyDescriptor (object, key) {
 	  var descriptor = Object.getOwnPropertyDescriptor(object, key);
 	  if (descriptor) {
 	    if (!descriptor.enumerable) {
@@ -515,41 +2415,44 @@
 	      throw new Error(("Unbound property at " + (object.$path) + ": " + key));
 	    }
 	  }
-	  if (value === null || value === undefined) {
-	    if (descriptor) {
-	      var oldValue = object[key];
-	      if (oldValue && oldValue.$truss) { this._deleteObject(oldValue); }
-	      Vue.delete(object, key);
-	    }
+	  return descriptor;
+	};
+
+	Tree.prototype._setFirebaseProperty = function _setFirebaseProperty (object, key, value) {
+	  var descriptor = this._getFirebasePropertyDescriptor(object, key);
+	  if (descriptor) {
+	    this._firebasePropertyEditAllowed = true;
+	    object[key] = value;
+	    this._firebasePropertyEditAllowed = false;
 	  } else {
-	    if (descriptor) {
-	      this._firebasePropertyEditAllowed = true;
-	      object[key] = value;
-	      this._firebasePropertyEditAllowed = false;
-	    } else {
-	      Vue.set(object, key, value);
-	      descriptor = Object.getOwnPropertyDescriptor(object, key);
-	      Object.defineProperty(object, key, {
-	        get: descriptor.get,
-	        set: function(newValue) {
-	          if (!this._firebasePropertyEditAllowed) {
-	            throw new Error(("Firebase data cannot be mutated directly: " + key));
-	          }
-	          descriptor.set.call(this, newValue);
-	        },
-	        configurable: true, enumerable: true
-	      });
-	    }
+	    Vue.set(object, key, value);
+	    descriptor = Object.getOwnPropertyDescriptor(object, key);
+	    Object.defineProperty(object, key, {
+	      get: descriptor.get,
+	      set: function(newValue) {
+	        if (!this._firebasePropertyEditAllowed) {
+	          throw new Error(("Firebase data cannot be mutated directly: " + key));
+	        }
+	        descriptor.set.call(this, newValue);
+	      },
+	      configurable: true, enumerable: true
+	    });
 	  }
 	};
 
-	staticAccessors$1.computedPropertyStats.get = function () {
-	  return computedPropertyStats;
+	Tree.prototype._deleteFirebaseProperty = function _deleteFirebaseProperty (object, key) {
+	  // Make sure it's actually a Firebase property.
+	  this._getFirebasePropertyDescriptor(object, key);
+	  this._destroyObject(object[key]);
+	  Vue.delete(object, key);
+	};
+
+	staticAccessors$2.computedPropertyStats.get = function () {
+	  return Modeler.computedPropertyStats;
 	};
 
 	Object.defineProperties( Tree.prototype, prototypeAccessors$1$1 );
-	Object.defineProperties( Tree, staticAccessors$1 );
-
+	Object.defineProperties( Tree, staticAccessors$2 );
 
 	function throwReadOnlyError() {throw new Error('Read-only property');}
 
@@ -565,109 +2468,142 @@
 	  return segments.join('/');
 	}
 
-	var ALPHABET = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz';
+	function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativizePaths) {
+	  var paths = _(values)
+	    .keys().map(function (path) { return path === '/' ? '/' : (path + '/'); }).sortBy(function (path) { return path.length; }).value();
+	  _.each(_.keys(values), function (path) {
+	    if (path.charAt(0) !== '/') {
+	      throw new Error('Update item does not have an absolute path: ' + path);
+	    }
+	    if (!(path === rootPath || rootPath === '/' ||
+	          _.startsWith(path, rootPath + '/') && path.length > rootPath.length + 1)) {
+	      throw new Error(("Update item is not a descendant of target ref: " + path));
+	    }
+	    for (var i = 0, list = paths; i < list.length; i += 1) {
+	      var otherPath = list[i];
 
-	var KeyGenerator = function KeyGenerator() {
-	  this._lastUniqueKeyTime = 0;
-	  this._lastRandomValues = [];
+	      if (otherPath.length > path.length) { break; }
+	      if (path !== otherPath && _.startsWith(path, otherPath)) {
+	        throw new Error(("Update items overlap: " + otherPath + " and " + path));
+	      }
+	    }
+	    if (relativizePaths) {
+	      values[path.slice(rootPath === '/' ? 1 : rootPath.length + 1)] = values[path];
+	      delete values[path];
+	    }
+	  });
+	}
+
+	function toFirebaseJson(object) {
+	  if (typeof object === 'object') {
+	    var result = {};
+	    for (var key in object) {
+	      if (!object.hasOwnProperty(key)) { continue; }
+	      result[escapeKey(key)] = toFirebaseJson(object[key]);
+	    }
+	    return result;
+	  } else {
+	    return object;
+	  }
+	}
+
+	var bridge;
+	var workerFunctions = {};
+
+
+	var Truss = function Truss(rootUrl, classes) {
+	  // TODO: allow rootUrl to be a test database object for testing
+	  if (!bridge) {
+	    throw new Error('Truss worker not connected, please call Truss.connectWorker first');
+	  }
+	  this._rootUrl = rootUrl.replace(/\/$/, '');
+	  this._keyGenerator = new KeyGenerator();
+	  this._dispatcher = new Dispatcher(bridge);
+
+	  this._metaTree = new MetaTree(this._rootUrl, bridge);
+	  Object.defineProperty(this, 'meta', {
+	    value: this._metaTree.root, writable: false, configurable: false, enumerable: false
+	  });
+
+	  this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher, classes);
+	  Object.defineProperty(this, 'root', {
+	    value: this._tree.root, writable: false, configurable: false, enumerable: false
+	  });
 	};
 
-	KeyGenerator.prototype.generateUniqueKey = function generateUniqueKey (now) {
+	var prototypeAccessors = { now: {} };
+	var staticAccessors = { computedPropertyStats: {},worker: {},SERVER_TIMESTAMP: {} };
+
+	Truss.prototype.destroy = function destroy () {
+	  this._tree.destroy();
+	  this._metaTree.destroy();
+	};
+
+	prototypeAccessors.now.get = function () {return Date.now() + this.meta.timeOffset;};
+	Truss.prototype.newKey = function newKey () {return this._keyGenerator.generateUniqueKey(this.now);};
+
+	Truss.prototype.authenticate = function authenticate (token) {
 	    var this$1 = this;
 
-	  now = now || Date.now();
-	  var chars = new Array(20);
-	  var prefix = now;
-	  for (var i = 7; i >= 0; i--) {
-	    chars[i] = ALPHABET.charAt(prefix & 0x3f);
-	    prefix = Math.floor(prefix / 64);
-	  }
-	  if (now === this._lastUniqueKeyTime) {
-	    var i$1 = 11;
-	    while (i$1 >= 0 && this._lastRandomValues[i$1] === 63) {
-	      this$1._lastRandomValues[i$1] = 0;
-	      i$1 -= 1;
-	    }
-	    if (i$1 === -1) {
-	      throw new Error('Internal assertion failure: ran out of unique IDs for this millisecond');
-	    }
-	    this._lastRandomValues[i$1] += 1;
-	  } else {
-	    this._lastUniqueKeyTime = now;
-	    for (var i$2 = 0; i$2 < 12; i$2++) {
-	      // Make sure to leave some space for incrementing in the top nibble.
-	      this$1._lastRandomValues[i$2] = Math.floor(Math.random() * (i$2 ? 64 : 16));
-	    }
-	  }
-	  for (var i$3 = 0; i$3 < 12; i$3++) {
-	    chars[i$3 + 8] = ALPHABET[this$1._lastRandomValues[i$3]];
-	  }
-	  return chars.join('');
+	  return this._dispatcher.execute('auth', new Reference(this._tree, '/'), function () {
+	    return bridge.authWithCustomToken(this$1._rootUrl, token);
+	  });
 	};
-
-	// jshint browser:true
-
-	var SlownessTracker = function SlownessTracker(record) {
-	  this.record = record;
-	  this.counted = false;
-	  this.canceled = false;
-	  this.handle = setTimeout(this.handleTimeout.bind(this), record.timeout);
-	};
-
-	SlownessTracker.prototype.handleTimeout = function handleTimeout () {
-	  if (this.canceled) { return; }
-	  this.counted = true;
-	  this.record.callback(++this.record.count, 1, this.record.timeout);
-	};
-
-	SlownessTracker.prototype.handleDone = function handleDone () {
-	  this.canceled = true;
-	  if (this.counted) {
-	    this.record.callback(--this.record.count, -1, this.record.timeout);
-	  } else {
-	    clearTimeout(this.handle);
-	  }
-	};
-
-
-	var Bridge = function Bridge(webWorker) {
-	  var this$1 = this;
-
-	  this._idCounter = 0;
-	  this._deferreds = {};
-	  this._active = true;
-	  this._servers = {};
-	  this._callbacks = {};
-	  this._errorCallbacks = [];
-	  this._slowCallbacks = {read: [], write: [], auth: []};
-	  this._simulatedTokenGenerator = null;
-	  this._maxSimulationDuration = 5000;
-	  this._simulatedCallFilter = null;
-	  this._inboundMessages = [];
-	  this._outboundMessages = [];
-	  this._flushMessageQueue = this._flushMessageQueue.bind(this);
-	  this._port = webWorker.port || webWorker;
-	  this._shared = !!webWorker.port;
-	  this._port.onmessage = this._receive.bind(this);
-	  window.addEventListener('unload', function () {this$1._send({msg: 'destroy'});});
-	  setInterval(function () {this$1._send({msg: 'ping'});}, 60 * 1000);
-	};
-
-	Bridge.prototype.init = function init () {
+	Truss.prototype.unauthenticate = function unauthenticate () {
 	    var this$1 = this;
 
-	  var items = [];
-	  try {
-	    var storage = window.localStorage || window.sessionStorage;
-	    if (!storage) { return; }
-	    for (var i = 0; i < storage.length; i++) {
-	      var key = storage.key(i);
-	      items.push({key: key, value: storage.getItem(key)});
-	    }
-	  } catch (e) {
-	    // Some browsers don't like us accessing local storage -- nothing we can do.
+	  return this._dispatcher.execute('auth', new Reference(this._tree, '/'), function () {
+	    return bridge.unauth(this$1._rootUrl);
+	  });
+	};
+
+	Truss.prototype.intercept = function intercept (actionType, callbacks) {
+	  return this._dispatcher.intercept(actionType, callbacks);
+	};
+
+	// connections are {key: Query | Object | fn() -> (Query | Object)}
+	Truss.prototype.connect = function connect (scope, connections) {
+	  if (!connections) {
+	    connections = scope;
+	    scope = undefined;
 	  }
-	  return this._send({msg: 'init', storage: items}).then(
+	  return new Connector(scope, connections, this._tree, 'connect');
+	};
+
+	// target is Reference, Query, or connection Object like above
+	Truss.prototype.peek = function peek (target, callback) {
+	    var this$1 = this;
+
+	  callback = wrapPromiseCallback(callback);
+	  return new Promise(function (resolve, reject) {
+	    var scope = {};
+	    var connector = new Connector(scope, {result: target}, this$1._tree, 'peek');
+	    var vue = new Vue();
+	    vue.$watch(function () { return connector.ready; }, function (ready) {
+	      if (!ready) { return; }
+	      vue.$destroy();
+	      callback(scope.result).then(function (result) {
+	        connector.destroy();
+	        resolve(result);
+	      }, function (error) {
+	        connector.destroy();
+	        reject(error);
+	      });
+	    });
+	  });
+	};
+
+	staticAccessors.computedPropertyStats.get = function () {return this._tree.computedPropertyStats;};
+
+	Truss.connectWorker = function connectWorker (webWorker) {
+	  if (bridge) { throw new Error('Worker already connected'); }
+	  if (_.isString(webWorker)) {
+	    var Worker = window.SharedWorker || window.Worker;
+	    if (!Worker) { throw new Error('Browser does not implement Web Workers'); }
+	    webWorker = new Worker(webWorker);
+	  }
+	  bridge = new Bridge(webWorker);
+	  return bridge.init(webWorker).then(
 	    function (ref) {
 	        var exposedFunctionNames = ref.exposedFunctionNames;
 	        var firebaseSdkVersion = ref.firebaseSdkVersion;
@@ -676,610 +2612,40 @@
 	      for (var i = 0, list = exposedFunctionNames; i < list.length; i += 1) {
 	        var name = list[i];
 
-	          Truss.worker[name] = this$1.bindExposedFunction(name);
+	          Truss.worker[name] = bridge.bindExposedFunction(name);
 	      }
 	    }
 	  );
 	};
 
-	Bridge.prototype.activate = function activate (enabled) {
-	  if (this._active === enabled) { return; }
-	  this._active = enabled;
-	  if (enabled) {
-	    this._receiveMessages(this._inboundMessages);
-	    this._inboundMessages = [];
-	    if (this._outboundMessages.length) { setImmediate(this._flushMessageQueue); }
-	  }
+	staticAccessors.worker.get = function () {return workerFunctions;};
+
+	Truss.preExpose = function preExpose (functionName) {
+	  Truss.worker[functionName] = bridge.bindExposedFunction(functionName);
 	};
 
-	Bridge.prototype.debugPermissionDeniedErrors = function debugPermissionDeniedErrors (simulatedTokenGenerator, maxSimulationDuration, callFilter) {
-	  this._simulatedTokenGenerator = simulatedTokenGenerator;
-	  if (maxSimulationDuration !== undefined) { this._maxSimulationDuration = maxSimulationDuration; }
-	  this._simulatedCallFilter = callFilter || function() {return true;};
+	Truss.bounceConnection = function bounceConnection () {return bridge.bounceConnection();};
+	Truss.suspend = function suspend () {return bridge.suspend();};
+	Truss.debugPermissionDeniedErrors = function debugPermissionDeniedErrors (simulatedTokenGenerator, maxSimulationDuration, callFilter) {
+	  return bridge.debugPermissionDeniedErrors(
+	    simulatedTokenGenerator, maxSimulationDuration, callFilter);
 	};
 
-	Bridge.prototype._send = function _send (message) {
-	    var this$1 = this;
-
-	  message.id = ++this._idCounter;
-	  var promise;
-	  if (message.oneWay) {
-	    promise = Promise.resolve();
-	  } else {
-	    promise = new Promise(function (resolve, reject) {
-	      this$1._deferreds[message.id] = {resolve: resolve, reject: reject};
-	    });
-	    var deferred = this._deferreds[message.id];
-	    deferred.promise = promise;
-	    promise.sent = new Promise(function (resolve) {
-	      deferred.resolveSent = resolve;
-	    });
-	    for (var name in message) { if (message.hasOwnProperty(name)) { deferred[name] = message[name]; } }
-	  }
-	  if (!this._outboundMessages.length && this._active) { setImmediate(this._flushMessageQueue); }
-	  this._outboundMessages.push(message);
-	  return promise;
+	Truss.debounceAngularDigest = function debounceAngularDigest (wait) {
+	  angularProxy.debounceDigest(wait);
 	};
 
-	Bridge.prototype._flushMessageQueue = function _flushMessageQueue () {
-	  this._port.postMessage(this._outboundMessages);
-	  this._outboundMessages = [];
-	};
+	Truss.escapeKey = function escapeKey (key) {return escapeKey(key);};
+	Truss.unescapeKey = function unescapeKey (escapedKey) {return unescapeKey(escapedKey);};
 
-	Bridge.prototype._receive = function _receive (event) {
-	  if (this._active) {
-	    this._receiveMessages(event.data);
-	  } else {
-	    this._inboundMessages = this._inboundMessages.concat(event.data);
-	  }
-	};
+	staticAccessors.SERVER_TIMESTAMP.get = function () {return SERVER_TIMESTAMP;};
 
-	Bridge.prototype._receiveMessages = function _receiveMessages (messages) {
-	    var this$1 = this;
+	Object.defineProperties( Truss.prototype, prototypeAccessors );
+	Object.defineProperties( Truss, staticAccessors );
 
-	  for (var i = 0, list = messages; i < list.length; i += 1) {
-	    var message = list[i];
+	angularProxy.defineModule(Truss);
 
-	      var fn = this$1[message.msg];
-	    if (typeof fn !== 'function') { throw new Error('Unknown message: ' + message.msg); }
-	    fn.call(this$1, message);
-	  }
-	};
-
-	Bridge.prototype.bindExposedFunction = function bindExposedFunction (name) {
-	  return (function() {
-	    return this._send({msg: 'call', name: name, args: Array.prototype.slice.call(arguments)});
-	  }).bind(this);
-	};
-
-	Bridge.prototype.resolve = function resolve (message) {
-	  var deferred = this._deferreds[message.id];
-	  if (!deferred) { throw new Error('fireworker received resolution to inexistent call'); }
-	  delete this._deferreds[message.id];
-	  deferred.resolve(message.result);
-	};
-
-	Bridge.prototype.reject = function reject (message) {
-	    var this$1 = this;
-
-	  var deferred = this._deferreds[message.id];
-	  if (!deferred) { throw new Error('fireworker received rejection of inexistent call'); }
-	  delete this._deferreds[message.id];
-	  this._hydrateError(message.error, deferred).then(function (error) {
-	    deferred.reject(error);
-	    this$1._emitError(error);
-	  });
-	};
-
-	Bridge.prototype._hydrateError = function _hydrateError (json, props) {
-	  var error = this._errorFromJson(json);
-	  var code = json.code || json.message;
-	  if (code && code.toLowerCase() === 'permission_denied') {
-	    return this._simulateCall(props).then(function (securityTrace) {
-	      if (securityTrace) {
-	        error.extra = error.extra || {};
-	        error.extra.debug = securityTrace;
-	      }
-	      return error;
-	    });
-	  } else {
-	    return Promise.resolve(error);
-	  }
-	};
-
-	Bridge.prototype._simulateCall = function _simulateCall (props) {
-	    var this$1 = this;
-
-	  if (!(this._simulatedTokenGenerator && this._maxSimulationDuration > 0)) {
-	    return Promise.resolve();
-	  }
-	  var simulatedCalls = [];
-	  switch (props.msg) {
-	    case 'set':
-	      simulatedCalls.push({method: 'set', url: props.url, args: [props.value]});
-	      break;
-	    case 'update':
-	      simulatedCalls.push({method: 'update', url: props.url, args: [props.value]});
-	      break;
-	    case 'on':
-	    case 'once':
-	      simulatedCalls.push({method: 'once', url: props.url, args: ['value']});
-	      break;
-	    case 'transaction':
-	      simulatedCalls.push({method: 'once', url: props.url, args: ['value']});
-	      simulatedCalls.push({method: 'set', url: props.url, args: [props.newValue]});
-	      break;
-	  }
-	  if (!simulatedCalls.length || !this._simulatedCallFilter(props.msg, props.url)) {
-	    return Promise.resolve();
-	  }
-	  var auth = this.getAuth(getUrlRoot(props.url));
-	  var simulationPromise = this._simulatedTokenGenerator(auth && auth.uid).then(function (token) {
-	    return Promise.all(simulatedCalls.map(function (message) {
-	      message.msg = 'simulate';
-	      message.token = token;
-	      return this$1._send(message);
-	    }));
-	  }).then(function (securityTraces) {
-	    if (securityTraces.every(function (trace) { return trace === null; })) {
-	      return 'Unable to reproduce error in simulation';
-	    }
-	    return securityTraces.filter(function (trace) { return trace; }).join('\n\n');
-	  }).catch(function (e) {
-	    return 'Error running simulation: ' + e;
-	  });
-	  var timeoutPromise = new Promise(function (resolve) {
-	    setTimeout(resolve.bind(null, 'Simulated call timed out'), this$1._maxSimulationDuration);
-	  });
-	  return Promise.race([simulationPromise, timeoutPromise]);
-	};
-
-	Bridge.prototype.updateLocalStorage = function updateLocalStorage (items) {
-	  try {
-	    var storage = window.localStorage || window.sessionStorage;
-	    for (var item in items) {
-	      if (item.value === null) {
-	        storage.removeItem(item.key);
-	      } else {
-	        storage.setItem(item.key, item.value);
-	      }
-	    }
-	  } catch (e) {
-	    // If we're denied access, there's nothing we can do.
-	  }
-	};
-
-	Bridge.prototype.trackServer = function trackServer (rootUrl) {
-	  if (this._servers.hasOwnProperty(rootUrl)) { return; }
-	  var server = this._servers[rootUrl] = {offset: 0, authListeners: []};
-	  var authCallbackId = this._registerCallback(this._authCallback.bind(this, server));
-	  var offsetUrl = rootUrl + "/.info/serverTimeOffset";
-	  this.on(offsetUrl, offsetUrl, [], 'value', function (offset) {server.offset = offset.val();});
-	  this._send({msg: 'onAuth', url: rootUrl, callbackId: authCallbackId});
-	};
-
-	Bridge.prototype._authCallback = function _authCallback (server, auth) {
-	  server.auth = auth;
-	  for (var i = 0, list = server.authListeners; i < list.length; i += 1) {
-	      var listener = list[i];
-
-	      listener(auth);
-	    }
-	};
-
-	Bridge.prototype.onAuth = function onAuth (rootUrl, callback, context) {
-	  var listener = callback.bind(context);
-	  listener.callback = callback;
-	  listener.context = context;
-	  this._servers[rootUrl].authListeners.push(listener);
-	  listener(this.getAuth(rootUrl));
-	};
-
-	Bridge.prototype.offAuth = function offAuth (rootUrl, callback, context) {
-	  var authListeners = this._servers[rootUrl].authListeners;
-	  for (var i = 0; i < authListeners.length; i++) {
-	    var listener = authListeners[i];
-	    if (listener.callback === callback && listener.context === context) {
-	      authListeners.splice(i, 1);
-	      break;
-	    }
-	  }
-	};
-
-	Bridge.prototype.getAuth = function getAuth (rootUrl) {
-	  return this._servers[rootUrl].auth;
-	};
-
-	Bridge.prototype.authWithCustomToken = function authWithCustomToken (url, authToken, options) {
-	  return this._send({msg: 'authWithCustomToken', url: url, authToken: authToken, options: options});
-	};
-
-	Bridge.prototype.unauth = function unauth (url) {
-	  return this._send({msg: 'unauth', url: url});
-	};
-
-	Bridge.prototype.set = function set (url, value) {return this._send({msg: 'set', url: url, value: value});};
-	Bridge.prototype.update = function update (url, value) {return this._send({msg: 'update', url: url, value: value});};
-
-	Bridge.prototype.on = function on (listenerKey, url, terms, eventType, snapshotCallback, cancelCallback, context, options) {
-	  var handle = {
-	    listenerKey: listenerKey, eventType: eventType, snapshotCallback: snapshotCallback, cancelCallback: cancelCallback, context: context, msg: 'on', url: url, terms: terms,
-	    timeouts: this._slowCallbacks.read.map(function (record) { return new SlownessTracker(record); })
-	  };
-	  var callback = this._onCallback.bind(this, handle);
-	  this._registerCallback(callback, handle);
-	  // Keep multiple IDs to allow the same snapshotCallback to be reused.
-	  snapshotCallback.__callbackIds = snapshotCallback.__callbackIds || [];
-	  snapshotCallback.__callbackIds.push(handle.id);
-	  this._send({
-	    msg: 'on', listenerKey: listenerKey, url: url, terms: terms, eventType: eventType, callbackId: handle.id, options: options
-	  }).catch(function (error) {
-	    callback(error);
-	  });
-	};
-
-	Bridge.prototype.off = function off (listenerKey, url, terms, eventType, snapshotCallback, context) {
-	    var this$1 = this;
-
-	  var idsToDeregister = [];
-	  var callbackId;
-	  if (snapshotCallback) {
-	    if (snapshotCallback.__callbackIds) {
-	      var i = 0;
-	      while (i < snapshotCallback.__callbackIds.length) {
-	        var id = snapshotCallback.__callbackIds[i];
-	        var handle = this$1._callbacks[id];
-	        if (!handle) {
-	          snapshotCallback.__callbackIds.splice(i, 1);
-	          continue;
-	        }
-	        if (handle.listenerKey === listenerKey && handle.eventType === eventType &&
-	            handle.context === context) {
-	          callbackId = id;
-	          idsToDeregister.push(id);
-	          snapshotCallback.__callbackIds.splice(i, 1);
-	          break;
-	        }
-	        i += 1;
-	      }
-	    }
-	    if (!callbackId) { return; }// no-op, callback never registered or already deregistered
-	  } else {
-	    for (var i$1 = 0, list = Object.keys(this._callbacks); i$1 < list.length; i$1 += 1) {
-	      var id$1 = list[i$1];
-
-	        var handle$1 = this$1._callbacks[id$1];
-	      if (handle$1.listenerKey === listenerKey && (!eventType || handle$1.eventType === eventType)) {
-	        idsToDeregister.push(id$1);
-	      }
-	    }
-	  }
-	  // Nullify callbacks first, then deregister after off() is complete.We don't want any
-	  // callbacks in flight from the worker to be invoked while the off() is processing, but we don't
-	  // want them to throw an exception either.
-	  for (var i$2 = 0, list$1 = idsToDeregister; i$2 < list$1.length; i$2 += 1) {
-	      var id$2 = list$1[i$2];
-
-	      this$1._nullifyCallback(id$2);
-	    }
-	  return this._send({msg: 'off', listenerKey: listenerKey, url: url, terms: terms, eventType: eventType, callbackId: callbackId}).then(function () {
-	    for (var i = 0, list = idsToDeregister; i < list.length; i += 1) {
-	        var id = list[i];
-
-	        this$1._deregisterCallback(id);
-	      }
-	  });
-	};
-
-	Bridge.prototype._onCallback = function _onCallback (handle, error, snapshotJson) {
-	    var this$1 = this;
-
-	  if (handle.timeouts) {
-	    for (var i = 0, list = handle.timeouts; i < list.length; i += 1) {
-	        var timeout = list[i];
-
-	        timeout.handleDone();
-	      }
-	  }
-	  if (error) {
-	    this._deregisterCallback(handle.id);
-	    this._hydrateError(error, handle).then(function (error) {
-	      if (handle.cancelCallback) { handle.cancelCallback.call(handle.context, error); }
-	      this$1._emitError(error);
-	    });
-	  } else {
-	    handle.snapshotCallback.call(handle.context, new Snapshot(snapshotJson));
-	  }
-	};
-
-	Bridge.prototype.once = function once (url, terms, eventType, options) {
-	  return this._send({msg: 'once', url: url, terms: terms, eventType: eventType, options: options}).then(function (snapshotJson) {
-	    return new Snapshot(snapshotJson);
-	  });
-	};
-
-	Bridge.prototype.transaction = function transaction (url, updateFunction, options) {
-	    var this$1 = this;
-
-	  var tries = 0;
-
-	  var attemptTransaction = function (oldValue, oldHash) {
-	    if (tries++ >= 25) { return Promise.reject(new Error('maxretry')); }
-	    var newValue;
-	    try {
-	      newValue = updateFunction(oldValue);
-	    } catch (e) {
-	      return Promise.reject(e);
-	    }
-	    if (newValue === Firebase.ABORT_TRANSACTION_NOW ||
-	        newValue === undefined && !options.safeAbort) {
-	      return {committed: false, snapshot: new Snapshot({url: url, value: oldValue})};
-	    }
-	    return this$1._send({msg: 'transaction', url: url, oldHash: oldHash, newValue: newValue, options: options}).then(function (result) {
-	      if (result.stale) {
-	        return attemptTransaction(result.value, result.hash);
-	      } else {
-	        return {committed: result.committed, snapshot: new Snapshot(result.snapshotJson)};
-	      }
-	    });
-	  };
-
-	  return attemptTransaction(null, null);
-	};
-
-	Bridge.prototype.onDisconnect = function onDisconnect (url, method, value) {
-	  return this._send({msg: 'onDisconnect', url: url, method: method, value: value});
-	};
-
-	Bridge.prototype.bounceConnection = function bounceConnection () {
-	  return this._send({msg: 'bounceConnection'});
-	};
-
-	Bridge.prototype.callback = function callback (ref) {
-	    var id = ref.id;
-	    var args = ref.args;
-
-	  var handle = this._callbacks[id];
-	  if (!handle) { throw new Error('Unregistered callback: ' + id); }
-	  handle.callback.apply(null, args);
-	};
-
-	Bridge.prototype._registerCallback = function _registerCallback (callback, handle) {
-	  handle = handle || {};
-	  handle.callback = callback;
-	  handle.id = "cb" + (++this._idCounter);
-	  this._callbacks[handle.id] = handle;
-	  return handle.id;
-	};
-
-	Bridge.prototype._nullifyCallback = function _nullifyCallback (id) {
-	  var handle = this._callbacks[id];
-	  if (handle.timeouts) {
-	    for (var i = 0, list = handle.timeouts; i < list.length; i += 1) {
-	        var timeout = list[i];
-
-	        timeout.handleDone();
-	      }
-	  }
-	  this._callbacks[id].callback = noop$1;
-	};
-
-	Bridge.prototype._deregisterCallback = function _deregisterCallback (id) {
-	  delete this._callbacks[id];
-	};
-
-	Bridge.prototype.onError = function onError (callback) {
-	  this._errorCallbacks.push(callback);
-	  return callback;
-	};
-
-	Bridge.prototype.offError = function offError (callback) {
-	  var k = this._errorCallbacks.indexOf(callback);
-	  if (k !== -1) { this._errorCallbacks.splice(k, 1); }
-	};
-
-	Bridge.prototype.onSlow = function onSlow (operationKind, timeout, callback) {
-	    var this$1 = this;
-
-	  var kinds = operationKind === 'all' ? Object.keys(this._slowCallbacks) : [operationKind];
-	  for (var i = 0, list = kinds; i < list.length; i += 1) {
-	      var kind = list[i];
-
-	      this$1._slowCallbacks[kind].push({timeout: timeout, callback: callback, count: 0});
-	    }
-	  return callback;
-	};
-
-	Bridge.prototype.offSlow = function offSlow (operationKind, callback) {
-	    var this$1 = this;
-
-	  var kinds = operationKind === 'all' ? Object.keys(this._slowCallbacks) : [operationKind];
-	  for (var i$1 = 0, list = kinds; i$1 < list.length; i$1 += 1) {
-	    var kind = list[i$1];
-
-	      var records = this$1._slowCallbacks[kind];
-	    for (var i = 0; i < records.length; i++) {
-	      if (records[i].callback === callback) {
-	        records.splice(i, 1);
-	        break;
-	      }
-	    }
-	  }
-	};
-
-	Bridge.prototype.trackSlowness = function trackSlowness (promise, operationKind) {
-	  var records = this._slowCallbacks[operationKind];
-	  if (!records.length) { return promise; }
-
-	  var timeouts = records.map(function (record) { return new SlownessTracker(record); });
-
-	  function opDone() {
-	    for (var i = 0, list = timeouts; i < list.length; i += 1) {
-	        var timeout = list[i];
-
-	        timeout.handleDone();
-	      }
-	  }
-
-	  promise = promise.then(function (result) {
-	    opDone();
-	    return result;
-	  }, function (error) {
-	    opDone();
-	    return Promise.reject(error);
-	  });
-
-	  return promise;
-	};
-
-	Bridge.prototype._errorFromJson = function _errorFromJson (json) {
-	  if (!json || json instanceof Error) { return json; }
-	  var error = new Error(json.message);
-	  for (var propertyName in json) {
-	    if (propertyName === 'message' || !json.hasOwnProperty(propertyName)) { continue; }
-	    try {
-	      error[propertyName] = json[propertyName];
-	    } catch (e) {
-	      e.extra = {propertyName: propertyName};
-	      throw e;
-	    }
-	  }
-	  return error;
-	};
-
-	Bridge.prototype._emitError = function _emitError (error) {
-	    var this$1 = this;
-
-	  if (this._errorCallbacks.length) {
-	    setTimeout(function () {
-	      for (var i = 0, list = this$1._errorCallbacks; i < list.length; i += 1) {
-	          var callback = list[i];
-
-	          callback(error);
-	        }
-	    }, 0);
-	  }
-	};
-
-
-	function noop$1() {}
-
-	/* globals window */
-
-	var triggerAngularDigest;
-
-	var exports$1 = {active: typeof window !== 'undefined' && window.angular};
-	if (exports$1.active) {
-	  window.angular.module('firetruss', []).run(
-	    ['$rootScope', function($rootScope) {
-	      triggerAngularDigest = $rootScope.$evalAsync.bind($rootScope);
-	    }]
-	  );
-	  exports$1.defineModule = function(Truss) {
-	    window.angular.module('firetruss').constant('Truss', Truss);
-	  };
-	} else {
-	  exports$1.defineModule = function() {};
-	}
-
-	exports$1.digest = function() {
-	  if (triggerAngularDigest) { triggerAngularDigest(); }
-	};
-
-	var TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
-
-	var bridge;
-
-
-	// jshint latedef:false
-	var Truss$1 = function Truss$1(rootUrl, classes) {
-	  // TODO: allow rootUrl to be a test database object for testing
-	  this._rootUrl = rootUrl.replace(/\/$/, '');
-	  this._keyGenerator = new KeyGenerator();
-	  bridge.trackServer(this._rootUrl);
-	  this._tree = new Tree(this, classes);
-	  Object.defineProperty(this, 'root', {
-	    value: this._vue.$data.$root, writable: false, configurable: false, enumerable: false
-	  });
-	  if (exports$1.active) {
-	    this._vue.$watch('$data', exports$1.digest, {deep: true});
-	  }
-	};
-
-	var prototypeAccessors = { now: {},user: {} };
-	var staticAccessors = { computedPropertyStats: {},TIMESTAMP: {} };
-
-	Truss$1.prototype.destroy = function destroy () {
-	  this.tree.destroy();
-	};
-
-	prototypeAccessors.now.get = function () {};
-	Truss$1.prototype.newKey = function newKey () {return this._keyGenerator.generateUniqueKey(this.now);};
-
-	prototypeAccessors.user.get = function () {};
-	Truss$1.prototype.authenticate = function authenticate (token) {};
-	Truss$1.prototype.unauthenticate = function unauthenticate () {};
-
-	Truss$1.prototype.interceptConnections = function interceptConnections (/* {beforeConnect: beforeFn, afterDisconnect: afterFn, onError: errorFn} */) {};
-	Truss$1.prototype.interceptWrites = function interceptWrites (/* {beforeWrite: beforeFn, afterWrite: afterFn, onError: errorFn} */) {};
-	Truss$1.prototype.pull = function pull (scope, connections) {};// returns readyPromise
-	Truss$1.prototype.bind = function bind (scope, connections) {};// returns readyPromise
-	// connections are {key: Query | Array<Reference> | fn() -> (Query | Array<Reference>)}
-
-	staticAccessors.computedPropertyStats.get = function () {return this._tree.computedPropertyStats;};
-
-	Truss$1.connectWorker = function connectWorker (webWorker) {
-	  if (bridge) { throw new Error('Worker already connected'); }
-	  bridge = new Bridge(webWorker);
-	  return bridge.init();
-	};
-
-	Truss$1.preExpose = function preExpose (functionName) {
-	  Truss$1.worker[functionName] = bridge.bindExposedFunction(functionName);
-	};
-
-	Truss$1.goOnline = function goOnline () {
-	  bridge.activate(true);
-	};
-
-	Truss$1.goOffline = function goOffline () {
-	  bridge.activate(false);
-	};
-
-	Truss$1.escapeKey = function escapeKey (key) {
-	  return escapeKey(key);
-	};
-
-	Truss$1.unescapeKey = function unescapeKey (escapedKey) {
-	  return unescapeKey(escapedKey);
-	};
-
-	staticAccessors.TIMESTAMP.get = function () {
-	  return TIMESTAMP;
-	};
-
-	Object.defineProperties( Truss$1.prototype, prototypeAccessors );
-	Object.defineProperties( Truss$1, staticAccessors );
-
-	[
-	  'onError', 'offError', 'onSlow', 'offSlow', 'bounceConnection', 'debugPermissionDeniedErrors'
-	].forEach(function (methodName) {
-	  Truss$1[methodName] = function() {return bridge[methodName].apply(bridge, arguments);};
-	});
-
-
-	Truss$1.DefaultTransactionOptions = Object.seal({
-	  applyLocally: true, nonsequential: false, safeAbort: false
-	});
-	Truss$1.ABORT_TRANSACTION_NOW = Object.create(null);
-	Truss$1.worker = {};
-
-
-
-
-	exports$1.defineModule(Truss$1);
-
-	return Truss$1;
+	return Truss;
 
 })));
 
