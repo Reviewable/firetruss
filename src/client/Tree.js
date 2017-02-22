@@ -250,11 +250,14 @@ export default class Tree {
       // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
       $parent: {value: parent, writable: false, configurable: true, enumerable: true},
       $key: {value: key, writable: false, configurable: false, enumerable: false},
-      $path: {value: path, writable: false, configurable: false, enumerable: false}
+      $path: {value: path, writable: false, configurable: false, enumerable: false},
+      $$touchThis: {
+        value: parent ? () => parent[key] : () => this._vue.$data.$root,
+        writable: false, configurable: false, enumerable: false
+      }
     };
 
-    const touchThis = parent ? () => parent[key] : () => this._vue.$data.$root;
-    const object = this._modeler.createObject(path, properties, touchThis);
+    const object = this._modeler.createObject(path, properties);
     Object.defineProperties(object, properties);
     return object;
   }
@@ -273,15 +276,17 @@ export default class Tree {
         Object.defineProperty(object, name, descriptor);
       }
     }
-    if (object.__initializers__) {
-      for (let fn of object.__initializers__) fn(this._vue);
+    if (object.$$initializers) {
+      for (let fn of object.$$initializers) fn(this._vue);
+      delete object.$$initializers;
     }
   }
 
   _destroyObject(object) {
     if (!(object && object.$truss)) return;
-    if (object.__destructors__) {
-      for (let fn of object.__destructors__) fn();
+    if (object.$$finalizers) {
+      // Some destructors remove themselves from the array, so clone it before iterating.
+      for (let fn of _.clone(object.$$finalizers)) fn();
     }
     for (let key in object) {
       if (!Object.hasOwnProperty(object, key)) continue;

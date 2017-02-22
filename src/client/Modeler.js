@@ -18,6 +18,39 @@ class Value {
   get $keys() {return _.keys(this);}
   get $values() {return _.values(this);}
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
+
+  $watch(subjectFn, callbackFn) {
+    let done = false;
+    let unwatchAndRemoveDestructor = () => {done = true;};
+
+    const unwatch = this.$truss._tree._vue.$watch(() => {
+      if (done) return;
+      this.$$touchThis();
+      return subjectFn();
+    }, (newValue, oldValue) => {
+      if (done) return;
+      callbackFn.call(this, newValue, oldValue, unwatchAndRemoveDestructor);
+    }, {immediate: true});
+
+    if (done) {
+      unwatch();
+      return _.noop;
+    }
+
+    if (!this.$$finalizers) {
+      Object.defineProperty(this, '$$finalizers', {
+        value: [], writable: false, enumerable: false, configurable: false});
+    }
+    unwatchAndRemoveDestructor = () => {
+      if (done) return;
+      done = true;
+      unwatch();
+      _.pull(this.$$finalizers, unwatchAndRemoveDestructor);
+    };
+    this.$$finalizers.push(unwatchAndRemoveDestructor);
+    return unwatchAndRemoveDestructor;
+  }
+
   $set(value) {return this.$ref.set(value);}
   $update(values) {return this.$ref.update(values);}
   $commit(options, updateFn) {return this.$ref.commit(options, updateFn);}
@@ -122,7 +155,7 @@ export default class Modeler {
    * them up and make the reactive, so you should call _completeCreateObject once it's done so and
    * before any Firebase properties are added.
    */
-  createObject(path, properties, touchThis) {
+  createObject(path, properties) {
     let Class = Value;
     let computedProperties;
     for (let mount of this._mounts) {
@@ -145,14 +178,14 @@ export default class Modeler {
 
     if (computedProperties) {
       _.each(computedProperties, prop => {
-        properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop, touchThis);
+        properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop);
       });
     }
 
     return object;
   }
 
-  _buildComputedPropertyDescriptor(object, prop, touchThis) {
+  _buildComputedPropertyDescriptor(object, prop) {
     if (!computedPropertyStats[prop.fullName]) {
       Object.defineProperty(computedPropertyStats, prop.fullName, {
         value: new ComputedPropertyStats(prop.fullName), writable: false, enumerable: true,
@@ -161,35 +194,21 @@ export default class Modeler {
     }
     const stats = computedPropertyStats[prop.fullName];
 
-    function computeValue() {
-      // jshint validthis: true
-      // Touch this object, since a failed access to a missing property doesn't get captured as a
-      // dependency.
-      touchThis();
-
-      const startTime = performanceNow();
-      const result = prop.get.call(this);
-      stats.runtime += performanceNow() - startTime;
-      stats.numRecomputes += 1;
-      return result;
-      // jshint validthis: false
-    }
-
     let value;
     let writeAllowed = false;
     let firstCallback = true;
 
-    if (!object.__destructors__) {
-      Object.defineProperty(object, '__destructors__', {
+    if (!object.$$finalizers) {
+      Object.defineProperty(object, '$$finalizers', {
         value: [], writable: false, enumerable: false, configurable: false});
     }
-    if (!object.__initializers__) {
-      Object.defineProperty(object, '__initializers__', {
-        value: [], writable: false, enumerable: false, configurable: false});
+    if (!object.$$initializers) {
+      Object.defineProperty(object, '$$initializers', {
+        value: [], writable: false, enumerable: false, configurable: true});
     }
-    object.__initializers__.push(vue => {
-      object.__destructors__.push(
-        vue.$watch(computeValue.bind(object), newValue => {
+    object.$$initializers.push(vue => {
+      object.$$finalizers.push(
+        vue.$watch(computeValue.bind(object, prop, stats), newValue => {
           if (firstCallback) {
             stats.numUpdates += 1;
             value = newValue;
@@ -232,6 +251,20 @@ export default class Modeler {
   }
 }
 
+
+function computeValue(prop, stats) {
+  // jshint validthis: true
+  // Touch this object, since a failed access to a missing property doesn't get captured as a
+  // dependency.
+  this.$$touchThis();
+
+  const startTime = performanceNow();
+  const result = prop.get.call(this);
+  stats.runtime += performanceNow() - startTime;
+  stats.numRecomputes += 1;
+  return result;
+  // jshint validthis: false
+}
 
 function isTrussValueEqual(a, b) {
   if (a && a.$truss || b && b.$truss) return a === b;
