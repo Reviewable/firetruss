@@ -1,6 +1,12 @@
 import _ from 'lodash';
 import {wrapPromiseCallback} from './utils.js';
 
+
+const INTERCEPT_KEYS = [
+  'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'all'
+];
+
+
 class SlowHandle {
   constructor(operation, delay, callback) {
     this._operation = operation;
@@ -11,6 +17,7 @@ class SlowHandle {
 
   initiate() {
     this.cancel();
+    this._fired = false;
     const elapsed = Date.now() - this._operation._startTimestamp;
     this._timeoutId = setTimeout(this._delay - elapsed, () => {
       this._fired = true;
@@ -72,33 +79,54 @@ export default class Dispatcher {
     this._callbacks = {};
   }
 
-  intercept(operationType, callbacks) {
-    if (!_.contains(['read', 'write', 'auth'], operationType)) {
-      throw new Error('Unknown intercept operation type: ' + operationType);
+  intercept(interceptKey, callbacks) {
+    if (!_.contains(INTERCEPT_KEYS, interceptKey)) {
+      throw new Error('Unknown intercept operation type: ' + interceptKey);
     }
     const badCallbackKeys =
       _.difference(_.keys(callbacks), ['onBefore', 'onAfter', 'onError', 'onFailure']);
     if (badCallbackKeys.length) {
       throw new Error('Unknown intercept callback types: ' + badCallbackKeys.join(', '));
     }
-    this._addCallback('onBefore', operationType, callbacks.onBefore);
-    this._addCallback('onAfter', operationType, callbacks.onAfter);
-    this._addCallback('onError', operationType, callbacks.onError);
-    this._addCallback('onFailure', operationType, callbacks.onFailure);
+    const wrappedCallbacks = {
+      onBefore: this._addCallback('onBefore', interceptKey, callbacks.onBefore),
+      onAfter: this._addCallback('onAfter', interceptKey, callbacks.onAfter),
+      onError: this._addCallback('onError', interceptKey, callbacks.onError),
+      onFailure: this._addCallback('onFailure', interceptKey, callbacks.onFailure)
+    };
+    return this._removeCallbacks.bind(this, interceptKey, wrappedCallbacks);
   }
 
-  _addCallback(stage, operationType, callback) {
+  _addCallback(stage, interceptKey, callback) {
     if (!callback) return;
-    const key = this._getCallbacksKey(operationType, stage);
-    (this._callbacks[key] || (this._callbacks[key] = [])).push(wrapPromiseCallback(callback));
+    const key = this._getCallbacksKey(interceptKey, stage);
+    const wrappedCallback = wrapPromiseCallback(callback);
+    (this._callbacks[key] || (this._callbacks[key] = [])).push(wrappedCallback);
+    return wrappedCallback;
   }
 
-  _getCallbacks(stage, operationType) {
-    return this._callbacks[this._getCallbacksKey(stage, operationType)];
+  _removeCallback(stage, interceptKey, wrappedCallback) {
+    if (!wrappedCallback) return;
+    const key = this._getCallbacksKey(interceptKey, stage);
+    if (this._callbacks[key]) _.pull(this._callbacks[key], wrappedCallback);
   }
 
-  _getCallbacksKey(stage, operationType) {
-    return `${stage}_${operationType}`;
+  _removeCallbacks(interceptKey, wrappedCallbacks) {
+    _.each(wrappedCallbacks, (wrappedCallback, stage) => {
+      this._removeCallback(stage, interceptKey, wrappedCallback);
+    });
+  }
+
+  _getCallbacks(stage, operationType, method) {
+    return [].concat(
+      this._callbacks[this._getCallbacksKey(stage, method)],
+      this._callbacks[this._getCallbacksKey(stage, operationType)],
+      this._callbacks[this._getCallbacksKey(stage, 'all')]
+    );
+  }
+
+  _getCallbacksKey(stage, interceptKey) {
+    return `${stage}_${interceptKey}`;
   }
 
   execute(operationType, method, target, executor) {
