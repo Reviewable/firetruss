@@ -8,6 +8,12 @@ import Vue from 'vue';
 
 
 class Transaction {
+  constructor(path, tree) {
+    this._path = path;
+    this._tree = tree;
+  }
+
+  get currentValue() {return this._tree._getObject(this._path);}
   get outcome() {return this._outcome;}
   get values() {return this._values;}
 
