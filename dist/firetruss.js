@@ -528,8 +528,9 @@
 	  }
 	};
 
-	var prototypeAccessors$3 = { key: {},path: {},_pathPrefix: {},parent: {},annotations: {} };
+	var prototypeAccessors$3 = { $ref: {},key: {},path: {},_pathPrefix: {},parent: {},annotations: {} };
 
+	prototypeAccessors$3.$ref.get = function () {return this;};
 	prototypeAccessors$3.key.get = function () {
 	  if (!this._key) { this._key = unescapeKey(this._path.replace(/.*\//, '')); }
 	  return this._key;
@@ -911,6 +912,11 @@
 
 	Object.defineProperties( Connector.prototype, prototypeAccessors$2 );
 
+	var INTERCEPT_KEYS = [
+	  'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'all'
+	];
+
+
 	var SlowHandle = function SlowHandle(operation, delay, callback) {
 	  this._operation = operation;
 	  this._delay = delay;
@@ -922,6 +928,7 @@
 	    var this$1 = this;
 
 	  this.cancel();
+	  this._fired = false;
 	  var elapsed = Date.now() - this._operation._startTimestamp;
 	  this._timeoutId = setTimeout(this._delay - elapsed, function () {
 	    this$1._fired = true;
@@ -983,33 +990,56 @@
 	  this._callbacks = {};
 	};
 
-	Dispatcher.prototype.intercept = function intercept (operationType, callbacks) {
-	  if (!_.contains(['read', 'write', 'auth'], operationType)) {
-	    throw new Error('Unknown intercept operation type: ' + operationType);
+	Dispatcher.prototype.intercept = function intercept (interceptKey, callbacks) {
+	  if (!_.contains(INTERCEPT_KEYS, interceptKey)) {
+	    throw new Error('Unknown intercept operation type: ' + interceptKey);
 	  }
 	  var badCallbackKeys =
 	    _.difference(_.keys(callbacks), ['onBefore', 'onAfter', 'onError', 'onFailure']);
 	  if (badCallbackKeys.length) {
 	    throw new Error('Unknown intercept callback types: ' + badCallbackKeys.join(', '));
 	  }
-	  this._addCallback('onBefore', operationType, callbacks.onBefore);
-	  this._addCallback('onAfter', operationType, callbacks.onAfter);
-	  this._addCallback('onError', operationType, callbacks.onError);
-	  this._addCallback('onFailure', operationType, callbacks.onFailure);
+	  var wrappedCallbacks = {
+	    onBefore: this._addCallback('onBefore', interceptKey, callbacks.onBefore),
+	    onAfter: this._addCallback('onAfter', interceptKey, callbacks.onAfter),
+	    onError: this._addCallback('onError', interceptKey, callbacks.onError),
+	    onFailure: this._addCallback('onFailure', interceptKey, callbacks.onFailure)
+	  };
+	  return this._removeCallbacks.bind(this, interceptKey, wrappedCallbacks);
 	};
 
-	Dispatcher.prototype._addCallback = function _addCallback (stage, operationType, callback) {
+	Dispatcher.prototype._addCallback = function _addCallback (stage, interceptKey, callback) {
 	  if (!callback) { return; }
-	  var key = this._getCallbacksKey(operationType, stage);
-	  (this._callbacks[key] || (this._callbacks[key] = [])).push(wrapPromiseCallback(callback));
+	  var key = this._getCallbacksKey(interceptKey, stage);
+	  var wrappedCallback = wrapPromiseCallback(callback);
+	  (this._callbacks[key] || (this._callbacks[key] = [])).push(wrappedCallback);
+	  return wrappedCallback;
 	};
 
-	Dispatcher.prototype._getCallbacks = function _getCallbacks (stage, operationType) {
-	  return this._callbacks[this._getCallbacksKey(stage, operationType)];
+	Dispatcher.prototype._removeCallback = function _removeCallback (stage, interceptKey, wrappedCallback) {
+	  if (!wrappedCallback) { return; }
+	  var key = this._getCallbacksKey(interceptKey, stage);
+	  if (this._callbacks[key]) { _.pull(this._callbacks[key], wrappedCallback); }
 	};
 
-	Dispatcher.prototype._getCallbacksKey = function _getCallbacksKey (stage, operationType) {
-	  return (stage + "_" + operationType);
+	Dispatcher.prototype._removeCallbacks = function _removeCallbacks (interceptKey, wrappedCallbacks) {
+	    var this$1 = this;
+
+	  _.each(wrappedCallbacks, function (wrappedCallback, stage) {
+	    this$1._removeCallback(stage, interceptKey, wrappedCallback);
+	  });
+	};
+
+	Dispatcher.prototype._getCallbacks = function _getCallbacks (stage, operationType, method) {
+	  return [].concat(
+	    this._callbacks[this._getCallbacksKey(stage, method)],
+	    this._callbacks[this._getCallbacksKey(stage, operationType)],
+	    this._callbacks[this._getCallbacksKey(stage, 'all')]
+	  );
+	};
+
+	Dispatcher.prototype._getCallbacksKey = function _getCallbacksKey (stage, interceptKey) {
+	  return (stage + "_" + interceptKey);
 	};
 
 	Dispatcher.prototype.execute = function execute (operationType, method, target, executor) {
@@ -1682,6 +1712,41 @@
 	prototypeAccessors$8.$keys.get = function () {return _.keys(this);};
 	prototypeAccessors$8.$values.get = function () {return _.values(this);};
 	prototypeAccessors$8.$root.get = function () {return this.$truss.root;};// access indirectly to leave dependency trace
+
+	Value.prototype.$watch = function $watch (subjectFn, callbackFn) {
+	    var this$1 = this;
+
+	  var done = false;
+	  var unwatchAndRemoveDestructor = function () {done = true;};
+
+	  var unwatch = this.$truss._tree._vue.$watch(function () {
+	    if (done) { return; }
+	    this$1.$$touchThis();
+	    return subjectFn();
+	  }, function (newValue, oldValue) {
+	    if (done) { return; }
+	    callbackFn.call(this$1, newValue, oldValue, unwatchAndRemoveDestructor);
+	  }, {immediate: true});
+
+	  if (done) {
+	    unwatch();
+	    return _.noop;
+	  }
+
+	  if (!this.$$finalizers) {
+	    Object.defineProperty(this, '$$finalizers', {
+	      value: [], writable: false, enumerable: false, configurable: false});
+	  }
+	  unwatchAndRemoveDestructor = function () {
+	    if (done) { return; }
+	    done = true;
+	    unwatch();
+	    _.pull(this$1.$$finalizers, unwatchAndRemoveDestructor);
+	  };
+	  this.$$finalizers.push(unwatchAndRemoveDestructor);
+	  return unwatchAndRemoveDestructor;
+	};
+
 	Value.prototype.$set = function $set (value) {return this.$ref.set(value);};
 	Value.prototype.$update = function $update (values) {return this.$ref.update(values);};
 	Value.prototype.$commit = function $commit (options, updateFn) {return this.$ref.commit(options, updateFn);};
@@ -1789,7 +1854,7 @@
 	 * them up and make the reactive, so you should call _completeCreateObject once it's done so and
 	 * before any Firebase properties are added.
 	 */
-	Modeler.prototype.createObject = function createObject (path, properties, touchThis) {
+	Modeler.prototype.createObject = function createObject (path, properties) {
 	    var this$1 = this;
 
 	  var Class = Value;
@@ -1816,14 +1881,14 @@
 
 	  if (computedProperties) {
 	    _.each(computedProperties, function (prop) {
-	      properties[prop.name] = this$1._buildComputedPropertyDescriptor(object, prop, touchThis);
+	      properties[prop.name] = this$1._buildComputedPropertyDescriptor(object, prop);
 	    });
 	  }
 
 	  return object;
 	};
 
-	Modeler.prototype._buildComputedPropertyDescriptor = function _buildComputedPropertyDescriptor (object, prop, touchThis) {
+	Modeler.prototype._buildComputedPropertyDescriptor = function _buildComputedPropertyDescriptor (object, prop) {
 	  if (!computedPropertyStats[prop.fullName]) {
 	    Object.defineProperty(computedPropertyStats, prop.fullName, {
 	      value: new ComputedPropertyStats(prop.fullName), writable: false, enumerable: true,
@@ -1832,35 +1897,21 @@
 	  }
 	  var stats = computedPropertyStats[prop.fullName];
 
-	  function computeValue() {
-	    // jshint validthis: true
-	    // Touch this object, since a failed access to a missing property doesn't get captured as a
-	    // dependency.
-	    touchThis();
-
-	    var startTime = performanceNow();
-	    var result = prop.get.call(this);
-	    stats.runtime += performanceNow() - startTime;
-	    stats.numRecomputes += 1;
-	    return result;
-	    // jshint validthis: false
-	  }
-
 	  var value;
 	  var writeAllowed = false;
 	  var firstCallback = true;
 
-	  if (!object.__destructors__) {
-	    Object.defineProperty(object, '__destructors__', {
+	  if (!object.$$finalizers) {
+	    Object.defineProperty(object, '$$finalizers', {
 	      value: [], writable: false, enumerable: false, configurable: false});
 	  }
-	  if (!object.__initializers__) {
-	    Object.defineProperty(object, '__initializers__', {
-	      value: [], writable: false, enumerable: false, configurable: false});
+	  if (!object.$$initializers) {
+	    Object.defineProperty(object, '$$initializers', {
+	      value: [], writable: false, enumerable: false, configurable: true});
 	  }
-	  object.__initializers__.push(function (vue) {
-	    object.__destructors__.push(
-	      vue.$watch(computeValue.bind(object), function (newValue) {
+	  object.$$initializers.push(function (vue) {
+	    object.$$finalizers.push(
+	      vue.$watch(computeValue.bind(object, prop, stats), function (newValue) {
 	        if (firstCallback) {
 	          stats.numUpdates += 1;
 	          value = newValue;
@@ -1904,14 +1955,32 @@
 
 	Object.defineProperties( Modeler, staticAccessors$3 );
 
+	function computeValue(prop, stats) {
+	  // jshint validthis: true
+	  // Touch this object, since a failed access to a missing property doesn't get captured as a
+	  // dependency.
+	  this.$$touchThis();
+
+	  var startTime = performanceNow();
+	  var result = prop.get.call(this);
+	  stats.runtime += performanceNow() - startTime;
+	  stats.numRecomputes += 1;
+	  return result;
+	  // jshint validthis: false
+	}
+
 	function isTrussValueEqual(a, b) {
 	  if (a && a.$truss || b && b.$truss) { return a === b; }
 	}
 
-	var Transaction = function Transaction () {};
+	var Transaction = function Transaction(path, tree) {
+	  this._path = path;
+	  this._tree = tree;
+	};
 
-	var prototypeAccessors$6 = { outcome: {},values: {} };
+	var prototypeAccessors$6 = { currentValue: {},outcome: {},values: {} };
 
+	prototypeAccessors$6.currentValue.get = function () {return this._tree._getObject(this._path);};
 	prototypeAccessors$6.outcome.get = function () {return this._outcome;};
 	prototypeAccessors$6.values.get = function () {return this._values;};
 
@@ -2061,7 +2130,6 @@
 	Tree.prototype.commit = function commit (ref, updateFunction) {
 	    var this$1 = this;
 
-	  var url = this._rootUrl + ref.path;
 	  var tries = 0;
 
 	  var attemptTransaction = function () {
@@ -2082,13 +2150,15 @@
 	      var obj;
 	        break;
 	      case 'update':
-	        checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, txn.values);
+	        checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, txn.values, true);
 	        this$1._applyLocalWrite(txn.values);
 	        break;
 	      default:
 	        throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
 	    }
-	    return this$1._bridge.transaction(url, oldValue, txn.values).then(function (committed) {
+	    return this$1._bridge.transaction(
+	      this$1._rootUrl + ref.path, oldValue, txn.values
+	    ).then(function (committed) {
 	      if (!committed) { return attemptTransaction(); }
 	    });
 	  };
@@ -2174,11 +2244,14 @@
 	    // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
 	    $parent: {value: parent, writable: false, configurable: true, enumerable: true},
 	    $key: {value: key, writable: false, configurable: false, enumerable: false},
-	    $path: {value: path, writable: false, configurable: false, enumerable: false}
+	    $path: {value: path, writable: false, configurable: false, enumerable: false},
+	    $$touchThis: {
+	      value: parent ? function () { return parent[key]; } : function () { return this$1._vue.$data.$root; },
+	      writable: false, configurable: false, enumerable: false
+	    }
 	  };
 
-	  var touchThis = parent ? function () { return parent[key]; } : function () { return this$1._vue.$data.$root; };
-	  var object = this._modeler.createObject(path, properties, touchThis);
+	  var object = this._modeler.createObject(path, properties);
 	  Object.defineProperties(object, properties);
 	  return object;
 	};
@@ -2201,12 +2274,13 @@
 	      Object.defineProperty(object, name, descriptor);
 	    }
 	  }
-	  if (object.__initializers__) {
-	    for (var i$1 = 0, list$1 = object.__initializers__; i$1 < list$1.length; i$1 += 1) {
+	  if (object.$$initializers) {
+	    for (var i$1 = 0, list$1 = object.$$initializers; i$1 < list$1.length; i$1 += 1) {
 	        var fn = list$1[i$1];
 
 	        fn(this$1._vue);
 	      }
+	    delete object.$$initializers;
 	  }
 	};
 
@@ -2214,8 +2288,9 @@
 	    var this$1 = this;
 
 	  if (!(object && object.$truss)) { return; }
-	  if (object.__destructors__) {
-	    for (var i = 0, list = object.__destructors__; i < list.length; i += 1) {
+	  if (object.$$finalizers) {
+	    // Some destructors remove themselves from the array, so clone it before iterating.
+	    for (var i = 0, list = _.clone(object.$$finalizers); i < list.length; i += 1) {
 	        var fn = list[i];
 
 	        fn();
@@ -2469,17 +2544,30 @@
 	}
 
 	function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativizePaths) {
-	  var paths = _(values)
-	    .keys().map(function (path) { return path === '/' ? '/' : (path + '/'); }).sortBy(function (path) { return path.length; }).value();
+	  // First, check all paths for correctness and absolutize them, since there could be a mix of
+	  // absolute paths and relative keys.
 	  _.each(_.keys(values), function (path) {
-	    if (path.charAt(0) !== '/') {
-	      throw new Error('Update item does not have an absolute path: ' + path);
+	    if (path.charAt(0) === '/') {
+	      if (!(path === rootPath || rootPath === '/' ||
+	            _.startsWith(path, rootPath + '/') && path.length > rootPath.length + 1)) {
+	        throw new Error(("Update item is not a descendant of target ref: " + path));
+	      }
+	    } else {
+	      if (path.indexOf('/') >= 0) {
+	        throw new Error(("Update item deep path must be absolute, taken from a reference: " + path));
+	      }
+	      var absolutePath = joinPath(rootPath, escapeKey(path));
+	      if (values.hasOwnProperty(absolutePath)) {
+	        throw new Error(("Update items overlap: " + path + " and " + absolutePath));
+	      }
+	      values[absolutePath] = values[path];
+	      delete values[path];
 	    }
-	    if (!(path === rootPath || rootPath === '/' ||
-	          _.startsWith(path, rootPath + '/') && path.length > rootPath.length + 1)) {
-	      throw new Error(("Update item is not a descendant of target ref: " + path));
-	    }
-	    for (var i = 0, list = paths; i < list.length; i += 1) {
+	  });
+	  // Then check for overlaps and relativize if desired.
+	  var allPaths = _(values).keys().map(function (path) { return joinPath(path, ''); }).sortBy('length').value();
+	  _.each(_.keys(values), function (path) {
+	    for (var i = 0, list = allPaths; i < list.length; i += 1) {
 	      var otherPath = list[i];
 
 	      if (otherPath.length > path.length) { break; }
@@ -2519,6 +2607,7 @@
 	  this._rootUrl = rootUrl.replace(/\/$/, '');
 	  this._keyGenerator = new KeyGenerator();
 	  this._dispatcher = new Dispatcher(bridge);
+	  this._vue = new Vue();
 
 	  this._metaTree = new MetaTree(this._rootUrl, bridge);
 	  Object.defineProperty(this, 'meta', {
@@ -2535,6 +2624,7 @@
 	var staticAccessors = { computedPropertyStats: {},worker: {},SERVER_TIMESTAMP: {} };
 
 	Truss.prototype.destroy = function destroy () {
+	  this._vue.$destroy();
 	  this._tree.destroy();
 	  this._metaTree.destroy();
 	};
@@ -2566,6 +2656,7 @@
 	  if (!connections) {
 	    connections = scope;
 	    scope = undefined;
+	    if (connections instanceof Handle) { connections = {_: connections}; }
 	  }
 	  return new Connector(scope, connections, this._tree, 'connect');
 	};
@@ -2578,10 +2669,9 @@
 	  return new Promise(function (resolve, reject) {
 	    var scope = {};
 	    var connector = new Connector(scope, {result: target}, this$1._tree, 'peek');
-	    var vue = new Vue();
-	    vue.$watch(function () { return connector.ready; }, function (ready) {
+	    var unwatch = this$1._vue.$watch(function () { return connector.ready; }, function (ready) {
 	      if (!ready) { return; }
-	      vue.$destroy();
+	      unwatch();
 	      callback(scope.result).then(function (result) {
 	        connector.destroy();
 	        resolve(result);
