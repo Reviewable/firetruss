@@ -17,6 +17,7 @@ export class Handle {
     }
   }
 
+  get $ref() {return this;}
   get key() {
     if (!this._key) this._key = unescapeKey(this._path.replace(/.*\//, ''));
     return this._key;
