@@ -146,7 +146,6 @@ export default class Tree {
   }
 
   commit(ref, updateFunction) {
-    const url = this._rootUrl + ref.path;
     let tries = 0;
 
     const attemptTransaction = () => {
@@ -166,13 +165,15 @@ export default class Tree {
           this._applyLocalWrite({[ref.path]: txn.values['']});
           break;
         case 'update':
-          checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, txn.values);
+          checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, txn.values, true);
           this._applyLocalWrite(txn.values);
           break;
         default:
           throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
       }
-      return this._bridge.transaction(url, oldValue, txn.values).then(committed => {
+      return this._bridge.transaction(
+        this._rootUrl + ref.path, oldValue, txn.values
+      ).then(committed => {
         if (!committed) return attemptTransaction();
       });
     };
@@ -513,17 +514,30 @@ export function joinPath() {
 }
 
 export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativizePaths) {
-  const paths = _(values)
-    .keys().map(path => path === '/' ? '/' : (path + '/')).sortBy(path => path.length).value();
+  // First, check all paths for correctness and absolutize them, since there could be a mix of
+  // absolute paths and relative keys.
   _.each(_.keys(values), path => {
-    if (path.charAt(0) !== '/') {
-      throw new Error('Update item does not have an absolute path: ' + path);
+    if (path.charAt(0) === '/') {
+      if (!(path === rootPath || rootPath === '/' ||
+            _.startsWith(path, rootPath + '/') && path.length > rootPath.length + 1)) {
+        throw new Error(`Update item is not a descendant of target ref: ${path}`);
+      }
+    } else {
+      if (path.indexOf('/') >= 0) {
+        throw new Error(`Update item deep path must be absolute, taken from a reference: ${path}`);
+      }
+      const absolutePath = joinPath(rootPath, escapeKey(path));
+      if (values.hasOwnProperty(absolutePath)) {
+        throw new Error(`Update items overlap: ${path} and ${absolutePath}`);
+      }
+      values[absolutePath] = values[path];
+      delete values[path];
     }
-    if (!(path === rootPath || rootPath === '/' ||
-          _.startsWith(path, rootPath + '/') && path.length > rootPath.length + 1)) {
-      throw new Error(`Update item is not a descendant of target ref: ${path}`);
-    }
-    for (let otherPath of paths) {
+  });
+  // Then check for overlaps and relativize if desired.
+  const allPaths = _(values).keys().map(path => joinPath(path, '')).sortBy('length').value();
+  _.each(_.keys(values), path => {
+    for (let otherPath of allPaths) {
       if (otherPath.length > path.length) break;
       if (path !== otherPath && _.startsWith(path, otherPath)) {
         throw new Error(`Update items overlap: ${otherPath} and ${path}`);

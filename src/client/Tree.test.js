@@ -50,6 +50,18 @@ test('checkUpdateHasOnlyDescendantsWithNoOverlap', t => {
   checkUpdateHasOnlyDescendantsWithNoOverlap('/', updates, true);
   t.deepEqual(updates, {'foo/bar': 1, 'foo/baz/qux': 2});
 
+  updates = {'foo': 1, 'bar': 2};
+  checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', updates);
+  t.deepEqual(updates, {'/foo/foo': 1, '/foo/bar': 2});
+
+  updates = {'foo': 1, 'bar': 2};
+  checkUpdateHasOnlyDescendantsWithNoOverlap('/', updates);
+  t.deepEqual(updates, {'/foo': 1, '/bar': 2});
+
+  t.throws(() => {
+    checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'bar/baz': 1});
+  }, /absolute/);
+
   t.throws(() => {
     checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'/bar': 1});
   }, /descendant/);
@@ -63,7 +75,7 @@ test('checkUpdateHasOnlyDescendantsWithNoOverlap', t => {
   }, /descendant/);
 
   t.throws(() => {
-    checkUpdateHasOnlyDescendantsWithNoOverlap('/', {'': 1});
+    checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'bar/baz': 1});
   }, /absolute/);
 
   t.throws(() => {
@@ -72,6 +84,10 @@ test('checkUpdateHasOnlyDescendantsWithNoOverlap', t => {
 
   t.throws(() => {
     checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'/foo/bar': 1, '/foo/bar/baz': 2});
+  }, /overlap/);
+
+  t.throws(() => {
+    checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'/foo/bar': 1, 'bar': 2});
   }, /overlap/);
 
   checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'/foo/bar': 1, '/foo/barz': 2});
