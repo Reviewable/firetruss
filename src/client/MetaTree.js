@@ -6,7 +6,7 @@ export default class MetaTree {
     this._rootUrl = rootUrl;
     this._bridge = bridge;
     this._vue = new Vue({data: {$root: {
-      connected: undefined, timeOffset: 0, user: undefined, uid: undefined,
+      connected: undefined, timeOffset: 0, user: undefined, userid: undefined,
       updateNowAtIntervals(name, intervalMillis) {
         if (this.hasOwnProperty(name)) throw new Error(`Property "${name}" already defined`);
         Vue.set(this, name, Date.now() + this.timeOffset);
@@ -38,7 +38,7 @@ export default class MetaTree {
 
   _handleAuthChange(user) {
     this.root.user = user;
-    this.root.uid = user && user.uid;
+    this.root.userid = user && user.uid;
   }
 
   _connectInfoProperty(property, attribute) {
