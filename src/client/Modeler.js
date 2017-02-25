@@ -20,30 +20,31 @@ class Value {
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
 
   $watch(subjectFn, callbackFn) {
-    let done = false;
-    let unwatchAndRemoveDestructor = () => {done = true;};
+    let first = true;
+    let firstNewValue, firstOldValue;
+    let unwatchAndRemoveDestructor;
 
     const unwatch = this.$truss._tree._vue.$watch(() => {
-      if (done) return;
       this.$$touchThis();
       return subjectFn();
     }, (newValue, oldValue) => {
-      if (done) return;
-      callbackFn.call(this, newValue, oldValue, unwatchAndRemoveDestructor);
+      if (first) {
+        // Delay the immediate callback until we've had a chance to return the unwatch function.
+        firstNewValue = newValue;
+        firstOldValue = oldValue;
+        first = false;
+      } else {
+        callbackFn.call(this, newValue, oldValue);
+      }
     }, {immediate: true});
 
-    if (done) {
-      unwatch();
-      return _.noop;
-    }
+    Promise.resolve().then(() => {callbackFn.call(this, firstNewValue, firstOldValue);});
 
     if (!this.$$finalizers) {
       Object.defineProperty(this, '$$finalizers', {
         value: [], writable: false, enumerable: false, configurable: false});
     }
     unwatchAndRemoveDestructor = () => {
-      if (done) return;
-      done = true;
       unwatch();
       _.pull(this.$$finalizers, unwatchAndRemoveDestructor);
     };
