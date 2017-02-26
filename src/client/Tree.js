@@ -13,7 +13,7 @@ class Transaction {
     this._tree = tree;
   }
 
-  get currentValue() {return this._tree._getObject(this._path);}
+  get currentValue() {return this._tree.getObject(this._path);}
   get outcome() {return this._outcome;}
   get values() {return this._values;}
 
@@ -87,7 +87,7 @@ export default class Tree {
     let unwatch;
     if (valueCallback) {
       const segments = _(ref.path).split('/').map(segment => unescapeKey(segment)).value();
-      unwatch = this._vue.$watch(this._getObject.bind(segments), valueCallback);
+      unwatch = this._vue.$watch(this.getObject.bind(segments), valueCallback);
     }
     operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
     this._dispatcher.begin(operation).then(() => {
@@ -162,7 +162,7 @@ export default class Tree {
       } catch (e) {
         return Promise.reject(e);
       }
-      const oldValue = toFirebaseJson(this._getObject(ref.path));
+      const oldValue = toFirebaseJson(this.getObject(ref.path));
       switch (txn.outcome) {
         case 'abort': return;
         case 'cancel':
@@ -370,7 +370,7 @@ export default class Tree {
 
   _prune(path, lockedDescendantPaths, remoteWrite) {
     lockedDescendantPaths = lockedDescendantPaths || {};
-    const object = this._getObject(path);
+    const object = this.getObject(path);
     if (!object) return;
     if (remoteWrite && this._avoidLocalWritePaths(path, lockedDescendantPaths)) return;
     if (!_.isEmpty(lockedDescendantPaths) || !this._pruneAncestors(object)) {
@@ -446,7 +446,7 @@ export default class Tree {
     return coupledDescendantFound;
   }
 
-  _getObject(pathOrSegments) {
+  getObject(pathOrSegments) {
     let object;
     const segments = _.isString(pathOrSegments) ?
       _(pathOrSegments).split('/').map(unescapeKey).value() : pathOrSegments;

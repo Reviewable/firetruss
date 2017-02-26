@@ -156,14 +156,14 @@ export class Reference extends Handle {
     super(tree, path, annotations);
   }
 
-  // Vue-bound
-  get ready() {
-    return this._tree.isReferenceReady(this);
+  get ready() {return this._tree.isReferenceReady(this);}  // Vue-bound
+
+  get value() {  // Vue-bound
+    if (!this.ready) throw new Error('Reference value not currently synced');
+    return this._tree.getObject(this.path);
   }
 
-  toString() {
-    return this._path;
-  }
+  toString() {return this._path;}
 
   annotate(annotations) {
     return new Reference(this._tree, this._path, _.extend({}, this._annotations, annotations));
