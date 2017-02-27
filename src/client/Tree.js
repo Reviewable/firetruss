@@ -181,6 +181,7 @@ export default class Tree {
         this._rootUrl + ref.path, oldValue, txn.values
       ).then(committed => {
         if (!committed) return attemptTransaction();
+        return txn;
       });
     };
 
