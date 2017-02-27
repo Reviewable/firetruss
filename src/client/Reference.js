@@ -1,4 +1,4 @@
-import {escapeKey, unescapeKey} from './utils.js';
+import {escapeKey, unescapeKey, makePathMatcher} from './utils.js';
 
 import _ from 'lodash';
 
@@ -65,6 +65,10 @@ export class Handle {
 
   peek(callback) {
     return this._tree.truss.peek(this, callback);
+  }
+
+  match(pattern) {
+    return makePathMatcher(pattern).match(this.path);
   }
 
   isEqual(that) {

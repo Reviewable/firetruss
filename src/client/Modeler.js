@@ -1,5 +1,5 @@
 import Reference from './Reference.js';
-import {unescapeKey} from './utils.js';
+import {makePathMatcher} from './utils.js';
 
 import _ from 'lodash';
 import performanceNow from 'performance-now';
@@ -69,7 +69,7 @@ class ComputedPropertyStats {
 export default class Modeler {
   constructor(classes) {
     this._mounts = _(classes).uniq().map(Class => this._mountClass(Class)).flatten().value();
-    const patterns = _.map(this._mounts, mount => mount.regex.toString());
+    const patterns = _.map(this._mounts, mount => mount.matcher.toString());
     if (patterns.length !== _.uniq(patterns).length) {
       const badPaths = _(patterns)
         .groupBy()
@@ -122,12 +122,8 @@ export default class Modeler {
     if (!_.isArray(mounts)) mounts = [mounts];
     return _.map(mounts, mount => {
       if (_.isString(mount)) mount = {path: mount};
-      const variables = [];
-      const pathTemplate = mount.path.replace(/\/\$[^\/]+/g, match => {
-        variables.push(match.slice(1));
-        return '\u0001';
-      }).replace(/[$-.?[-^{|}]/g, '\\$&');
-      for (let variable of variables) {
+      const matcher = makePathMatcher(mount.path);
+      for (let variable of matcher.variables) {
         if (variable === '$' || variable.charAt(1) === '$') {
           throw new Error(`Invalid variable name: ${variable}`);
         }
@@ -138,12 +134,11 @@ export default class Modeler {
         }
       }
       return {
-        klass: Class, variables, computedProperties,
+        klass: Class,
+        matcher,
+        computedProperties,
         escapedKey: mount.path.match(/\/([^/]*)$/)[1],
-        placeholder: mount.placeholder,
-        regex: new RegExp('^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + '$'),
-        parentRegex: new RegExp(
-          '^' + (pathTemplate.replace(/\/[^/]*$/, '').replace(/\u0001/g, '/([^/]+)') || '/') + '$')
+        placeholder: mount.placeholder
       };
     });
   }
@@ -158,15 +153,13 @@ export default class Modeler {
     let Class = Value;
     let computedProperties;
     for (let mount of this._mounts) {
-      mount.regex.lastIndex = 0;
-      var match = mount.regex.exec(path);
+      const match = mount.matcher.match(path);
       if (match) {
         Class = mount.klass;
         computedProperties = mount.computedProperties;
-        for (let i = 0; i < mount.variables.length; i++) {
-          properties[mount.variables[i]] = {
-            value: unescapeKey(match[i + 1]),
-            writable: false, configurable: false, enumerable: false
+        for (let variable in match) {
+          properties[variable] = {
+            value: match[variable], writable: false, configurable: false, enumerable: false
           };
         }
         break;
@@ -234,12 +227,12 @@ export default class Modeler {
 
   isPlaceholder(path) {
     // TODO: optimize by precomputing a single all-placeholder-paths regex
-    return _.some(this._mounts, mount => mount.placeholder && mount.regex.test(path));
+    return _.some(this._mounts, mount => mount.placeholder && mount.matcher.test(path));
   }
 
   forEachPlaceholderChild(path, iteratee) {
     _.each(this._mounts, mount => {
-      if (mount.placeholder && mount.parentRegex.test(path)) {
+      if (mount.placeholder && mount.matcher.testParent(path)) {
         iteratee(mount.escapedKey, mount.placeholder);
       }
     });
