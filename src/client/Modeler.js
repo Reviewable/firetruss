@@ -20,23 +20,12 @@ class Value {
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
 
   $watch(subjectFn, callbackFn) {
-    let numCallbacks = 0;
     let unwatchAndRemoveDestructor;
 
-    const unwatch = this.$truss._tree._vue.$watch(() => {
+    const unwatch = this.$truss.watch(() => {
       this.$$touchThis();
-      return subjectFn();
-    }, (newValue, oldValue) => {
-      numCallbacks++;
-      if (numCallbacks === 1) {
-        // Delay the immediate callback until we've had a chance to return the unwatch function.
-        Promise.resolve().then(() => {
-          if (numCallbacks === 1) callbackFn.call(this, newValue, oldValue);
-        });
-      } else {
-        callbackFn.call(this, newValue, oldValue);
-      }
-    }, {immediate: true});
+      return subjectFn.call(this);
+    }, callbackFn.bind(this));
 
     if (!this.$$finalizers) {
       Object.defineProperty(this, '$$finalizers', {
@@ -133,13 +122,12 @@ export default class Modeler {
           throw new Error(`Variable name conflicts with built-in property or method: ${variable}`);
         }
       }
-      return {
-        klass: Class,
-        matcher,
-        computedProperties,
-        escapedKey: mount.path.match(/\/([^/]*)$/)[1],
-        placeholder: mount.placeholder
-      };
+      const escapedKey = mount.path.match(/\/([^/]*)$/)[1];
+      if (mount.placeholder && escapedKey.charAt(0) === '$') {
+        throw new Error(
+          `Class ${Class.name} mounted at wildcard ${escapedKey} cannot be a placeholder`);
+      }
+      return {Class, matcher, computedProperties, escapedKey, placeholder: mount.placeholder};
     });
   }
 
@@ -155,7 +143,7 @@ export default class Modeler {
     for (let mount of this._mounts) {
       const match = mount.matcher.match(path);
       if (match) {
-        Class = mount.klass;
+        Class = mount.Class;
         computedProperties = mount.computedProperties;
         for (let variable in match) {
           properties[variable] = {

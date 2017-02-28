@@ -58,9 +58,10 @@ export default class Truss {
 
   authenticate(token) {
     return this._dispatcher.execute('auth', new Reference(this._tree, '/'), () => {
-      return bridge.authWithCustomToken(this._rootUrl, token);
+      return bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
     });
   }
+
   unauthenticate() {
     return this._dispatcher.execute('auth', new Reference(this._tree, '/'), () => {
       return bridge.unauth(this._rootUrl);
@@ -99,6 +100,27 @@ export default class Truss {
         });
       });
     });
+  }
+
+  watch(subjectFn, callbackFn) {
+    let numCallbacks = 0;
+
+    const unwatch = this._vue.$watch(subjectFn, (newValue, oldValue) => {
+      numCallbacks++;
+      if (numCallbacks === 1) {
+        // Delay the immediate callback until we've had a chance to return the unwatch function.
+        Promise.resolve().then(() => {
+          if (numCallbacks > 1) return;
+          callbackFn(newValue, oldValue);
+          angularCompatibility.digest();
+        });
+      } else {
+        callbackFn(newValue, oldValue);
+        angularCompatibility.digest();
+      }
+    }, {immediate: true});
+
+    return unwatch;
   }
 
   static get computedPropertyStats() {return this._tree.computedPropertyStats;}
@@ -142,6 +164,7 @@ export default class Truss {
   static unescapeKey(escapedKey) {return unescapeKey(escapedKey);}
 
   static get SERVER_TIMESTAMP() {return SERVER_TIMESTAMP;}
+  get SERVER_TIMESTAMP() {return SERVER_TIMESTAMP;}
 }
 
 angularCompatibility.defineModule(Truss);
