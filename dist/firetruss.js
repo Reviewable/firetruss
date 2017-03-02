@@ -39,6 +39,8 @@
 
 	function noop() {}
 
+	var SERVER_TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
+
 	function escapeKey(key) {
 	  if (!key) { return key; }
 	  return key.toString().replace(/[\\\.\$\#\[\]\/]/g, function(char) {
@@ -63,7 +65,64 @@
 	  };
 	}
 
-	var SERVER_TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
+
+	var pathMatchers = {};
+	var maxNumPathMatchers = 1000;
+
+
+	var PathMatcher = function PathMatcher(pattern) {
+	  var this$1 = this;
+
+	  this.variables = [];
+	  var pathTemplate = pattern.replace(/\/\$[^\/]+/g, function (match) {
+	    this$1.variables.push(match.slice(1));
+	    return '\u0001';
+	  });
+	  Object.freeze(this.variables);
+	  if (/[$-.?[-^{|}]/.test(pathTemplate)) {
+	    throw new Error('Path pattern has unescaped keys: ' + pattern);
+	  }
+	  this._regex = new RegExp('^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + '$');
+	  this._parentRegex = new RegExp(
+	    '^' + (pathTemplate.replace(/\/[^/]*$/, '').replace(/\u0001/g, '/([^/]+)') || '/') + '$');
+	};
+
+	PathMatcher.prototype.match = function match (path) {
+	    var this$1 = this;
+
+	  this._regex.lastIndex = 0;
+	  var match = this._regex.exec(path);
+	  if (!match) { return; }
+	  var bindings = {};
+	  for (var i = 0; i < this.variables.length; i++) {
+	    bindings[this$1.variables[i]] = unescapeKey(match[i + 1]);
+	  }
+	  return bindings;
+	};
+
+	PathMatcher.prototype.test = function test (path) {
+	  return this._regex.test(path);
+	};
+
+	PathMatcher.prototype.testParent = function testParent (path) {
+	  return this._parentRegex.test(path);
+	};
+
+	PathMatcher.prototype.toString = function toString () {
+	  return this._regex.toString();
+	};
+
+
+	function makePathMatcher(pattern) {
+	  var matcher = pathMatchers[pattern];
+	  if (!matcher) {
+	    matcher = new PathMatcher(pattern);
+	    // Minimal pseudo-LRU behavior, since we don't expect to actually fill up the cache.
+	    if (_.size(pathMatchers) === maxNumPathMatchers) { delete pathMatchers[_.keys(pathMatchers)[0]]; }
+	    pathMatchers[pattern] = matcher;
+	  }
+	  return matcher;
+	}
 
 	/* global setImmediate */
 
@@ -585,6 +644,10 @@
 	  return this._tree.truss.peek(this, callback);
 	};
 
+	Handle.prototype.match = function match (pattern) {
+	  return makePathMatcher(pattern).match(this.path);
+	};
+
 	Handle.prototype.isEqual = function isEqual (that) {
 	  if (!(that instanceof Handle)) { return false; }
 	  return this._tree === that._tree && this.toString() === that.toString();
@@ -687,16 +750,16 @@
 	  Reference.prototype = Object.create( Handle && Handle.prototype );
 	  Reference.prototype.constructor = Reference;
 
-	  var prototypeAccessors$2 = { ready: {} };
+	  var prototypeAccessors$2 = { ready: {},value: {} };
 
-	  // Vue-bound
-	  prototypeAccessors$2.ready.get = function () {
-	    return this._tree.isReferenceReady(this);
+	  prototypeAccessors$2.ready.get = function () {return this._tree.isReferenceReady(this);};  // Vue-bound
+
+	  prototypeAccessors$2.value.get = function () {  // Vue-bound
+	    if (!this.ready) { throw new Error('Reference value not currently synced'); }
+	    return this._tree.getObject(this.path);
 	  };
 
-	  Reference.prototype.toString = function toString () {
-	    return this._path;
-	  };
+	  Reference.prototype.toString = function toString () {return this._path;};
 
 	  Reference.prototype.annotate = function annotate (annotations) {
 	    return new Reference(this._tree, this._path, _.extend({}, this._annotations, annotations));
@@ -1170,7 +1233,7 @@
 	  this._rootUrl = rootUrl;
 	  this._bridge = bridge;
 	  this._vue = new Vue({data: {$root: {
-	    connected: undefined, timeOffset: 0, user: undefined, uid: undefined,
+	    connected: undefined, timeOffset: 0, user: undefined, userid: undefined,
 	    updateNowAtIntervals: function updateNowAtIntervals(name, intervalMillis) {
 	      var this$1 = this;
 
@@ -1206,7 +1269,7 @@
 
 	MetaTree.prototype._handleAuthChange = function _handleAuthChange (user) {
 	  this.root.user = user;
-	  this.root.uid = user && user.uid;
+	  this.root.userid = user && user.uid;
 	};
 
 	MetaTree.prototype._connectInfoProperty = function _connectInfoProperty (property, attribute) {
@@ -1716,30 +1779,18 @@
 	Value.prototype.$watch = function $watch (subjectFn, callbackFn) {
 	    var this$1 = this;
 
-	  var done = false;
-	  var unwatchAndRemoveDestructor = function () {done = true;};
+	  var unwatchAndRemoveDestructor;
 
-	  var unwatch = this.$truss._tree._vue.$watch(function () {
-	    if (done) { return; }
+	  var unwatch = this.$truss.watch(function () {
 	    this$1.$$touchThis();
-	    return subjectFn();
-	  }, function (newValue, oldValue) {
-	    if (done) { return; }
-	    callbackFn.call(this$1, newValue, oldValue, unwatchAndRemoveDestructor);
-	  }, {immediate: true});
-
-	  if (done) {
-	    unwatch();
-	    return _.noop;
-	  }
+	    return subjectFn.call(this$1);
+	  }, callbackFn.bind(this));
 
 	  if (!this.$$finalizers) {
 	    Object.defineProperty(this, '$$finalizers', {
 	      value: [], writable: false, enumerable: false, configurable: false});
 	  }
 	  unwatchAndRemoveDestructor = function () {
-	    if (done) { return; }
-	    done = true;
 	    unwatch();
 	    _.pull(this$1.$$finalizers, unwatchAndRemoveDestructor);
 	  };
@@ -1762,7 +1813,7 @@
 	  var this$1 = this;
 
 	  this._mounts = _(classes).uniq().map(function (Class) { return this$1._mountClass(Class); }).flatten().value();
-	  var patterns = _.map(this._mounts, function (mount) { return mount.regex.toString(); });
+	  var patterns = _.map(this._mounts, function (mount) { return mount.matcher.toString(); });
 	  if (patterns.length !== _.uniq(patterns).length) {
 	    var badPaths = _(patterns)
 	      .groupBy()
@@ -1820,12 +1871,8 @@
 	  if (!_.isArray(mounts)) { mounts = [mounts]; }
 	  return _.map(mounts, function (mount) {
 	    if (_.isString(mount)) { mount = {path: mount}; }
-	    var variables = [];
-	    var pathTemplate = mount.path.replace(/\/\$[^\/]+/g, function (match) {
-	      variables.push(match.slice(1));
-	      return '\u0001';
-	    }).replace(/[$-.?[-^{|}]/g, '\\$&');
-	    for (var i = 0, list = variables; i < list.length; i += 1) {
+	    var matcher = makePathMatcher(mount.path);
+	    for (var i = 0, list = matcher.variables; i < list.length; i += 1) {
 	      var variable = list[i];
 
 	        if (variable === '$' || variable.charAt(1) === '$') {
@@ -1837,14 +1884,12 @@
 	        throw new Error(("Variable name conflicts with built-in property or method: " + variable));
 	      }
 	    }
-	    return {
-	      klass: Class, variables: variables, computedProperties: computedProperties,
-	      escapedKey: mount.path.match(/\/([^/]*)$/)[1],
-	      placeholder: mount.placeholder,
-	      regex: new RegExp('^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + '$'),
-	      parentRegex: new RegExp(
-	        '^' + (pathTemplate.replace(/\/[^/]*$/, '').replace(/\u0001/g, '/([^/]+)') || '/') + '$')
-	    };
+	    var escapedKey = mount.path.match(/\/([^/]*)$/)[1];
+	    if (mount.placeholder && escapedKey.charAt(0) === '$') {
+	      throw new Error(
+	        ("Class " + (Class.name) + " mounted at wildcard " + escapedKey + " cannot be a placeholder"));
+	    }
+	    return {Class: Class, matcher: matcher, computedProperties: computedProperties, escapedKey: escapedKey, placeholder: mount.placeholder};
 	  });
 	};
 
@@ -1859,18 +1904,16 @@
 
 	  var Class = Value;
 	  var computedProperties;
-	  for (var i$1 = 0, list = this._mounts; i$1 < list.length; i$1 += 1) {
-	    var mount = list[i$1];
+	  for (var i = 0, list = this._mounts; i < list.length; i += 1) {
+	    var mount = list[i];
 
-	      mount.regex.lastIndex = 0;
-	    var match = mount.regex.exec(path);
+	      var match = mount.matcher.match(path);
 	    if (match) {
-	      Class = mount.klass;
+	      Class = mount.Class;
 	      computedProperties = mount.computedProperties;
-	      for (var i = 0; i < mount.variables.length; i++) {
-	        properties[mount.variables[i]] = {
-	          value: unescapeKey(match[i + 1]),
-	          writable: false, configurable: false, enumerable: false
+	      for (var variable in match) {
+	        properties[variable] = {
+	          value: match[variable], writable: false, configurable: false, enumerable: false
 	        };
 	      }
 	      break;
@@ -1938,12 +1981,12 @@
 
 	Modeler.prototype.isPlaceholder = function isPlaceholder (path) {
 	  // TODO: optimize by precomputing a single all-placeholder-paths regex
-	  return _.some(this._mounts, function (mount) { return mount.placeholder && mount.regex.test(path); });
+	  return _.some(this._mounts, function (mount) { return mount.placeholder && mount.matcher.test(path); });
 	};
 
 	Modeler.prototype.forEachPlaceholderChild = function forEachPlaceholderChild (path, iteratee) {
 	  _.each(this._mounts, function (mount) {
-	    if (mount.placeholder && mount.parentRegex.test(path)) {
+	    if (mount.placeholder && mount.matcher.testParent(path)) {
 	      iteratee(mount.escapedKey, mount.placeholder);
 	    }
 	  });
@@ -1980,7 +2023,7 @@
 
 	var prototypeAccessors$6 = { currentValue: {},outcome: {},values: {} };
 
-	prototypeAccessors$6.currentValue.get = function () {return this._tree._getObject(this._path);};
+	prototypeAccessors$6.currentValue.get = function () {return this._tree.getObject(this._path);};
 	prototypeAccessors$6.outcome.get = function () {return this._outcome;};
 	prototypeAccessors$6.values.get = function () {return this._values;};
 
@@ -2059,7 +2102,7 @@
 	  var unwatch;
 	  if (valueCallback) {
 	    var segments = _(ref.path).split('/').map(function (segment) { return unescapeKey(segment); }).value();
-	    unwatch = this._vue.$watch(this._getObject.bind(segments), valueCallback);
+	    unwatch = this._vue.$watch(this.getObject.bind(segments), valueCallback);
 	  }
 	  operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
 	  this._dispatcher.begin(operation).then(function () {
@@ -2140,7 +2183,7 @@
 	    } catch (e) {
 	      return Promise.reject(e);
 	    }
-	    var oldValue = toFirebaseJson(this$1._getObject(ref.path));
+	    var oldValue = toFirebaseJson(this$1.getObject(ref.path));
 	    switch (txn.outcome) {
 	      case 'abort': return;
 	      case 'cancel':
@@ -2160,6 +2203,7 @@
 	      this$1._rootUrl + ref.path, oldValue, txn.values
 	    ).then(function (committed) {
 	      if (!committed) { return attemptTransaction(); }
+	      return txn;
 	    });
 	  };
 
@@ -2379,7 +2423,7 @@
 
 	Tree.prototype._prune = function _prune (path, lockedDescendantPaths, remoteWrite) {
 	  lockedDescendantPaths = lockedDescendantPaths || {};
-	  var object = this._getObject(path);
+	  var object = this.getObject(path);
 	  if (!object) { return; }
 	  if (remoteWrite && this._avoidLocalWritePaths(path, lockedDescendantPaths)) { return; }
 	  if (!_.isEmpty(lockedDescendantPaths) || !this._pruneAncestors(object)) {
@@ -2463,7 +2507,7 @@
 	  return coupledDescendantFound;
 	};
 
-	Tree.prototype._getObject = function _getObject (pathOrSegments) {
+	Tree.prototype.getObject = function getObject (pathOrSegments) {
 	    var this$1 = this;
 
 	  var object;
@@ -2520,6 +2564,21 @@
 	  this._getFirebasePropertyDescriptor(object, key);
 	  this._destroyObject(object[key]);
 	  Vue.delete(object, key);
+	};
+
+	Tree.prototype.checkVueObject = function checkVueObject (object, path) {
+	    var this$1 = this;
+
+	  for (var i = 0, list = Object.getOwnPropertyNames(object); i < list.length; i += 1) {
+	    var key = list[i];
+
+	      var descriptor = Object.getOwnPropertyDescriptor(object, key);
+	    if ('value' in descriptor || !descriptor.get || !descriptor.set) {
+	      throw new Error(("Firetruss object at " + path + " has a raw property: " + key));
+	    }
+	    var value = object[key];
+	    if (_.isObject(value)) { this$1.checkVueObject(value, joinPath(path, escapeKey(key))); }
+	  }
 	};
 
 	staticAccessors$2.computedPropertyStats.get = function () {
@@ -2620,7 +2679,7 @@
 	  });
 	};
 
-	var prototypeAccessors = { now: {} };
+	var prototypeAccessors = { now: {},SERVER_TIMESTAMP: {} };
 	var staticAccessors = { computedPropertyStats: {},worker: {},SERVER_TIMESTAMP: {} };
 
 	Truss.prototype.destroy = function destroy () {
@@ -2636,9 +2695,10 @@
 	    var this$1 = this;
 
 	  return this._dispatcher.execute('auth', new Reference(this._tree, '/'), function () {
-	    return bridge.authWithCustomToken(this$1._rootUrl, token);
+	    return bridge.authWithCustomToken(this$1._rootUrl, token, {rememberMe: true});
 	  });
 	};
+
 	Truss.prototype.unauthenticate = function unauthenticate () {
 	    var this$1 = this;
 
@@ -2681,6 +2741,31 @@
 	      });
 	    });
 	  });
+	};
+
+	Truss.prototype.watch = function watch (subjectFn, callbackFn) {
+	  var numCallbacks = 0;
+
+	  var unwatch = this._vue.$watch(subjectFn, function (newValue, oldValue) {
+	    numCallbacks++;
+	    if (numCallbacks === 1) {
+	      // Delay the immediate callback until we've had a chance to return the unwatch function.
+	      Promise.resolve().then(function () {
+	        if (numCallbacks > 1) { return; }
+	        callbackFn(newValue, oldValue);
+	        angularProxy.digest();
+	      });
+	    } else {
+	      callbackFn(newValue, oldValue);
+	      angularProxy.digest();
+	    }
+	  }, {immediate: true});
+
+	  return unwatch;
+	};
+
+	Truss.prototype.checkObjectsForRogueProperties = function checkObjectsForRogueProperties () {
+	  this._tree.checkVueObject(this._tree.root, '/');
 	};
 
 	staticAccessors.computedPropertyStats.get = function () {return this._tree.computedPropertyStats;};
@@ -2729,6 +2814,7 @@
 	Truss.unescapeKey = function unescapeKey (escapedKey) {return unescapeKey(escapedKey);};
 
 	staticAccessors.SERVER_TIMESTAMP.get = function () {return SERVER_TIMESTAMP;};
+	prototypeAccessors.SERVER_TIMESTAMP.get = function () {return SERVER_TIMESTAMP;};
 
 	Object.defineProperties( Truss.prototype, prototypeAccessors );
 	Object.defineProperties( Truss, staticAccessors );
