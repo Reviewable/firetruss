@@ -123,6 +123,10 @@ export default class Truss {
     return unwatch;
   }
 
+  checkObjectsForRogueProperties() {
+    this._tree.checkVueObject(this._tree.root, '/');
+  }
+
   static get computedPropertyStats() {return this._tree.computedPropertyStats;}
 
   static connectWorker(webWorker) {

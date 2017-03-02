@@ -502,6 +502,17 @@ export default class Tree {
     Vue.delete(object, key);
   }
 
+  checkVueObject(object, path) {
+    for (let key of Object.getOwnPropertyNames(object)) {
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      if ('value' in descriptor || !descriptor.get || !descriptor.set) {
+        throw new Error(`Firetruss object at ${path} has a raw property: ${key}`);
+      }
+      const value = object[key];
+      if (_.isObject(value)) this.checkVueObject(value, joinPath(path, escapeKey(key)));
+    }
+  }
+
   static get computedPropertyStats() {
     return Modeler.computedPropertyStats;
   }
