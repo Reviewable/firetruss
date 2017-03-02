@@ -506,7 +506,7 @@ export default class Tree {
     for (let key of Object.getOwnPropertyNames(object)) {
       const descriptor = Object.getOwnPropertyDescriptor(object, key);
       if ('value' in descriptor || !descriptor.get || !descriptor.set) {
-        throw new Error(`Firetruss object at ${path} has a raw property: ${key}`);
+        throw new Error(`Firetruss object at ${path} has a rogue property: ${key}`);
       }
       const value = object[key];
       if (_.isObject(value)) this.checkVueObject(value, joinPath(path, escapeKey(key)));
