@@ -1,5 +1,6 @@
 {
   "bitwise": false,
+  "browser": true,
   "camelcase": true,
   "devel": true,
   "eqeqeq": true,

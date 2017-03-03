@@ -2834,4 +2834,4 @@
 
 })));
 
-//# sourceMappingURL=firetruss.js.map
+//# sourceMappingURL=firetruss.umd.js.map

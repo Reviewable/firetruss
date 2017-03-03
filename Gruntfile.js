@@ -1,3 +1,4 @@
+// jshint node:true
 'use strict';
 
 const buble = require('rollup-plugin-buble');
@@ -10,9 +11,21 @@ module.exports = function(grunt) {
 
   grunt.initConfig({
     pkg: grunt.file.readJSON('package.json'),
+    ext: {version: 'dev'},
 
     clean: {
       dist: ['dist']
+    },
+
+    replace: {
+      version: {
+        src: 'src/Truss.js',
+        overwrite: true,
+        replacements: [{
+          from: /const VERSION = '.*?';/,
+          to: () => `const VERSION = '${grunt.config('ext.version')}';`
+        }]
+      }
     },
 
     rollup: {
@@ -22,6 +35,32 @@ module.exports = function(grunt) {
         globals: {
           vue: 'Vue',
           lodash: '_'
+        }
+      },
+      firetruss: {
+        options: {
+          format: 'umd',
+          moduleName: 'Truss',
+          plugins: [
+            commonjs(),
+            buble({
+              transforms: {
+                dangerousForOf: true
+              }
+            }),
+            nodeResolve({
+              jsnext: true,
+              skip: ['vue', 'lodash']
+            })
+          ]
+        },
+        files: {
+          'dist/firetruss.umd.js': ['src/Truss.js']
+        }
+      },
+      firetrussnext: {
+        options: {
+          format: 'es'
         },
         plugins: [
           commonjs(),
@@ -32,25 +71,11 @@ module.exports = function(grunt) {
           }),
           nodeResolve({
             jsnext: true,
-            skip: ['vue', 'lodash']
+            skip: ['vue', 'lodash', 'performance-now']
           })
-        ]
-      },
-      firetruss: {
-        options: {
-          format: 'umd',
-          moduleName: 'Truss'
-        },
+        ],
         files: {
-          'dist/firetruss.js': ['src/client/Truss.js']
-        }
-      },
-      worker: {
-        options: {
-          format: 'iife'
-        },
-        files: {
-          'dist/worker.js': ['src/worker/worker.js']
+          'dist/firetruss.es2015.js': ['src/Truss.js']
         }
       }
     },
@@ -64,12 +89,8 @@ module.exports = function(grunt) {
         sourceMapName: dest => dest + '.map',
       },
       firetruss: {
-        src: 'dist/firetruss.js',
-        dest: 'dist/firetruss.min.js'
-      },
-      worker: {
-        src: 'dist/worker.js',
-        dest: 'dist/worker.min.js'
+        src: 'dist/firetruss.umd.js',
+        dest: 'dist/firetruss.umd.min.js'
       }
     },
 
@@ -82,7 +103,9 @@ module.exports = function(grunt) {
     release: {
       options: {
         additionalFiles: ['bower.json'],
-        beforeBump: ['default']
+        updateVars: 'ext',
+        afterBump: ['replace'],
+        beforeRelease: ['default']
       }
     }
 

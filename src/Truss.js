@@ -13,6 +13,8 @@ import {escapeKey, unescapeKey, wrapPromiseCallback, SERVER_TIMESTAMP} from './u
 
 let bridge;
 const workerFunctions = {};
+// This version is filled in by the build, don't reformat the line.
+const VERSION = 'dev';
 
 
 export default class Truss {
@@ -139,7 +141,7 @@ export default class Truss {
     bridge = new Bridge(webWorker);
     return bridge.init(webWorker).then(
       ({exposedFunctionNames, firebaseSdkVersion}) => {
-        Truss.FIREBASE_SDK_VERSION = firebaseSdkVersion;
+        Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
         for (let name of exposedFunctionNames) {
           Truss.worker[name] = bridge.bindExposedFunction(name);
         }
@@ -167,8 +169,15 @@ export default class Truss {
   static escapeKey(key) {return escapeKey(key);}
   static unescapeKey(escapedKey) {return unescapeKey(escapedKey);}
 
-  static get SERVER_TIMESTAMP() {return SERVER_TIMESTAMP;}
-  get SERVER_TIMESTAMP() {return SERVER_TIMESTAMP;}
+  // Duplicate static constants on instance for convenience.
+  get SERVER_TIMESTAMP() {return Truss.SERVER_TIMESTAMP;}
+  get VERSION() {return Truss.VERSION;}
+  get FIREBASE_SDK_VERSION() {return Truss.FIREBASE_SDK_VERSION;}
 }
+
+Object.defineProperties(Truss, {
+  SERVER_TIMESTAMP: {value: SERVER_TIMESTAMP},
+  VERSION: {value: VERSION}
+});
 
 angularCompatibility.defineModule(Truss);

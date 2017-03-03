@@ -41,10 +41,10 @@
   },
   "ava": {
     "files": [
-      "src/**/*.test.js"
+      "src/*.test.js"
     ],
     "source": [
-      "src/**/*.js"
+      "src/*.js"
     ],
     "require": [
       "babel-register"

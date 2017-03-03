@@ -18,5 +18,10 @@
     "**/.*",
     "node_modules",
     "bower_components"
-  ]
+  ],
+  "main": "dist/firetruss.js",
+  "dependencies": {
+    "vue": "^2.2.1",
+    "lodash": "3.x"
+  }
 }
