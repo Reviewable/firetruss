@@ -2574,7 +2574,7 @@
 
 	      var descriptor = Object.getOwnPropertyDescriptor(object, key);
 	    if ('value' in descriptor || !descriptor.get || !descriptor.set) {
-	      throw new Error(("Firetruss object at " + path + " has a raw property: " + key));
+	      throw new Error(("Firetruss object at " + path + " has a rogue property: " + key));
 	    }
 	    var value = object[key];
 	    if (_.isObject(value)) { this$1.checkVueObject(value, joinPath(path, escapeKey(key))); }
@@ -2656,6 +2656,8 @@
 
 	var bridge;
 	var workerFunctions = {};
+	// This version is filled in by the build, don't reformat the line.
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl, classes) {
@@ -2679,8 +2681,8 @@
 	  });
 	};
 
-	var prototypeAccessors = { now: {},SERVER_TIMESTAMP: {} };
-	var staticAccessors = { computedPropertyStats: {},worker: {},SERVER_TIMESTAMP: {} };
+	var prototypeAccessors = { now: {},SERVER_TIMESTAMP: {},VERSION: {},FIREBASE_SDK_VERSION: {} };
+	var staticAccessors = { computedPropertyStats: {},worker: {} };
 
 	Truss.prototype.destroy = function destroy () {
 	  this._vue.$destroy();
@@ -2783,7 +2785,7 @@
 	        var exposedFunctionNames = ref.exposedFunctionNames;
 	        var firebaseSdkVersion = ref.firebaseSdkVersion;
 
-	      Truss.FIREBASE_SDK_VERSION = firebaseSdkVersion;
+	      Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
 	      for (var i = 0, list = exposedFunctionNames; i < list.length; i += 1) {
 	        var name = list[i];
 
@@ -2813,11 +2815,18 @@
 	Truss.escapeKey = function escapeKey (key) {return escapeKey(key);};
 	Truss.unescapeKey = function unescapeKey (escapedKey) {return unescapeKey(escapedKey);};
 
-	staticAccessors.SERVER_TIMESTAMP.get = function () {return SERVER_TIMESTAMP;};
-	prototypeAccessors.SERVER_TIMESTAMP.get = function () {return SERVER_TIMESTAMP;};
+	// Duplicate static constants on instance for convenience.
+	prototypeAccessors.SERVER_TIMESTAMP.get = function () {return Truss.SERVER_TIMESTAMP;};
+	prototypeAccessors.VERSION.get = function () {return Truss.VERSION;};
+	prototypeAccessors.FIREBASE_SDK_VERSION.get = function () {return Truss.FIREBASE_SDK_VERSION;};
 
 	Object.defineProperties( Truss.prototype, prototypeAccessors );
 	Object.defineProperties( Truss, staticAccessors );
+
+	Object.defineProperties(Truss, {
+	  SERVER_TIMESTAMP: {value: SERVER_TIMESTAMP},
+	  VERSION: {value: VERSION}
+	});
 
 	angularProxy.defineModule(Truss);
 
