@@ -1,5 +1,3 @@
-/* global setImmediate */
-
 import {unescapeKey} from './utils.js';
 
 // jshint browser:true
@@ -103,7 +101,7 @@ export default class Bridge {
     if (!suspended) {
       this._receiveMessages(this._inboundMessages);
       this._inboundMessages = [];
-      if (this._outboundMessages.length) setImmediate(this._flushMessageQueue);
+      if (this._outboundMessages.length) Promise.resolve().then(this._flushMessageQueue);
     }
   }
 
@@ -129,7 +127,9 @@ export default class Bridge {
       });
       deferred.params = message;
     }
-    if (!this._outboundMessages.length && !this._suspended) setImmediate(this._flushMessageQueue);
+    if (!this._outboundMessages.length && !this._suspended) {
+      Promise.resolve().then(this._flushMessageQueue);
+    }
     this._outboundMessages.push(message);
     return promise;
   }
