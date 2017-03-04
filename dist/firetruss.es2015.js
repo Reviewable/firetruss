@@ -122,6 +122,7 @@ function makePathMatcher(pattern) {
 // jshint browser:true
 
 let bridge$1;
+const MIN_WORKER_VERSION = '0.4.0';
 
 
 class Snapshot {
@@ -189,7 +190,22 @@ class Bridge {
     } catch (e) {
       // Some browsers don't like us accessing local storage -- nothing we can do.
     }
-    return this._send({msg: 'init', storage: items});
+    return this._send({msg: 'init', storage: items}).then(response => {
+      const workerVersion = response.version.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
+      if (workerVersion) {
+        const minVersion = MIN_WORKER_VERSION.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
+        // Major version must match precisely, minor and patch must be greater than or equal.
+        const sufficient = workerVersion[1] === minVersion[1] && (
+          workerVersion[2] > minVersion[2] ||
+          workerVersion[2] === minVersion[2] && workerVersion[3] >= minVersion[3]
+        );
+        if (!sufficient) return Promise.reject(new Error(
+          `Incompatible Firetruss worker version: ${response.version} ` +
+          `(${MIN_WORKER_VERSION} or better required)`
+        ));
+      }
+      return response;
+    });
   }
 
   static get instance() {

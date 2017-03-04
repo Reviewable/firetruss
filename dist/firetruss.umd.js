@@ -129,6 +129,7 @@
 	// jshint browser:true
 
 	var bridge$1;
+	var MIN_WORKER_VERSION = '0.4.0';
 
 
 	var Snapshot = function Snapshot(ref) {
@@ -206,7 +207,22 @@
 	  } catch (e) {
 	    // Some browsers don't like us accessing local storage -- nothing we can do.
 	  }
-	  return this._send({msg: 'init', storage: items});
+	  return this._send({msg: 'init', storage: items}).then(function (response) {
+	    var workerVersion = response.version.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
+	    if (workerVersion) {
+	      var minVersion = MIN_WORKER_VERSION.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
+	      // Major version must match precisely, minor and patch must be greater than or equal.
+	      var sufficient = workerVersion[1] === minVersion[1] && (
+	        workerVersion[2] > minVersion[2] ||
+	        workerVersion[2] === minVersion[2] && workerVersion[3] >= minVersion[3]
+	      );
+	      if (!sufficient) { return Promise.reject(new Error(
+	        "Incompatible Firetruss worker version: " + (response.version) + " " +
+	        "(" + MIN_WORKER_VERSION + " or better required)"
+	      )); }
+	    }
+	    return response;
+	  });
 	};
 
 	staticAccessors$1.instance.get = function () {
