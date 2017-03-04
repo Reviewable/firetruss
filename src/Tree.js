@@ -139,8 +139,11 @@ export default class Tree {
   update(ref, method, values) {
     const numValues = _.size(values);
     if (!numValues) return;
-    if (method === 'update') checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
+    if (method === 'update' || method === 'override') {
+      checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
+    }
     this._applyLocalWrite(values);
+    if (method === 'override') return Promise.resolve();
     const url = this.rootUrl + this._extractCommonPathPrefix(values);
     return this._dispatcher.execute('write', method, ref, () => {
       if (numValues === 1) {

@@ -14,10 +14,11 @@ class Value {
   get $ref() {
     Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
   }
-  get $refs() {return [this.$ref];}
+  get $refs() {return this.$ref;}
   get $keys() {return _.keys(this);}
   get $values() {return _.values(this);}
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
+  get $ready() {return this.$ref.ready;}
 
   $watch(subjectFn, callbackFn) {
     let unwatchAndRemoveDestructor;
@@ -41,11 +42,8 @@ class Value {
 
   $set(value) {return this.$ref.set(value);}
   $update(values) {return this.$ref.update(values);}
+  $override(values) {return this.$ref.override(values);}
   $commit(options, updateFn) {return this.$ref.commit(options, updateFn);}
-  // TODO
-  // $temporarilyOverride(updateFn)
-  // $onPropertyChange(method)
-  // $freezeProperty
 }
 
 class ComputedPropertyStats {
