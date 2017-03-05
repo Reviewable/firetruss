@@ -52,6 +52,12 @@ class ComputedPropertyStats {
   }
 }
 
+class ErrorWrapper {
+  constructor(error) {
+    this.error = error;
+  }
+}
+
 
 export default class Modeler {
   constructor(classes) {
@@ -203,7 +209,10 @@ export default class Modeler {
     });
     return {
       enumerable: true, configurable: true,
-      get: function() {return value;},
+      get: function() {
+        if (value instanceof ErrorWrapper) throw value.error;
+        return value;
+      },
       set: function(newValue) {
         if (!writeAllowed) throw new Error(`You cannot set a computed property: ${prop.name}`);
         value = newValue;
@@ -237,10 +246,14 @@ function computeValue(prop, stats) {
   this.$$touchThis();
 
   const startTime = performanceNow();
-  const result = prop.get.call(this);
-  stats.runtime += performanceNow() - startTime;
-  stats.numRecomputes += 1;
-  return result;
+  try {
+    return prop.get.call(this);
+  } catch (e) {
+    return new ErrorWrapper(e);
+  } finally {
+    stats.runtime += performanceNow() - startTime;
+    stats.numRecomputes += 1;
+  }
   // jshint validthis: false
 }
 
