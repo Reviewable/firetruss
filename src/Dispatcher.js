@@ -39,6 +39,7 @@ class Operation {
     this._target = target;
     this._ready = false;
     this._running = false;
+    this._ended = false;
     this._startTimestamp = Date.now();
     this._slowHandles = [];
   }
@@ -48,6 +49,7 @@ class Operation {
   get target() {return this._target;}
   get ready() {return this._ready;}
   get running() {return this._running;}
+  get ended() {return this._ended;}
   get error() {return this._error;}
 
   onSlow(delay, callback) {
@@ -58,6 +60,10 @@ class Operation {
 
   _setRunning(value) {
     this._running = value;
+  }
+
+  _setEnded(value) {
+    this._ended = value;
   }
 
   _markReady() {
@@ -147,7 +153,7 @@ export default class Dispatcher {
   begin(operation) {
     return Promise.all(
       _.map(this._getCallbacks('onBefore', operation.type), onBefore => onBefore(operation))
-    ).then(() => {operation._setRunning(true);}, e => this.end(operation, e));
+    ).then(() => {if (!operation.ended) operation._setRunning(true);}, e => this.end(operation, e));
   }
 
   markReady(operation) {
@@ -160,13 +166,7 @@ export default class Dispatcher {
 
   retry(operation, error) {
     return Promise.all(
-      _.map(this._getCallbacks('onError', operation.type), onError => {
-        try {
-          return Promise.resolve(onError(operation, error));
-        } catch (e) {
-          return Promise.reject(e);
-        }
-      })
+      _.map(this._getCallbacks('onError', operation.type), onError => onError(operation, error))
     ).then(results => _.some(results));
   }
 
@@ -177,7 +177,9 @@ export default class Dispatcher {
   }
 
   end(operation, error) {
+    if (operation.ended) return;
     operation._setRunning(false);
+    operation._setEnded(true);
     if (error) operation._error = error;
     return Promise.all(
       _.map(this._getCallbacks('onAfter', operation.type), onAfter => onAfter(operation))
