@@ -20,13 +20,13 @@ class Value {
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
   get $ready() {return this.$ref.ready;}
 
-  $watch(subjectFn, callbackFn) {
+  $watch(subjectFn, callbackFn, options) {
     let unwatchAndRemoveDestructor;
 
     const unwatch = this.$truss.watch(() => {
       this.$$touchThis();
       return subjectFn.call(this);
-    }, callbackFn.bind(this));
+    }, callbackFn.bind(this), options);
 
     if (!this.$$finalizers) {
       Object.defineProperty(this, '$$finalizers', {

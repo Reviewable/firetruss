@@ -104,7 +104,7 @@ export default class Truss {
     });
   }
 
-  watch(subjectFn, callbackFn) {
+  watch(subjectFn, callbackFn, options) {
     let numCallbacks = 0;
 
     const unwatch = this._vue.$watch(subjectFn, (newValue, oldValue) => {
@@ -120,7 +120,7 @@ export default class Truss {
         callbackFn(newValue, oldValue);
         angularCompatibility.digest();
       }
-    }, {immediate: true});
+    }, {immediate: true, deep: options.deep});
 
     return unwatch;
   }
