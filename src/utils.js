@@ -35,15 +35,18 @@ const maxNumPathMatchers = 1000;
 class PathMatcher {
   constructor(pattern) {
     this.variables = [];
-    const pathTemplate = pattern.replace(/\/\$[^\/]+/g, match => {
-      this.variables.push(match.slice(1));
+    const prefixMatch = _.endsWith('/$*');
+    if (prefixMatch) pattern = pattern.slice(-3);
+    const pathTemplate = pattern.replace(/\/\$[^\/]*/g, match => {
+      if (match.length > 1) this.variables.push(match);
       return '\u0001';
     });
     Object.freeze(this.variables);
     if (/[$-.?[-^{|}]/.test(pathTemplate)) {
       throw new Error('Path pattern has unescaped keys: ' + pattern);
     }
-    this._regex = new RegExp('^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + '$');
+    this._regex = new RegExp(
+      '^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + (prefixMatch ? '($|/)' : '$'));
     this._parentRegex = new RegExp(
       '^' + (pathTemplate.replace(/\/[^/]*$/, '').replace(/\u0001/g, '/([^/]+)') || '/') + '$');
   }
