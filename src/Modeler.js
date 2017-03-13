@@ -19,6 +19,7 @@ class Value {
   get $values() {return _.values(this);}
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
   get $ready() {return this.$ref.ready;}
+  get $overridden() {return false;}
 
   $watch(subjectFn, callbackFn, options) {
     let unwatchAndRemoveDestructor;

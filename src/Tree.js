@@ -142,7 +142,7 @@ export default class Tree {
     if (method === 'update' || method === 'override') {
       checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
     }
-    this._applyLocalWrite(values);
+    this._applyLocalWrite(values, method === 'override');
     if (method === 'override') return Promise.resolve();
     const url = this.rootUrl + this._extractCommonPathPrefix(values);
     return this._dispatcher.execute('write', method, ref, () => {
@@ -193,7 +193,7 @@ export default class Tree {
     });
   }
 
-  _applyLocalWrite(values) {
+  _applyLocalWrite(values, override) {
     // TODO: correctly apply local writes that impact queries.  Currently, a local write will update
     // any objects currently selected by a query, but won't add or remove results.
     this._writeSerial++;
@@ -216,9 +216,12 @@ export default class Tree {
           this._prune(subPath);
         } else {
           const key = unescapeKey(_.last(descendantPath.split('/')));
-          this._plantValue(descendantPath, key, subValue, this._scaffoldAncestors(descendantPath));
+          this._plantValue(
+            descendantPath, key, subValue, this._scaffoldAncestors(descendantPath), false,
+            override
+          );
         }
-        this._localWrites[descendantPath] = this._writeSerial;
+        if (!override) this._localWrites[descendantPath] = this._writeSerial;
       }
     });
   }
@@ -311,7 +314,7 @@ export default class Tree {
     });
     if (snap.exists) {
       const parent = this._scaffoldAncestors(snap.path, true);
-      if (parent) this._plantValue(snap.path, snap.key, snap.value, parent, true);
+      if (parent) this._plantValue(snap.path, snap.key, snap.value, parent, true, false);
     } else {
       this._prune(snap.path, null, true);
     }
@@ -333,7 +336,7 @@ export default class Tree {
     return object;
   }
 
-  _plantValue(path, key, value, parent, remoteWrite) {
+  _plantValue(path, key, value, parent, remoteWrite, override) {
     if (value === null || value === undefined) {
       throw new Error('Snapshot includes invalid value: ' + value);
     }
@@ -349,9 +352,16 @@ export default class Tree {
       this._setFirebaseProperty(parent, key, object);
       this._completeCreateObject(object);
     }
+    if (override) {
+      Object.defineProperty(object, '$overridden', {get: _.constant(true), configurable: true});
+    } else if (object.$overridden) {
+      delete object.$overridden;
+    }
     _.each(value, (item, escapedChildKey) => {
       this._plantValue(
-        joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite);
+        joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite,
+        override
+      );
     });
     _.each(object, (item, childKey) => {
       const escapedChildKey = escapeKey(childKey);
@@ -428,6 +438,7 @@ export default class Tree {
 
   _pruneDescendants(object, lockedDescendantPaths) {
     if (lockedDescendantPaths[object.$path]) return true;
+    if (object.$overridden) delete object.$overridden;
     let coupledDescendantFound = false;
     _.each(object, (value, key) => {
       let shouldDelete = true;

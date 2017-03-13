@@ -189,8 +189,8 @@ export class Reference extends Handle {
     return this._tree.update(this, 'update', values);
   }
 
-  override(values) {
-    return this._tree.update(this, 'override', values);
+  override(value) {
+    return this._tree.update(this, 'override', {[this.path]: value});
   }
 
   commit(updateFunction) {
