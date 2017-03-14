@@ -40,6 +40,7 @@ class Operation {
     this._ready = false;
     this._running = false;
     this._ended = false;
+    this._tries = 0;
     this._startTimestamp = Date.now();
     this._slowHandles = [];
   }
@@ -50,6 +51,7 @@ class Operation {
   get ready() {return this._ready;}
   get running() {return this._running;}
   get ended() {return this._ended;}
+  get tries() {return this._tries;}
   get error() {return this._error;}
 
   onSlow(delay, callback) {
@@ -68,6 +70,7 @@ class Operation {
 
   _markReady() {
     this._ready = true;
+    this._tries = 0;
     _.each(this._slowHandles, handle => handle.cancel());
   }
 
@@ -75,6 +78,10 @@ class Operation {
     this._ready = false;
     this._startTimestamp = Date.now();
     _.each(this._slowHandles, handle => handle.initiate());
+  }
+
+  _incrementTries() {
+    this._tries++;
   }
 }
 
@@ -165,6 +172,7 @@ export default class Dispatcher {
   }
 
   retry(operation, error) {
+    operation._incrementTries();
     return Promise.all(
       _.map(this._getCallbacks('onError', operation.type), onError => onError(operation, error))
     ).then(results => _.some(results));
