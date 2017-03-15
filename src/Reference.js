@@ -161,16 +161,7 @@ export class Reference extends Handle {
   }
 
   get ready() {return this._tree.isReferenceReady(this);}  // Vue-bound
-
-  get value() {  // Vue-bound
-    if (!this.ready) {
-      const e = new Error('Reference value not currently synced');
-      e.code = 'notready';
-      throw e;
-    }
-    return this._tree.getObject(this.path);
-  }
-
+  get value() {return this._tree.getObject(this.path);}  // Vue-bound
   toString() {return this._path;}
 
   annotate(annotations) {
