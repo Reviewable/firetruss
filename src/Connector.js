@@ -6,12 +6,13 @@ import Vue from 'vue';
 
 
 export default class Connector {
-  constructor(scope, connections, tree, method) {
+  constructor(scope, connections, tree, method, refs) {
     connections.freeze();
     this._scope = scope;
     this._connections = connections;
     this._tree = tree;
     this._method = method;
+    this._refs = refs || {};
     this._subConnectors = {};
     this._currentDescriptors = {};
     this._disconnects = {};
@@ -36,6 +37,10 @@ export default class Connector {
       if (descriptor instanceof Handle) return descriptor.ready;
       return this._subConnectors[key].ready;
     });
+  }
+
+  get at() {
+    return this._refs;
   }
 
   destroy() {
@@ -103,15 +108,18 @@ export default class Connector {
     this._currentDescriptors[key] = descriptor;
     if (!descriptor) return;
     if (descriptor instanceof Reference) {
+      this._refs[key] = descriptor;
       const updateFn = this._scope ? this._updateScopeRef.bind(this, key) : null;
       this._disconnects[key] = this._tree.connectReference(descriptor, updateFn, this._method);
     } else if (descriptor instanceof Query) {
+      this._refs[key] = descriptor;
       const updateFn = this._scope ? this._updateScopeQuery.bind(this, key) : null;
       this._disconnects[key] = this._tree.connectQuery(descriptor, updateFn, this._method);
     } else {
-      const subScope = {};
+      const subScope = {}, subRefs = {};
+      this._refs[key] = subRefs;
       const subConnector = this._subConnectors[key] =
-        new Connector(subScope, descriptor, this._tree, this._method);
+        new Connector(subScope, descriptor, this._tree, this._method, subRefs);
       if (this._scope) {
         const unwatch = this._vue.$watch(() => subConnector.ready, subReady => {
           if (!subReady) return;
@@ -124,6 +132,7 @@ export default class Connector {
   }
 
   _disconnect(key) {
+    delete this._refs[key];
     if (this._scope) {
       Vue.delete(this._scope, key);
       angular.digest();
