@@ -125,6 +125,17 @@ export default class Truss {
     return unwatch;
   }
 
+  when(expression, options) {
+    return new Promise(resolve => {
+      const unwatch = this.watch(expression, value => {
+        if (value) {
+          unwatch();
+          resolve(value);
+        }
+      }, options);
+    });
+  }
+
   checkObjectsForRogueProperties() {
     this._tree.checkVueObject(this._tree.root, '/');
   }
