@@ -49,7 +49,7 @@ export class Handle {
         const mapping = {};
         const subPath = `${this._pathPrefix}/${escapedKeys.join('/')}`;
         const rest = _.slice(arguments, i + 1);
-        for (let key of arg) {
+        for (const key of arg) {
           const subRef =
             new Reference(this._tree, `${subPath}/${escapeKey(key)}`, this._annotations);
           mapping[key] = subRef.children.apply(subRef, rest);

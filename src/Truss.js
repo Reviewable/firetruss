@@ -153,7 +153,7 @@ export default class Truss {
     return bridge.init(webWorker).then(
       ({exposedFunctionNames, firebaseSdkVersion}) => {
         Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
-        for (let name of exposedFunctionNames) {
+        for (const name of exposedFunctionNames) {
           Truss.worker[name] = bridge.bindExposedFunction(name);
         }
       }

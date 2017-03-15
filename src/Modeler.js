@@ -82,7 +82,7 @@ export default class Modeler {
     let computedProperties;
     let proto = Class.prototype;
     while (proto && proto.constructor !== Object) {
-      for (let name of Object.getOwnPropertyNames(proto)) {
+      for (const name of Object.getOwnPropertyNames(proto)) {
         const descriptor = Object.getOwnPropertyDescriptor(proto, name);
         if (name.charAt(0) === '$') {
           if (_.isEqual(descriptor, Object.getOwnPropertyDescriptor(Value.prototype, name))) {
@@ -101,7 +101,7 @@ export default class Modeler {
       }
       proto = Object.getPrototypeOf(proto);
     }
-    for (let name of Object.getOwnPropertyNames(Value.prototype)) {
+    for (const name of Object.getOwnPropertyNames(Value.prototype)) {
       if (name === 'constructor' || Class.prototype.hasOwnProperty(name)) continue;
       Object.defineProperty(
         Class.prototype, name, Object.getOwnPropertyDescriptor(Value.prototype, name));
@@ -117,7 +117,7 @@ export default class Modeler {
     return _.map(mounts, mount => {
       if (_.isString(mount)) mount = {path: mount};
       const matcher = makePathMatcher(mount.path);
-      for (let variable of matcher.variables) {
+      for (const variable of matcher.variables) {
         if (variable === '$' || variable.charAt(1) === '$') {
           throw new Error(`Invalid variable name: ${variable}`);
         }
@@ -145,12 +145,12 @@ export default class Modeler {
   createObject(path, properties) {
     let Class = Value;
     let computedProperties;
-    for (let mount of this._mounts) {
+    for (const mount of this._mounts) {
       const match = mount.matcher.match(path);
       if (match) {
         Class = mount.Class;
         computedProperties = mount.computedProperties;
-        for (let variable in match) {
+        for (const variable in match) {
           properties[variable] = {
             value: match[variable], writable: false, configurable: false, enumerable: false
           };

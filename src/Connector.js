@@ -160,7 +160,7 @@ export default class Connector {
       changed = true;
     }
     const subScope = this._scope[key];
-    for (let childKey in subScope) {
+    for (const childKey in subScope) {
       if (!subScope.hasOwnProperty(childKey)) continue;
       if (!_.contains(childKeys, childKey)) {
         Vue.delete(subScope, childKey);
@@ -168,10 +168,10 @@ export default class Connector {
       }
     }
     let object;
-    for (let segment of this._currentDescriptors[key].path.split('/')) {
+    for (const segment of this._currentDescriptors[key].path.split('/')) {
       object = segment ? object[segment] : this._tree.root;
     }
-    for (let childKey of childKeys) {
+    for (const childKey of childKeys) {
       if (subScope.hasOwnProperty(childKey)) continue;
       Vue.set(subScope, childKey, object[childKey]);
       changed = true;

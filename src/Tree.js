@@ -202,12 +202,12 @@ export default class Tree {
       const coupledDescendantPaths = this._coupler.findCoupledDescendantPaths(path);
       if (_.isEmpty(coupledDescendantPaths)) return;
       const offset = (path === '/' ? 0 : path.length) + 1;
-      for (let descendantPath of coupledDescendantPaths) {
+      for (const descendantPath of coupledDescendantPaths) {
         const subPath = descendantPath.slice(offset);
         let subValue = value;
         if (subPath) {
           const segments = subPath.split('/');
-          for (let segment of segments) {
+          for (const segment of segments) {
             subValue = subValue[unescapeKey(segment)];
             if (subValue === undefined) break;
           }
@@ -279,7 +279,7 @@ export default class Tree {
   // To be called on the result of _createObject after it's been inserted into the _vue hierarchy
   // and Vue has had a chance to initialize it.
   _completeCreateObject(object) {
-    for (let name of Object.getOwnPropertyNames(object)) {
+    for (const name of Object.getOwnPropertyNames(object)) {
       const descriptor = Object.getOwnPropertyDescriptor(object, name);
       if (descriptor.configurable && descriptor.enumerable) {
         descriptor.enumerable = false;
@@ -291,7 +291,7 @@ export default class Tree {
       }
     }
     if (object.$$initializers) {
-      for (let fn of object.$$initializers) fn(this._vue);
+      for (const fn of object.$$initializers) fn(this._vue);
       delete object.$$initializers;
     }
   }
@@ -300,9 +300,9 @@ export default class Tree {
     if (!(object && object.$truss)) return;
     if (object.$$finalizers) {
       // Some destructors remove themselves from the array, so clone it before iterating.
-      for (let fn of _.clone(object.$$finalizers)) fn();
+      for (const fn of _.clone(object.$$finalizers)) fn();
     }
-    for (let key in object) {
+    for (const key in object) {
       if (!Object.hasOwnProperty(object, key)) continue;
       this._destroyObject(object[key]);
     }
@@ -395,7 +395,7 @@ export default class Tree {
   }
 
   _avoidLocalWritePaths(path, lockedDescendantPaths) {
-    for (let localWritePath in this._localWrites) {
+    for (const localWritePath in this._localWrites) {
       if (!this._localWrites.hasOwnProperty(localWritePath)) continue;
       if (path === localWritePath || localWritePath === '/' ||
           _.startsWith(path, localWritePath + '/')) return true;
@@ -465,7 +465,7 @@ export default class Tree {
     let object;
     const segments = _.isString(pathOrSegments) ?
       _(pathOrSegments).split('/').map(unescapeKey).value() : pathOrSegments;
-    for (let segment of segments) {
+    for (const segment of segments) {
       object = segment ? object[segment] : this.root;
       if (object === undefined) return;
     }
@@ -517,7 +517,7 @@ export default class Tree {
   }
 
   checkVueObject(object, path) {
-    for (let key of Object.getOwnPropertyNames(object)) {
+    for (const key of Object.getOwnPropertyNames(object)) {
       const descriptor = Object.getOwnPropertyDescriptor(object, key);
       if ('value' in descriptor || !descriptor.get || !descriptor.set) {
         throw new Error(`Firetruss object at ${path} has a rogue property: ${key}`);
@@ -537,7 +537,7 @@ function throwReadOnlyError() {throw new Error('Read-only property');}
 
 export function joinPath() {
   const segments = [];
-  for (let segment of arguments) {
+  for (const segment of arguments) {
     if (segment.charAt(0) === '/') segments.splice(0, segments.length);
     segments.push(segment);
   }
@@ -569,7 +569,7 @@ export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, rel
   // Then check for overlaps and relativize if desired.
   const allPaths = _(values).keys().map(path => joinPath(path, '')).sortBy('length').value();
   _.each(_.keys(values), path => {
-    for (let otherPath of allPaths) {
+    for (const otherPath of allPaths) {
       if (otherPath.length > path.length) break;
       if (path !== otherPath && _.startsWith(path, otherPath)) {
         throw new Error(`Update items overlap: ${otherPath} and ${path}`);
@@ -585,7 +585,7 @@ export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, rel
 export function toFirebaseJson(object) {
   if (typeof object === 'object') {
     const result = {};
-    for (let key in object) {
+    for (const key in object) {
       if (!object.hasOwnProperty(key)) continue;
       result[escapeKey(key)] = toFirebaseJson(object[key]);
     }

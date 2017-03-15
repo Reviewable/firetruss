@@ -148,7 +148,7 @@ export default class Bridge {
   }
 
   _receiveMessages(messages) {
-    for (let message of messages) {
+    for (const message of messages) {
       const fn = this[message.msg];
       if (typeof fn !== 'function') throw new Error('Unknown message: ' + message.msg);
       fn.call(this, message);
@@ -233,7 +233,7 @@ export default class Bridge {
   updateLocalStorage(items) {
     try {
       const storage = window.localStorage || window.sessionStorage;
-      for (let item in items) {
+      for (const item in items) {
         if (item.value === null) {
           storage.removeItem(item.key);
         } else {
@@ -254,7 +254,7 @@ export default class Bridge {
 
   _authCallback(server, auth) {
     server.auth = auth;
-    for (let listener of server.authListeners) listener(auth);
+    for (const listener of server.authListeners) listener(auth);
   }
 
   onAuth(rootUrl, callback, context) {
@@ -321,7 +321,7 @@ export default class Bridge {
       if (!callbackId) return Promise.resolve();  // no-op, never registered or already deregistered
       idsToDeregister.push(callbackId);
     } else {
-      for (let id of Object.keys(this._callbacks)) {
+      for (const id of Object.keys(this._callbacks)) {
         const handle = this._callbacks[id];
         if (handle.listenerKey === listenerKey && (!eventType || handle.eventType === eventType)) {
           idsToDeregister.push(id);
@@ -331,9 +331,9 @@ export default class Bridge {
     // Nullify callbacks first, then deregister after off() is complete.  We don't want any
     // callbacks in flight from the worker to be invoked while the off() is processing, but we don't
     // want them to throw an exception either.
-    for (let id of idsToDeregister) this._nullifyCallback(id);
+    for (const id of idsToDeregister) this._nullifyCallback(id);
     return this._send({msg: 'off', listenerKey, url, spec, eventType, callbackId}).then(() => {
-      for (let id of idsToDeregister) this._deregisterCallback(id);
+      for (const id of idsToDeregister) this._deregisterCallback(id);
     });
   }
 
@@ -411,7 +411,7 @@ function errorFromJson(json, params) {
   if (!json || json instanceof Error) return json;
   const error = new Error(json.message);
   error.params = params;
-  for (let propertyName in json) {
+  for (const propertyName in json) {
     if (propertyName === 'message' || !json.hasOwnProperty(propertyName)) continue;
     try {
       error[propertyName] = json[propertyName];

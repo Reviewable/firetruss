@@ -42,7 +42,7 @@ class QueryHandler {
     this._listening = false;
     this.ready = false;
     angularCompatibility.digest();
-    for (let key of this._keys) {
+    for (const key of this._keys) {
       this._coupler._decoupleSegments(this._segments.concat(key));
     }
   }
@@ -56,10 +56,12 @@ class QueryHandler {
     if (!this.ready) {
       this.ready = true;
       angularCompatibility.digest();
-      for (let listener of this._listeners) this._coupler._dispatcher.markReady(listener.operation);
+      for (const listener of this._listeners) {
+        this._coupler._dispatcher.markReady(listener.operation);
+      }
     }
     if (updatedKeys) {
-      for (let listener of this._listeners) listener.keysCallback(updatedKeys);
+      for (const listener of this._listeners) listener.keysCallback(updatedKeys);
     }
   }
 
@@ -71,10 +73,10 @@ class QueryHandler {
       if (_.isEqual(this._keys, updatedKeys)) {
         updatedKeys = null;
       } else {
-        for (let key of _.difference(updatedKeys, this._keys)) {
+        for (const key of _.difference(updatedKeys, this._keys)) {
           this._coupler._coupleSegments(this._segments.concat(key));
         }
-        for (let key of _.difference(this._keys, updatedKeys)) {
+        for (const key of _.difference(this._keys, updatedKeys)) {
           this._coupler._decoupleSegments(this._segments.concat(key));
         }
         this._keys = updatedKeys;
@@ -113,7 +115,7 @@ class QueryHandler {
       if (_.some(results)) {
         if (this._listeners.length) this._listen();
       } else {
-        for (let listener of this._listeners) listener.operation._disconnect(error);
+        for (const listener of this._listeners) listener.operation._disconnect(error);
       }
     });
   }
@@ -176,7 +178,7 @@ class Node {
       angularCompatibility.digest();
       this.unlisten(true);
       this._forAllDescendants(node => {
-        for (let op of this.operations) this._coupler._dispatcher.markReady(op);
+        for (const op of this.operations) this._coupler._dispatcher.markReady(op);
       });
     }
   }
@@ -189,7 +191,7 @@ class Node {
         node.ready = false;
         angularCompatibility.digest();
       }
-      for (let op of this.operations) this._coupler._dispatcher.clearReady(op);
+      for (const op of this.operations) this._coupler._dispatcher.clearReady(op);
     });
     return Promise.all(_.map(this.operations, op => {
       return this._coupler._dispatcher.retry(op, error).catch(e => {
@@ -200,7 +202,7 @@ class Node {
       if (_.some(results)) {
         if (this.count) this.listen();
       } else {
-        for (let op of this.operations) op._disconnect(error);
+        for (const op of this.operations) op._disconnect(error);
         // Pulling all the operations will automatically get us listening on descendants.
       }
     });
@@ -249,7 +251,7 @@ export default class Coupler {
     let node;
     let superseded = !operation;
     let ready = false;
-    for (let segment of segments) {
+    for (const segment of segments) {
       let child = segment ? node.children && node.children[segment] : this._root;
       if (!child) {
         child = new Node(this, `${node.path === '/' ? '' : node.path}/${segment}`);
@@ -278,7 +280,7 @@ export default class Coupler {
   _decoupleSegments(segments, operation) {
     const ancestors = [];
     let node;
-    for (let segment of segments) {
+    for (const segment of segments) {
       node = segment ? node.children && node.children[segment] : this._root;
       if (!node) break;
       ancestors.push(node);
@@ -332,7 +334,7 @@ export default class Coupler {
   isTrunkCoupled(path) {
     const segments = path.split('/');
     let node;
-    for (let segment of segments) {
+    for (const segment of segments) {
       node = segment ? node.children && node.children[segment] : this._root;
       if (!node) return false;
       if (node.active) return true;
@@ -343,7 +345,7 @@ export default class Coupler {
   findCoupledDescendantPaths(path) {
     const segments = path.split('/');
     let node;
-    for (let segment of segments) {
+    for (const segment of segments) {
       node = segment ? node.children && node.children[segment] : this._root;
       if (!node) break;
     }
@@ -353,7 +355,7 @@ export default class Coupler {
   isSubtreeReady(path) {
     const segments = path.split('/');
     let node;
-    for (let segment of segments) {
+    for (const segment of segments) {
       node = segment ? node.children && node.children[segment] : this._root;
       if (!node) return false;
       if (node.ready) return true;
