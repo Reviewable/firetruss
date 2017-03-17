@@ -9,6 +9,7 @@ let bareDigest = function() {
   earlyDigestPending = true;
 };
 
+
 const angularProxy = {
   active: typeof window !== 'undefined' && window.angular,
   debounceDigest(wait) {
@@ -19,13 +20,15 @@ const angularProxy = {
     }
   }
 };
-['digest', 'defineModule'].forEach(method => {angularProxy[method] = noop;});
+['digest', 'watch', 'defineModule'].forEach(method => {angularProxy[method] = noop;});
 
 if (angularProxy.active) {
   angularProxy.digest = bareDigest;
+  angularProxy.watch = function() {throw new Error('Angular watch proxy not yet initialized');};
   window.angular.module('firetruss', []).run(['$rootScope', function($rootScope) {
     bareDigest = $rootScope.$evalAsync.bind($rootScope);
     if (earlyDigestPending) bareDigest();
+    angularProxy.watch = $rootScope.$watch.bind($rootScope);
   }]);
   angularProxy.defineModule = function(Truss) {
     window.angular.module('firetruss').constant('Truss', Truss);
@@ -60,6 +63,16 @@ function wrapPromiseCallback(callback) {
   };
 }
 
+function joinPath() {
+  const segments = [];
+  for (const segment of arguments) {
+    if (segment.charAt(0) === '/') segments.splice(0, segments.length);
+    segments.push(segment);
+  }
+  if (segments[0] === '/') segments[0] = '';
+  return segments.join('/');
+}
+
 
 const pathMatchers = {};
 const maxNumPathMatchers = 1000;
@@ -68,15 +81,18 @@ const maxNumPathMatchers = 1000;
 class PathMatcher {
   constructor(pattern) {
     this.variables = [];
-    const pathTemplate = pattern.replace(/\/\$[^\/]+/g, match => {
-      this.variables.push(match.slice(1));
+    const prefixMatch = _.endsWith('/$*');
+    if (prefixMatch) pattern = pattern.slice(-3);
+    const pathTemplate = pattern.replace(/\/\$[^\/]*/g, match => {
+      if (match.length > 1) this.variables.push(match.slice(1));
       return '\u0001';
     });
     Object.freeze(this.variables);
     if (/[$-.?[-^{|}]/.test(pathTemplate)) {
       throw new Error('Path pattern has unescaped keys: ' + pattern);
     }
-    this._regex = new RegExp('^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + '$');
+    this._regex = new RegExp(
+      '^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + (prefixMatch ? '($|/)' : '$'));
     this._parentRegex = new RegExp(
       '^' + (pathTemplate.replace(/\/[^/]*$/, '').replace(/\u0001/g, '/([^/]+)') || '/') + '$');
   }
@@ -117,11 +133,8 @@ function makePathMatcher(pattern) {
   return matcher;
 }
 
-/* global setImmediate */
-
 // jshint browser:true
 
-let bridge$1;
 const MIN_WORKER_VERSION = '0.4.0';
 
 
@@ -178,7 +191,7 @@ class Bridge {
     setInterval(() => {this._send({msg: 'ping'});}, 60 * 1000);
   }
 
-  static init(webWorker) {
+  init(webWorker) {
     const items = [];
     try {
       const storage = window.localStorage || window.sessionStorage;
@@ -208,11 +221,6 @@ class Bridge {
     });
   }
 
-  static get instance() {
-    if (!bridge$1) throw new Error('No web worker connected, please call Truss.connectWorker first');
-    return bridge$1;
-  }
-
   suspend(suspended) {
     if (suspended === undefined) suspended = true;
     if (this._suspended === suspended) return;
@@ -220,7 +228,7 @@ class Bridge {
     if (!suspended) {
       this._receiveMessages(this._inboundMessages);
       this._inboundMessages = [];
-      if (this._outboundMessages.length) setImmediate(this._flushMessageQueue);
+      if (this._outboundMessages.length) Promise.resolve().then(this._flushMessageQueue);
     }
   }
 
@@ -246,7 +254,9 @@ class Bridge {
       });
       deferred.params = message;
     }
-    if (!this._outboundMessages.length && !this._suspended) setImmediate(this._flushMessageQueue);
+    if (!this._outboundMessages.length && !this._suspended) {
+      Promise.resolve().then(this._flushMessageQueue);
+    }
     this._outboundMessages.push(message);
     return promise;
   }
@@ -265,7 +275,7 @@ class Bridge {
   }
 
   _receiveMessages(messages) {
-    for (let message of messages) {
+    for (const message of messages) {
       const fn = this[message.msg];
       if (typeof fn !== 'function') throw new Error('Unknown message: ' + message.msg);
       fn.call(this, message);
@@ -350,7 +360,7 @@ class Bridge {
   updateLocalStorage(items) {
     try {
       const storage = window.localStorage || window.sessionStorage;
-      for (let item in items) {
+      for (const item in items) {
         if (item.value === null) {
           storage.removeItem(item.key);
         } else {
@@ -371,7 +381,7 @@ class Bridge {
 
   _authCallback(server, auth) {
     server.auth = auth;
-    for (let listener of server.authListeners) listener(auth);
+    for (const listener of server.authListeners) listener(auth);
   }
 
   onAuth(rootUrl, callback, context) {
@@ -438,7 +448,7 @@ class Bridge {
       if (!callbackId) return Promise.resolve();  // no-op, never registered or already deregistered
       idsToDeregister.push(callbackId);
     } else {
-      for (let id of Object.keys(this._callbacks)) {
+      for (const id of Object.keys(this._callbacks)) {
         const handle = this._callbacks[id];
         if (handle.listenerKey === listenerKey && (!eventType || handle.eventType === eventType)) {
           idsToDeregister.push(id);
@@ -448,9 +458,9 @@ class Bridge {
     // Nullify callbacks first, then deregister after off() is complete.  We don't want any
     // callbacks in flight from the worker to be invoked while the off() is processing, but we don't
     // want them to throw an exception either.
-    for (let id of idsToDeregister) this._nullifyCallback(id);
+    for (const id of idsToDeregister) this._nullifyCallback(id);
     return this._send({msg: 'off', listenerKey, url, spec, eventType, callbackId}).then(() => {
-      for (let id of idsToDeregister) this._deregisterCallback(id);
+      for (const id of idsToDeregister) this._deregisterCallback(id);
     });
   }
 
@@ -528,7 +538,7 @@ function errorFromJson(json, params) {
   if (!json || json instanceof Error) return json;
   const error = new Error(json.message);
   error.params = params;
-  for (let propertyName in json) {
+  for (const propertyName in json) {
     if (propertyName === 'message' || !json.hasOwnProperty(propertyName)) continue;
     try {
       error[propertyName] = json[propertyName];
@@ -576,8 +586,13 @@ class Handle {
 
   child() {
     if (!arguments.length) return this;
+    const segments = [];
+    for (const key of arguments) {
+      if (key === undefined || key === null) return;
+      segments.push(escapeKey(key));
+    }
     return new Reference(
-      this._tree, `${this._pathPrefix}/${_.map(arguments, key => escapeKey(key)).join('/')}`,
+      this._tree, `${this._pathPrefix}/${segments.join('/')}`,
       this._annotations
     );
   }
@@ -591,7 +606,7 @@ class Handle {
         const mapping = {};
         const subPath = `${this._pathPrefix}/${escapedKeys.join('/')}`;
         const rest = _.slice(arguments, i + 1);
-        for (let key of arg) {
+        for (const key of arg) {
           const subRef =
             new Reference(this._tree, `${subPath}/${escapeKey(key)}`, this._annotations);
           mapping[key] = subRef.children.apply(subRef, rest);
@@ -703,12 +718,7 @@ class Reference extends Handle {
   }
 
   get ready() {return this._tree.isReferenceReady(this);}  // Vue-bound
-
-  get value() {  // Vue-bound
-    if (!this.ready) throw new Error('Reference value not currently synced');
-    return this._tree.getObject(this.path);
-  }
-
+  get value() {return this._tree.getObject(this.path);}  // Vue-bound
   toString() {return this._path;}
 
   annotate(annotations) {
@@ -727,18 +737,23 @@ class Reference extends Handle {
     return this._tree.update(this, 'update', values);
   }
 
+  override(value) {
+    return this._tree.update(this, 'override', {[this.path]: value});
+  }
+
   commit(updateFunction) {
     return this._tree.commit(this, updateFunction);
   }
 }
 
 class Connector {
-  constructor(scope, connections, tree, method) {
-    connections.freeze();
+  constructor(scope, connections, tree, method, refs) {
+    Object.freeze(connections);
     this._scope = scope;
     this._connections = connections;
     this._tree = tree;
     this._method = method;
+    this._refs = refs || {};
     this._subConnectors = {};
     this._currentDescriptors = {};
     this._disconnects = {};
@@ -754,7 +769,9 @@ class Connector {
       }
     });
 
-    if (angularProxy.active && scope.$on && scope.$$id) scope.$on('$destroy', () => {this.destroy();});
+    if (angularProxy.active && scope && scope.$on && scope.$$id) {
+      scope.$on('$destroy', () => {this.destroy();});
+    }
   }
 
   get ready() {
@@ -765,6 +782,10 @@ class Connector {
     });
   }
 
+  get at() {
+    return this._refs;
+  }
+
   destroy() {
     this._unlinkScopeProperties();
     _.each(this._angularUnwatches, unwatch => {unwatch();});
@@ -773,9 +794,10 @@ class Connector {
 
   _linkScopeProperties() {
     if (!this._scope) return;
-    const duplicateKey = _.find(this._connections, (descriptor, key) => key in this._scope);
-    if (duplicateKey) {
-      throw new Error(`Property already defined on connection target: ${duplicateKey}`);
+    for (const key in this._connections) {
+      if (key in this._scope) {
+        throw new Error(`Property already defined on connection target: ${key}`);
+      }
     }
     Object.defineProperties(this._scope, _.mapValues(this._connections, (descriptor, key) => ({
       configurable: true, enumerable: true, get: () => this._vue.$data[key]
@@ -790,16 +812,21 @@ class Connector {
   }
 
   _bindComputedConnection(key, fn) {
-    fn = fn.bind(this._scope);
-    const update = this._updateComputedConnection.bind(this, key);
-    this._vue.$watch(fn, update, {immediate: !angularProxy.active});
+    const getter = this._computeConnection.bind(this, fn);
+    const update = this._updateComputedConnection.bind(this, key, fn);
+    this._vue.$watch(getter, update, {immediate: !angularProxy.active, deep: true});
     if (angularProxy.active) {
       if (!this._angularUnwatches) this._angularUnwatches = [];
-      this._angularUnwatches.push(angularProxy.watch(fn, update));
+      this._angularUnwatches.push(angularProxy.watch(getter, update, true));
     }
   }
 
-  _updateComputedConnection(key, newDescriptor) {
+  _computeConnection(fn) {
+    return flattenRefs(fn.call(this._scope));
+  }
+
+  _updateComputedConnection(key, fn) {
+    const newDescriptor = fn(this._scope);
     const oldDescriptor = this._currentDescriptors[key];
     if (oldDescriptor === newDescriptor ||
         newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) return;
@@ -830,15 +857,18 @@ class Connector {
     this._currentDescriptors[key] = descriptor;
     if (!descriptor) return;
     if (descriptor instanceof Reference) {
+      this._refs[key] = descriptor;
       const updateFn = this._scope ? this._updateScopeRef.bind(this, key) : null;
       this._disconnects[key] = this._tree.connectReference(descriptor, updateFn, this._method);
     } else if (descriptor instanceof Query) {
+      this._refs[key] = descriptor;
       const updateFn = this._scope ? this._updateScopeQuery.bind(this, key) : null;
       this._disconnects[key] = this._tree.connectQuery(descriptor, updateFn, this._method);
     } else {
-      const subScope = {};
+      const subScope = {}, subRefs = {};
+      this._refs[key] = subRefs;
       const subConnector = this._subConnectors[key] =
-        new Connector(subScope, descriptor, this._tree, this._method);
+        new Connector(subScope, descriptor, this._tree, this._method, subRefs);
       if (this._scope) {
         const unwatch = this._vue.$watch(() => subConnector.ready, subReady => {
           if (!subReady) return;
@@ -851,6 +881,7 @@ class Connector {
   }
 
   _disconnect(key) {
+    delete this._refs[key];
     if (this._scope) {
       Vue.delete(this._scope, key);
       angularProxy.digest();
@@ -878,7 +909,7 @@ class Connector {
       changed = true;
     }
     const subScope = this._scope[key];
-    for (let childKey in subScope) {
+    for (const childKey in subScope) {
       if (!subScope.hasOwnProperty(childKey)) continue;
       if (!_.contains(childKeys, childKey)) {
         Vue.delete(subScope, childKey);
@@ -886,10 +917,10 @@ class Connector {
       }
     }
     let object;
-    for (let segment of this._currentDescriptors[key].path.split('/')) {
+    for (const segment of this._currentDescriptors[key].path.split('/')) {
       object = segment ? object[segment] : this._tree.root;
     }
-    for (let childKey of childKeys) {
+    for (const childKey of childKeys) {
       if (subScope.hasOwnProperty(childKey)) continue;
       Vue.set(subScope, childKey, object[childKey]);
       changed = true;
@@ -899,9 +930,17 @@ class Connector {
 
 }
 
+function flattenRefs(refs) {
+  if (!refs) return;
+  if (refs instanceof Handle) return refs.toString();
+  return _.mapValues(refs, flattenRefs);
+}
+
 const INTERCEPT_KEYS = [
   'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'all'
 ];
+
+const EMPTY_ARRAY = [];
 
 
 class SlowHandle {
@@ -936,6 +975,8 @@ class Operation {
     this._target = target;
     this._ready = false;
     this._running = false;
+    this._ended = false;
+    this._tries = 0;
     this._startTimestamp = Date.now();
     this._slowHandles = [];
   }
@@ -945,6 +986,8 @@ class Operation {
   get target() {return this._target;}
   get ready() {return this._ready;}
   get running() {return this._running;}
+  get ended() {return this._ended;}
+  get tries() {return this._tries;}
   get error() {return this._error;}
 
   onSlow(delay, callback) {
@@ -957,8 +1000,13 @@ class Operation {
     this._running = value;
   }
 
+  _setEnded(value) {
+    this._ended = value;
+  }
+
   _markReady() {
     this._ready = true;
+    this._tries = 0;
     _.each(this._slowHandles, handle => handle.cancel());
   }
 
@@ -966,6 +1014,10 @@ class Operation {
     this._ready = false;
     this._startTimestamp = Date.now();
     _.each(this._slowHandles, handle => handle.initiate());
+  }
+
+  _incrementTries() {
+    this._tries++;
   }
 }
 
@@ -1016,9 +1068,9 @@ class Dispatcher {
 
   _getCallbacks(stage, operationType, method) {
     return [].concat(
-      this._callbacks[this._getCallbacksKey(stage, method)],
-      this._callbacks[this._getCallbacksKey(stage, operationType)],
-      this._callbacks[this._getCallbacksKey(stage, 'all')]
+      this._callbacks[this._getCallbacksKey(stage, method)] || EMPTY_ARRAY,
+      this._callbacks[this._getCallbacksKey(stage, operationType)] || EMPTY_ARRAY,
+      this._callbacks[this._getCallbacksKey(stage, 'all')] || EMPTY_ARRAY
     );
   }
 
@@ -1042,9 +1094,12 @@ class Dispatcher {
   }
 
   begin(operation) {
-    return Promise.all(
-      _.map(this._getCallbacks('onBefore', operation.type), onBefore => onBefore(operation))
-    ).then(() => {operation._setRunning(true);}, e => this.end(operation, e));
+    return Promise.all(_.map(
+      this._getCallbacks('onBefore', operation.type, operation.method),
+      onBefore => onBefore(operation)
+    )).then(() => {
+      if (!operation.ended) operation._setRunning(true);
+    }, e => this.end(operation, e));
   }
 
   markReady(operation) {
@@ -1056,15 +1111,11 @@ class Dispatcher {
   }
 
   retry(operation, error) {
-    return Promise.all(
-      _.map(this._getCallbacks('onError', operation.type), onError => {
-        try {
-          return Promise.resolve(onError(operation, error));
-        } catch (e) {
-          return Promise.reject(e);
-        }
-      })
-    ).then(results => _.some(results));
+    operation._incrementTries();
+    return Promise.all(_.map(
+      this._getCallbacks('onError', operation.type, operation.method),
+      onError => onError(operation, error)
+    )).then(results => _.some(results));
   }
 
   _retryOrEnd(operation, error) {
@@ -1074,11 +1125,14 @@ class Dispatcher {
   }
 
   end(operation, error) {
+    if (operation.ended) return;
     operation._setRunning(false);
+    operation._setEnded(true);
     if (error) operation._error = error;
-    return Promise.all(
-      _.map(this._getCallbacks('onAfter', operation.type), onAfter => onAfter(operation))
-    ).then(
+    return Promise.all(_.map(
+      this._getCallbacks('onAfter', operation.type, operation.method),
+      onAfter => onAfter(operation)
+    )).then(
       () => this._afterEnd(operation),
       e => {
         operation._error = e;
@@ -1090,7 +1144,7 @@ class Dispatcher {
   _afterEnd(operation) {
     this.markReady(operation);
     if (operation.error) {
-      const onFailureCallbacks = this._getCallbacks('onFailure', operation.type);
+      const onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
       return this._bridge.probeError(operation.error).then(() => {
         if (onFailureCallbacks) {
           setTimeout(0, () => {
@@ -1162,7 +1216,6 @@ class MetaTree {
       this._vue.$watch('$data', angularProxy.digest, {deep: true});
     }
 
-    bridge.trackAuth(rootUrl);
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
     this._connectInfoProperty('serverTimeOffset', 'timeOffset');
@@ -1230,7 +1283,7 @@ class QueryHandler {
     this._listening = false;
     this.ready = false;
     angularProxy.digest();
-    for (let key of this._keys) {
+    for (const key of this._keys) {
       this._coupler._decoupleSegments(this._segments.concat(key));
     }
   }
@@ -1244,10 +1297,12 @@ class QueryHandler {
     if (!this.ready) {
       this.ready = true;
       angularProxy.digest();
-      for (let listener of this._listeners) this._coupler._dispatcher.markReady(listener.operation);
+      for (const listener of this._listeners) {
+        this._coupler._dispatcher.markReady(listener.operation);
+      }
     }
     if (updatedKeys) {
-      for (let listener of this._listeners) listener.keysCallback(updatedKeys);
+      for (const listener of this._listeners) listener.keysCallback(updatedKeys);
     }
   }
 
@@ -1259,10 +1314,10 @@ class QueryHandler {
       if (_.isEqual(this._keys, updatedKeys)) {
         updatedKeys = null;
       } else {
-        for (let key of _.difference(updatedKeys, this._keys)) {
+        for (const key of _.difference(updatedKeys, this._keys)) {
           this._coupler._coupleSegments(this._segments.concat(key));
         }
-        for (let key of _.difference(this._keys, updatedKeys)) {
+        for (const key of _.difference(this._keys, updatedKeys)) {
           this._coupler._decoupleSegments(this._segments.concat(key));
         }
         this._keys = updatedKeys;
@@ -1301,7 +1356,7 @@ class QueryHandler {
       if (_.some(results)) {
         if (this._listeners.length) this._listen();
       } else {
-        for (let listener of this._listeners) listener.operation._disconnect(error);
+        for (const listener of this._listeners) listener.operation._disconnect(error);
       }
     });
   }
@@ -1364,7 +1419,7 @@ class Node {
       angularProxy.digest();
       this.unlisten(true);
       this._forAllDescendants(node => {
-        for (let op of this.operations) this._coupler._dispatcher.markReady(op);
+        for (const op of this.operations) this._coupler._dispatcher.markReady(op);
       });
     }
   }
@@ -1377,7 +1432,7 @@ class Node {
         node.ready = false;
         angularProxy.digest();
       }
-      for (let op of this.operations) this._coupler._dispatcher.clearReady(op);
+      for (const op of this.operations) this._coupler._dispatcher.clearReady(op);
     });
     return Promise.all(_.map(this.operations, op => {
       return this._coupler._dispatcher.retry(op, error).catch(e => {
@@ -1388,7 +1443,7 @@ class Node {
       if (_.some(results)) {
         if (this.count) this.listen();
       } else {
-        for (let op of this.operations) op._disconnect(error);
+        for (const op of this.operations) op._disconnect(error);
         // Pulling all the operations will automatically get us listening on descendants.
       }
     });
@@ -1437,7 +1492,7 @@ class Coupler {
     let node;
     let superseded = !operation;
     let ready = false;
-    for (let segment of segments) {
+    for (const segment of segments) {
       let child = segment ? node.children && node.children[segment] : this._root;
       if (!child) {
         child = new Node(this, `${node.path === '/' ? '' : node.path}/${segment}`);
@@ -1466,7 +1521,7 @@ class Coupler {
   _decoupleSegments(segments, operation) {
     const ancestors = [];
     let node;
-    for (let segment of segments) {
+    for (const segment of segments) {
       node = segment ? node.children && node.children[segment] : this._root;
       if (!node) break;
       ancestors.push(node);
@@ -1520,7 +1575,7 @@ class Coupler {
   isTrunkCoupled(path) {
     const segments = path.split('/');
     let node;
-    for (let segment of segments) {
+    for (const segment of segments) {
       node = segment ? node.children && node.children[segment] : this._root;
       if (!node) return false;
       if (node.active) return true;
@@ -1531,7 +1586,7 @@ class Coupler {
   findCoupledDescendantPaths(path) {
     const segments = path.split('/');
     let node;
-    for (let segment of segments) {
+    for (const segment of segments) {
       node = segment ? node.children && node.children[segment] : this._root;
       if (!node) break;
     }
@@ -1541,7 +1596,7 @@ class Coupler {
   isSubtreeReady(path) {
     const segments = path.split('/');
     let node;
-    for (let segment of segments) {
+    for (const segment of segments) {
       node = segment ? node.children && node.children[segment] : this._root;
       if (!node) return false;
       if (node.ready) return true;
@@ -1557,7 +1612,11 @@ class Coupler {
 }
 
 // These are defined separately for each object so they're not included in Value below.
-const RESERVED_VALUE_PROPERTY_NAMES = {$truss: true, $parent: true, $key: true, $path: true};
+const RESERVED_VALUE_PROPERTY_NAMES = {
+  $truss: true, $parent: true, $key: true, $path: true, $ref:true,
+  $$touchThis: true, $$initializers: true, $$finalizers: true,
+  __ob__: true
+};
 
 const computedPropertyStats = {};
 
@@ -1565,19 +1624,22 @@ const computedPropertyStats = {};
 class Value {
   get $ref() {
     Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
+    return this.$ref;
   }
-  get $refs() {return [this.$ref];}
+  get $refs() {return this.$ref;}
   get $keys() {return _.keys(this);}
   get $values() {return _.values(this);}
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
+  get $ready() {return this.$ref.ready;}
+  get $overridden() {return false;}
 
-  $watch(subjectFn, callbackFn) {
+  $watch(subjectFn, callbackFn, options) {
     let unwatchAndRemoveDestructor;
 
     const unwatch = this.$truss.watch(() => {
       this.$$touchThis();
       return subjectFn.call(this);
-    }, callbackFn.bind(this));
+    }, callbackFn.bind(this), options);
 
     if (!this.$$finalizers) {
       Object.defineProperty(this, '$$finalizers', {
@@ -1593,16 +1655,19 @@ class Value {
 
   $set(value) {return this.$ref.set(value);}
   $update(values) {return this.$ref.update(values);}
+  $override(values) {return this.$ref.override(values);}
   $commit(options, updateFn) {return this.$ref.commit(options, updateFn);}
-  // TODO
-  // $temporarilyOverride(updateFn)
-  // $onPropertyChange(method)
-  // $freezeProperty
 }
 
 class ComputedPropertyStats {
   constructor(name) {
     _.extend(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
+  }
+}
+
+class ErrorWrapper {
+  constructor(error) {
+    this.error = error;
   }
 }
 
@@ -1629,7 +1694,7 @@ class Modeler {
     let computedProperties;
     let proto = Class.prototype;
     while (proto && proto.constructor !== Object) {
-      for (let name of Object.getOwnPropertyNames(proto)) {
+      for (const name of Object.getOwnPropertyNames(proto)) {
         const descriptor = Object.getOwnPropertyDescriptor(proto, name);
         if (name.charAt(0) === '$') {
           if (_.isEqual(descriptor, Object.getOwnPropertyDescriptor(Value.prototype, name))) {
@@ -1648,7 +1713,7 @@ class Modeler {
       }
       proto = Object.getPrototypeOf(proto);
     }
-    for (let name of Object.getOwnPropertyNames(Value.prototype)) {
+    for (const name of Object.getOwnPropertyNames(Value.prototype)) {
       if (name === 'constructor' || Class.prototype.hasOwnProperty(name)) continue;
       Object.defineProperty(
         Class.prototype, name, Object.getOwnPropertyDescriptor(Value.prototype, name));
@@ -1664,7 +1729,7 @@ class Modeler {
     return _.map(mounts, mount => {
       if (_.isString(mount)) mount = {path: mount};
       const matcher = makePathMatcher(mount.path);
-      for (let variable of matcher.variables) {
+      for (const variable of matcher.variables) {
         if (variable === '$' || variable.charAt(1) === '$') {
           throw new Error(`Invalid variable name: ${variable}`);
         }
@@ -1692,12 +1757,12 @@ class Modeler {
   createObject(path, properties) {
     let Class = Value;
     let computedProperties;
-    for (let mount of this._mounts) {
+    for (const mount of this._mounts) {
       const match = mount.matcher.match(path);
       if (match) {
         Class = mount.Class;
         computedProperties = mount.computedProperties;
-        for (let variable in match) {
+        for (const variable in match) {
           properties[variable] = {
             value: match[variable], writable: false, configurable: false, enumerable: false
           };
@@ -1706,7 +1771,7 @@ class Modeler {
       }
     }
 
-    const object = new Class();
+    const object = new Class(properties.$truss.value);
 
     if (computedProperties) {
       _.each(computedProperties, prop => {
@@ -1757,7 +1822,10 @@ class Modeler {
     });
     return {
       enumerable: true, configurable: true,
-      get: function() {return value;},
+      get: function() {
+        if (value instanceof ErrorWrapper) throw value.error;
+        return value;
+      },
       set: function(newValue) {
         if (!writeAllowed) throw new Error(`You cannot set a computed property: ${prop.name}`);
         value = newValue;
@@ -1778,6 +1846,18 @@ class Modeler {
     });
   }
 
+  checkVueObject(object, path) {
+    for (const key of Object.getOwnPropertyNames(object)) {
+      if (RESERVED_VALUE_PROPERTY_NAMES[key]) continue;
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      if ('value' in descriptor || !descriptor.get || !descriptor.set) {
+        throw new Error(`Firetruss object at ${path} has a rogue property: ${key}`);
+      }
+      const value = object[key];
+      if (_.isObject(value)) this.checkVueObject(value, joinPath(path, escapeKey(key)));
+    }
+  }
+
   static get computedPropertyStats() {
     return computedPropertyStats;
   }
@@ -1791,10 +1871,14 @@ function computeValue(prop, stats) {
   this.$$touchThis();
 
   const startTime = performanceNow();
-  const result = prop.get.call(this);
-  stats.runtime += performanceNow() - startTime;
-  stats.numRecomputes += 1;
-  return result;
+  try {
+    return prop.get.call(this);
+  } catch (e) {
+    return new ErrorWrapper(e);
+  } finally {
+    stats.runtime += performanceNow() - startTime;
+    stats.numRecomputes += 1;
+  }
   // jshint validthis: false
 }
 
@@ -1934,8 +2018,11 @@ class Tree {
   update(ref, method, values) {
     const numValues = _.size(values);
     if (!numValues) return;
-    if (method === 'update') checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
-    this._applyLocalWrite(values);
+    if (method === 'update' || method === 'override') {
+      checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
+    }
+    this._applyLocalWrite(values, method === 'override');
+    if (method === 'override') return Promise.resolve();
     const url = this.rootUrl + this._extractCommonPathPrefix(values);
     return this._dispatcher.execute('write', method, ref, () => {
       if (numValues === 1) {
@@ -1985,21 +2072,21 @@ class Tree {
     });
   }
 
-  _applyLocalWrite(values) {
+  _applyLocalWrite(values, override) {
     // TODO: correctly apply local writes that impact queries.  Currently, a local write will update
     // any objects currently selected by a query, but won't add or remove results.
     this._writeSerial++;
-    this._localWriteTimestamp = this._truss.now();
+    this._localWriteTimestamp = this._truss.now;
     _.each(values, (value, path) => {
       const coupledDescendantPaths = this._coupler.findCoupledDescendantPaths(path);
       if (_.isEmpty(coupledDescendantPaths)) return;
       const offset = (path === '/' ? 0 : path.length) + 1;
-      for (let descendantPath of coupledDescendantPaths) {
+      for (const descendantPath of coupledDescendantPaths) {
         const subPath = descendantPath.slice(offset);
         let subValue = value;
         if (subPath) {
           const segments = subPath.split('/');
-          for (let segment of segments) {
+          for (const segment of segments) {
             subValue = subValue[unescapeKey(segment)];
             if (subValue === undefined) break;
           }
@@ -2008,9 +2095,12 @@ class Tree {
           this._prune(subPath);
         } else {
           const key = unescapeKey(_.last(descendantPath.split('/')));
-          this._plantValue(descendantPath, key, subValue, this._scaffoldAncestors(descendantPath));
+          this._plantValue(
+            descendantPath, key, subValue, this._scaffoldAncestors(descendantPath), false,
+            override
+          );
         }
-        this._localWrites[descendantPath] = this._writeSerial;
+        if (!override) this._localWrites[descendantPath] = this._writeSerial;
       }
     });
   }
@@ -2068,7 +2158,7 @@ class Tree {
   // To be called on the result of _createObject after it's been inserted into the _vue hierarchy
   // and Vue has had a chance to initialize it.
   _completeCreateObject(object) {
-    for (let name of Object.getOwnPropertyNames(object)) {
+    for (const name of Object.getOwnPropertyNames(object)) {
       const descriptor = Object.getOwnPropertyDescriptor(object, name);
       if (descriptor.configurable && descriptor.enumerable) {
         descriptor.enumerable = false;
@@ -2080,7 +2170,7 @@ class Tree {
       }
     }
     if (object.$$initializers) {
-      for (let fn of object.$$initializers) fn(this._vue);
+      for (const fn of object.$$initializers) fn(this._vue);
       delete object.$$initializers;
     }
   }
@@ -2089,9 +2179,9 @@ class Tree {
     if (!(object && object.$truss)) return;
     if (object.$$finalizers) {
       // Some destructors remove themselves from the array, so clone it before iterating.
-      for (let fn of _.clone(object.$$finalizers)) fn();
+      for (const fn of _.clone(object.$$finalizers)) fn();
     }
-    for (let key in object) {
+    for (const key in object) {
       if (!Object.hasOwnProperty(object, key)) continue;
       this._destroyObject(object[key]);
     }
@@ -2103,7 +2193,7 @@ class Tree {
     });
     if (snap.exists) {
       const parent = this._scaffoldAncestors(snap.path, true);
-      if (parent) this._plantValue(snap.path, snap.key, snap.value, parent, true);
+      if (parent) this._plantValue(snap.path, snap.key, snap.value, parent, true, false);
     } else {
       this._prune(snap.path, null, true);
     }
@@ -2125,7 +2215,7 @@ class Tree {
     return object;
   }
 
-  _plantValue(path, key, value, parent, remoteWrite) {
+  _plantValue(path, key, value, parent, remoteWrite, override) {
     if (value === null || value === undefined) {
       throw new Error('Snapshot includes invalid value: ' + value);
     }
@@ -2141,9 +2231,16 @@ class Tree {
       this._setFirebaseProperty(parent, key, object);
       this._completeCreateObject(object);
     }
+    if (override) {
+      Object.defineProperty(object, '$overridden', {get: _.constant(true), configurable: true});
+    } else if (object.$overridden) {
+      delete object.$overridden;
+    }
     _.each(value, (item, escapedChildKey) => {
       this._plantValue(
-        joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite);
+        joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite,
+        override
+      );
     });
     _.each(object, (item, childKey) => {
       const escapedChildKey = escapeKey(childKey);
@@ -2177,7 +2274,7 @@ class Tree {
   }
 
   _avoidLocalWritePaths(path, lockedDescendantPaths) {
-    for (let localWritePath in this._localWrites) {
+    for (const localWritePath in this._localWrites) {
       if (!this._localWrites.hasOwnProperty(localWritePath)) continue;
       if (path === localWritePath || localWritePath === '/' ||
           _.startsWith(path, localWritePath + '/')) return true;
@@ -2220,6 +2317,7 @@ class Tree {
 
   _pruneDescendants(object, lockedDescendantPaths) {
     if (lockedDescendantPaths[object.$path]) return true;
+    if (object.$overridden) delete object.$overridden;
     let coupledDescendantFound = false;
     _.each(object, (value, key) => {
       let shouldDelete = true;
@@ -2246,7 +2344,7 @@ class Tree {
     let object;
     const segments = _.isString(pathOrSegments) ?
       _(pathOrSegments).split('/').map(unescapeKey).value() : pathOrSegments;
-    for (let segment of segments) {
+    for (const segment of segments) {
       object = segment ? object[segment] : this.root;
       if (object === undefined) return;
     }
@@ -2278,16 +2376,17 @@ class Tree {
       Vue.set(object, key, value);
       descriptor = Object.getOwnPropertyDescriptor(object, key);
       Object.defineProperty(object, key, {
-        get: descriptor.get,
-        set: function(newValue) {
-          if (!this._firebasePropertyEditAllowed) {
-            throw new Error(`Firebase data cannot be mutated directly: ${key}`);
-          }
-          descriptor.set.call(this, newValue);
-        },
+        get: descriptor.get, set: this._overwriteFirebaseProperty.bind(this, descriptor, key),
         configurable: true, enumerable: true
       });
     }
+  }
+
+  _overwriteFirebaseProperty(descriptor, key, newValue) {
+    if (!this._firebasePropertyEditAllowed) {
+      throw new Error(`Firebase data cannot be mutated directly: ${key}`);
+    }
+    descriptor.set.call(this, newValue);
   }
 
   _deleteFirebaseProperty(object, key) {
@@ -2298,14 +2397,7 @@ class Tree {
   }
 
   checkVueObject(object, path) {
-    for (let key of Object.getOwnPropertyNames(object)) {
-      const descriptor = Object.getOwnPropertyDescriptor(object, key);
-      if ('value' in descriptor || !descriptor.get || !descriptor.set) {
-        throw new Error(`Firetruss object at ${path} has a rogue property: ${key}`);
-      }
-      const value = object[key];
-      if (_.isObject(value)) this.checkVueObject(value, joinPath(path, escapeKey(key)));
-    }
+    this._modeler.checkVueObject(object, path);
   }
 
   static get computedPropertyStats() {
@@ -2315,16 +2407,6 @@ class Tree {
 
 
 function throwReadOnlyError() {throw new Error('Read-only property');}
-
-function joinPath() {
-  const segments = [];
-  for (let segment of arguments) {
-    if (segment.charAt(0) === '/') segments.splice(0, segments.length);
-    segments.push(segment);
-  }
-  if (segments[0] === '/') segments[0] = '';
-  return segments.join('/');
-}
 
 function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativizePaths) {
   // First, check all paths for correctness and absolutize them, since there could be a mix of
@@ -2350,7 +2432,7 @@ function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativize
   // Then check for overlaps and relativize if desired.
   const allPaths = _(values).keys().map(path => joinPath(path, '')).sortBy('length').value();
   _.each(_.keys(values), path => {
-    for (let otherPath of allPaths) {
+    for (const otherPath of allPaths) {
       if (otherPath.length > path.length) break;
       if (path !== otherPath && _.startsWith(path, otherPath)) {
         throw new Error(`Update items overlap: ${otherPath} and ${path}`);
@@ -2366,7 +2448,7 @@ function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativize
 function toFirebaseJson(object) {
   if (typeof object === 'object') {
     const result = {};
-    for (let key in object) {
+    for (const key in object) {
       if (!object.hasOwnProperty(key)) continue;
       result[escapeKey(key)] = toFirebaseJson(object[key]);
     }
@@ -2403,16 +2485,13 @@ class Truss {
     this._dispatcher = new Dispatcher(bridge);
     this._vue = new Vue();
 
+    bridge.trackServer(this._rootUrl);
     this._metaTree = new MetaTree(this._rootUrl, bridge);
-    Object.defineProperty(this, 'meta', {
-      value: this._metaTree.root, writable: false, configurable: false, enumerable: false
-    });
-
     this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher, classes);
-    Object.defineProperty(this, 'root', {
-      value: this._tree.root, writable: false, configurable: false, enumerable: false
-    });
   }
+
+  get meta() {return this._metaTree.root;}
+  get root() {return this._tree.root;}
 
   destroy() {
     this._vue.$destroy();
@@ -2424,15 +2503,17 @@ class Truss {
   newKey() {return this._keyGenerator.generateUniqueKey(this.now);}
 
   authenticate(token) {
-    return this._dispatcher.execute('auth', new Reference(this._tree, '/'), () => {
+    return this._dispatcher.execute('auth', 'authenticate', new Reference(this._tree, '/'), () => {
       return bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
     });
   }
 
   unauthenticate() {
-    return this._dispatcher.execute('auth', new Reference(this._tree, '/'), () => {
-      return bridge.unauth(this._rootUrl);
-    });
+    return this._dispatcher.execute(
+      'auth', 'unauthenticate', new Reference(this._tree, '/'), () => {
+        return bridge.unauth(this._rootUrl);
+      }
+    );
   }
 
   intercept(actionType, callbacks) {
@@ -2469,7 +2550,7 @@ class Truss {
     });
   }
 
-  watch(subjectFn, callbackFn) {
+  watch(subjectFn, callbackFn, options) {
     let numCallbacks = 0;
 
     const unwatch = this._vue.$watch(subjectFn, (newValue, oldValue) => {
@@ -2485,9 +2566,20 @@ class Truss {
         callbackFn(newValue, oldValue);
         angularProxy.digest();
       }
-    }, {immediate: true});
+    }, {immediate: true, deep: options && options.deep});
 
     return unwatch;
+  }
+
+  when(expression, options) {
+    return new Promise(resolve => {
+      const unwatch = this.watch(expression, value => {
+        if (value) {
+          unwatch();
+          resolve(value);
+        }
+      }, options);
+    });
   }
 
   checkObjectsForRogueProperties() {
@@ -2507,7 +2599,7 @@ class Truss {
     return bridge.init(webWorker).then(
       ({exposedFunctionNames, firebaseSdkVersion}) => {
         Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
-        for (let name of exposedFunctionNames) {
+        for (const name of exposedFunctionNames) {
           Truss.worker[name] = bridge.bindExposedFunction(name);
         }
       }

@@ -6,6 +6,8 @@ const INTERCEPT_KEYS = [
   'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'all'
 ];
 
+const EMPTY_ARRAY = [];
+
 
 class SlowHandle {
   constructor(operation, delay, callback) {
@@ -132,9 +134,9 @@ export default class Dispatcher {
 
   _getCallbacks(stage, operationType, method) {
     return [].concat(
-      this._callbacks[this._getCallbacksKey(stage, method)],
-      this._callbacks[this._getCallbacksKey(stage, operationType)],
-      this._callbacks[this._getCallbacksKey(stage, 'all')]
+      this._callbacks[this._getCallbacksKey(stage, method)] || EMPTY_ARRAY,
+      this._callbacks[this._getCallbacksKey(stage, operationType)] || EMPTY_ARRAY,
+      this._callbacks[this._getCallbacksKey(stage, 'all')] || EMPTY_ARRAY
     );
   }
 
@@ -158,9 +160,12 @@ export default class Dispatcher {
   }
 
   begin(operation) {
-    return Promise.all(
-      _.map(this._getCallbacks('onBefore', operation.type), onBefore => onBefore(operation))
-    ).then(() => {if (!operation.ended) operation._setRunning(true);}, e => this.end(operation, e));
+    return Promise.all(_.map(
+      this._getCallbacks('onBefore', operation.type, operation.method),
+      onBefore => onBefore(operation)
+    )).then(() => {
+      if (!operation.ended) operation._setRunning(true);
+    }, e => this.end(operation, e));
   }
 
   markReady(operation) {
@@ -173,9 +178,10 @@ export default class Dispatcher {
 
   retry(operation, error) {
     operation._incrementTries();
-    return Promise.all(
-      _.map(this._getCallbacks('onError', operation.type), onError => onError(operation, error))
-    ).then(results => _.some(results));
+    return Promise.all(_.map(
+      this._getCallbacks('onError', operation.type, operation.method),
+      onError => onError(operation, error)
+    )).then(results => _.some(results));
   }
 
   _retryOrEnd(operation, error) {
@@ -189,9 +195,10 @@ export default class Dispatcher {
     operation._setRunning(false);
     operation._setEnded(true);
     if (error) operation._error = error;
-    return Promise.all(
-      _.map(this._getCallbacks('onAfter', operation.type), onAfter => onAfter(operation))
-    ).then(
+    return Promise.all(_.map(
+      this._getCallbacks('onAfter', operation.type, operation.method),
+      onAfter => onAfter(operation)
+    )).then(
       () => this._afterEnd(operation),
       e => {
         operation._error = e;
@@ -203,7 +210,7 @@ export default class Dispatcher {
   _afterEnd(operation) {
     this.markReady(operation);
     if (operation.error) {
-      const onFailureCallbacks = this._getCallbacks('onFailure', operation.type);
+      const onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
       return this._bridge.probeError(operation.error).then(() => {
         if (onFailureCallbacks) {
           setTimeout(0, () => {

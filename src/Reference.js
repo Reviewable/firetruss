@@ -34,8 +34,13 @@ export class Handle {
 
   child() {
     if (!arguments.length) return this;
+    const segments = [];
+    for (const key of arguments) {
+      if (key === undefined || key === null) return;
+      segments.push(escapeKey(key));
+    }
     return new Reference(
-      this._tree, `${this._pathPrefix}/${_.map(arguments, key => escapeKey(key)).join('/')}`,
+      this._tree, `${this._pathPrefix}/${segments.join('/')}`,
       this._annotations
     );
   }

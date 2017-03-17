@@ -7,7 +7,7 @@ import Vue from 'vue';
 
 export default class Connector {
   constructor(scope, connections, tree, method, refs) {
-    connections.freeze();
+    Object.freeze(connections);
     this._scope = scope;
     this._connections = connections;
     this._tree = tree;
@@ -28,7 +28,9 @@ export default class Connector {
       }
     });
 
-    if (angular.active && scope.$on && scope.$$id) scope.$on('$destroy', () => {this.destroy();});
+    if (angular.active && scope && scope.$on && scope.$$id) {
+      scope.$on('$destroy', () => {this.destroy();});
+    }
   }
 
   get ready() {
@@ -51,9 +53,10 @@ export default class Connector {
 
   _linkScopeProperties() {
     if (!this._scope) return;
-    const duplicateKey = _.find(this._connections, (descriptor, key) => key in this._scope);
-    if (duplicateKey) {
-      throw new Error(`Property already defined on connection target: ${duplicateKey}`);
+    for (const key in this._connections) {
+      if (key in this._scope) {
+        throw new Error(`Property already defined on connection target: ${key}`);
+      }
     }
     Object.defineProperties(this._scope, _.mapValues(this._connections, (descriptor, key) => ({
       configurable: true, enumerable: true, get: () => this._vue.$data[key]
@@ -68,16 +71,21 @@ export default class Connector {
   }
 
   _bindComputedConnection(key, fn) {
-    fn = fn.bind(this._scope);
-    const update = this._updateComputedConnection.bind(this, key);
-    this._vue.$watch(fn, update, {immediate: !angular.active});
+    const getter = this._computeConnection.bind(this, fn);
+    const update = this._updateComputedConnection.bind(this, key, fn);
+    this._vue.$watch(getter, update, {immediate: !angular.active, deep: true});
     if (angular.active) {
       if (!this._angularUnwatches) this._angularUnwatches = [];
-      this._angularUnwatches.push(angular.watch(fn, update));
+      this._angularUnwatches.push(angular.watch(getter, update, true));
     }
   }
 
-  _updateComputedConnection(key, newDescriptor) {
+  _computeConnection(fn) {
+    return flattenRefs(fn.call(this._scope));
+  }
+
+  _updateComputedConnection(key, fn) {
+    const newDescriptor = fn(this._scope);
     const oldDescriptor = this._currentDescriptors[key];
     if (oldDescriptor === newDescriptor ||
         newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) return;
@@ -180,3 +188,10 @@ export default class Connector {
   }
 
 }
+
+function flattenRefs(refs) {
+  if (!refs) return;
+  if (refs instanceof Handle) return refs.toString();
+  return _.mapValues(refs, flattenRefs);
+}
+

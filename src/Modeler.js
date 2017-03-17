@@ -1,11 +1,15 @@
 import Reference from './Reference.js';
-import {makePathMatcher} from './utils.js';
+import {makePathMatcher, joinPath, escapeKey} from './utils.js';
 
 import _ from 'lodash';
 import performanceNow from 'performance-now';
 
 // These are defined separately for each object so they're not included in Value below.
-const RESERVED_VALUE_PROPERTY_NAMES = {$truss: true, $parent: true, $key: true, $path: true};
+const RESERVED_VALUE_PROPERTY_NAMES = {
+  $truss: true, $parent: true, $key: true, $path: true, $ref:true,
+  $$touchThis: true, $$initializers: true, $$finalizers: true,
+  __ob__: true
+};
 
 const computedPropertyStats = {};
 
@@ -13,6 +17,7 @@ const computedPropertyStats = {};
 class Value {
   get $ref() {
     Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
+    return this.$ref;
   }
   get $refs() {return this.$ref;}
   get $keys() {return _.keys(this);}
@@ -159,7 +164,7 @@ export default class Modeler {
       }
     }
 
-    const object = new Class();
+    const object = new Class(properties.$truss.value);
 
     if (computedProperties) {
       _.each(computedProperties, prop => {
@@ -232,6 +237,18 @@ export default class Modeler {
         iteratee(mount.escapedKey, mount.placeholder);
       }
     });
+  }
+
+  checkVueObject(object, path) {
+    for (const key of Object.getOwnPropertyNames(object)) {
+      if (RESERVED_VALUE_PROPERTY_NAMES[key]) continue;
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      if ('value' in descriptor || !descriptor.get || !descriptor.set) {
+        throw new Error(`Firetruss object at ${path} has a rogue property: ${key}`);
+      }
+      const value = object[key];
+      if (_.isObject(value)) this.checkVueObject(value, joinPath(path, escapeKey(key)));
+    }
   }
 
   static get computedPropertyStats() {

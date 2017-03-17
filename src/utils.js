@@ -27,6 +27,16 @@ export function wrapPromiseCallback(callback) {
   };
 }
 
+export function joinPath() {
+  const segments = [];
+  for (const segment of arguments) {
+    if (segment.charAt(0) === '/') segments.splice(0, segments.length);
+    segments.push(segment);
+  }
+  if (segments[0] === '/') segments[0] = '';
+  return segments.join('/');
+}
+
 
 const pathMatchers = {};
 const maxNumPathMatchers = 1000;
@@ -38,7 +48,7 @@ class PathMatcher {
     const prefixMatch = _.endsWith('/$*');
     if (prefixMatch) pattern = pattern.slice(-3);
     const pathTemplate = pattern.replace(/\/\$[^\/]*/g, match => {
-      if (match.length > 1) this.variables.push(match);
+      if (match.length > 1) this.variables.push(match.slice(1));
       return '\u0001';
     });
     Object.freeze(this.variables);

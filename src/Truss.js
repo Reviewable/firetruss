@@ -38,16 +38,13 @@ export default class Truss {
     this._dispatcher = new Dispatcher(bridge);
     this._vue = new Vue();
 
+    bridge.trackServer(this._rootUrl);
     this._metaTree = new MetaTree(this._rootUrl, bridge);
-    Object.defineProperty(this, 'meta', {
-      value: this._metaTree.root, writable: false, configurable: false, enumerable: false
-    });
-
     this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher, classes);
-    Object.defineProperty(this, 'root', {
-      value: this._tree.root, writable: false, configurable: false, enumerable: false
-    });
   }
+
+  get meta() {return this._metaTree.root;}
+  get root() {return this._tree.root;}
 
   destroy() {
     this._vue.$destroy();
@@ -59,15 +56,17 @@ export default class Truss {
   newKey() {return this._keyGenerator.generateUniqueKey(this.now);}
 
   authenticate(token) {
-    return this._dispatcher.execute('auth', new Reference(this._tree, '/'), () => {
+    return this._dispatcher.execute('auth', 'authenticate', new Reference(this._tree, '/'), () => {
       return bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
     });
   }
 
   unauthenticate() {
-    return this._dispatcher.execute('auth', new Reference(this._tree, '/'), () => {
-      return bridge.unauth(this._rootUrl);
-    });
+    return this._dispatcher.execute(
+      'auth', 'unauthenticate', new Reference(this._tree, '/'), () => {
+        return bridge.unauth(this._rootUrl);
+      }
+    );
   }
 
   intercept(actionType, callbacks) {
@@ -120,7 +119,7 @@ export default class Truss {
         callbackFn(newValue, oldValue);
         angularCompatibility.digest();
       }
-    }, {immediate: true, deep: options.deep});
+    }, {immediate: true, deep: options && options.deep});
 
     return unwatch;
   }

@@ -20,7 +20,6 @@ export default class MetaTree {
       this._vue.$watch('$data', angularCompatibility.digest, {deep: true});
     }
 
-    bridge.trackAuth(rootUrl);
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
     this._connectInfoProperty('serverTimeOffset', 'timeOffset');

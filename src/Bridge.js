@@ -2,7 +2,6 @@ import {unescapeKey} from './utils.js';
 
 // jshint browser:true
 
-let bridge;
 const MIN_WORKER_VERSION = '0.4.0';
 
 
@@ -59,7 +58,7 @@ export default class Bridge {
     setInterval(() => {this._send({msg: 'ping'});}, 60 * 1000);
   }
 
-  static init(webWorker) {
+  init(webWorker) {
     const items = [];
     try {
       const storage = window.localStorage || window.sessionStorage;
@@ -87,11 +86,6 @@ export default class Bridge {
       }
       return response;
     });
-  }
-
-  static get instance() {
-    if (!bridge) throw new Error('No web worker connected, please call Truss.connectWorker first');
-    return bridge;
   }
 
   suspend(suspended) {

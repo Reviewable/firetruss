@@ -8,6 +8,7 @@ let bareDigest = function() {
   earlyDigestPending = true;
 };
 
+
 const angularProxy = {
   active: typeof window !== 'undefined' && window.angular,
   debounceDigest(wait) {
@@ -18,13 +19,15 @@ const angularProxy = {
     }
   }
 };
-['digest', 'defineModule'].forEach(method => {angularProxy[method] = noop;});
+['digest', 'watch', 'defineModule'].forEach(method => {angularProxy[method] = noop;});
 
 if (angularProxy.active) {
   angularProxy.digest = bareDigest;
+  angularProxy.watch = function() {throw new Error('Angular watch proxy not yet initialized');};
   window.angular.module('firetruss', []).run(['$rootScope', function($rootScope) {
     bareDigest = $rootScope.$evalAsync.bind($rootScope);
     if (earlyDigestPending) bareDigest();
+    angularProxy.watch = $rootScope.$watch.bind($rootScope);
   }]);
   angularProxy.defineModule = function(Truss) {
     window.angular.module('firetruss').constant('Truss', Truss);

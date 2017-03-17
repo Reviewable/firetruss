@@ -1,7 +1,7 @@
 import angularCompatibility from './angularCompatibility.js';
 import Coupler from './Coupler.js';
 import Modeler from './Modeler.js';
-import {escapeKey, unescapeKey, SERVER_TIMESTAMP} from './utils.js';
+import {escapeKey, unescapeKey, joinPath, SERVER_TIMESTAMP} from './utils.js';
 
 import _ from 'lodash';
 import Vue from 'vue';
@@ -197,7 +197,7 @@ export default class Tree {
     // TODO: correctly apply local writes that impact queries.  Currently, a local write will update
     // any objects currently selected by a query, but won't add or remove results.
     this._writeSerial++;
-    this._localWriteTimestamp = this._truss.now();
+    this._localWriteTimestamp = this._truss.now;
     _.each(values, (value, path) => {
       const coupledDescendantPaths = this._coupler.findCoupledDescendantPaths(path);
       if (_.isEmpty(coupledDescendantPaths)) return;
@@ -497,16 +497,17 @@ export default class Tree {
       Vue.set(object, key, value);
       descriptor = Object.getOwnPropertyDescriptor(object, key);
       Object.defineProperty(object, key, {
-        get: descriptor.get,
-        set: function(newValue) {
-          if (!this._firebasePropertyEditAllowed) {
-            throw new Error(`Firebase data cannot be mutated directly: ${key}`);
-          }
-          descriptor.set.call(this, newValue);
-        },
+        get: descriptor.get, set: this._overwriteFirebaseProperty.bind(this, descriptor, key),
         configurable: true, enumerable: true
       });
     }
+  }
+
+  _overwriteFirebaseProperty(descriptor, key, newValue) {
+    if (!this._firebasePropertyEditAllowed) {
+      throw new Error(`Firebase data cannot be mutated directly: ${key}`);
+    }
+    descriptor.set.call(this, newValue);
   }
 
   _deleteFirebaseProperty(object, key) {
@@ -517,14 +518,7 @@ export default class Tree {
   }
 
   checkVueObject(object, path) {
-    for (const key of Object.getOwnPropertyNames(object)) {
-      const descriptor = Object.getOwnPropertyDescriptor(object, key);
-      if ('value' in descriptor || !descriptor.get || !descriptor.set) {
-        throw new Error(`Firetruss object at ${path} has a rogue property: ${key}`);
-      }
-      const value = object[key];
-      if (_.isObject(value)) this.checkVueObject(value, joinPath(path, escapeKey(key)));
-    }
+    this._modeler.checkVueObject(object, path);
   }
 
   static get computedPropertyStats() {
@@ -534,16 +528,6 @@ export default class Tree {
 
 
 function throwReadOnlyError() {throw new Error('Read-only property');}
-
-export function joinPath() {
-  const segments = [];
-  for (const segment of arguments) {
-    if (segment.charAt(0) === '/') segments.splice(0, segments.length);
-    segments.push(segment);
-  }
-  if (segments[0] === '/') segments[0] = '';
-  return segments.join('/');
-}
 
 export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativizePaths) {
   // First, check all paths for correctness and absolutize them, since there could be a mix of
