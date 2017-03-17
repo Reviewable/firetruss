@@ -29,6 +29,7 @@
     "grunt": "^1.0.0",
     "grunt-contrib-clean": "^1.0.0",
     "grunt-contrib-uglify": "^2.0.0",
+    "grunt-contrib-watch": "^1.0.0",
     "grunt-git": "^1.0.1",
     "grunt-release": "^0.14.0",
     "grunt-rollup": "^1.0.1",

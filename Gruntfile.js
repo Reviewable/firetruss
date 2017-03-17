@@ -100,6 +100,14 @@ module.exports = function(grunt) {
       }
     },
 
+    watch: {
+      dev: {
+        files: ['src/**/*.js'],
+        tasks: ['default'],
+        options: {spawn: false}
+      }
+    },
+
     release: {
       options: {
         additionalFiles: ['bower.json'],
