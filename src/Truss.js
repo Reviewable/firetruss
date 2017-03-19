@@ -160,7 +160,6 @@ export default class Truss {
   }
 
   static get worker() {return workerFunctions;}
-
   static preExpose(functionName) {
     Truss.worker[functionName] = bridge.bindExposedFunction(functionName);
   }
@@ -178,6 +177,8 @@ export default class Truss {
 
   static escapeKey(key) {return escapeKey(key);}
   static unescapeKey(escapedKey) {return unescapeKey(escapedKey);}
+
+  static enableLogging(fn) {return bridge.enableLogging(fn);}
 
   // Duplicate static constants on instance for convenience.
   get SERVER_TIMESTAMP() {return Truss.SERVER_TIMESTAMP;}

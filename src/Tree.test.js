@@ -1,7 +1,7 @@
 import test from 'ava';
 import td from 'testdouble';
 
-import Tree, {joinPath, checkUpdateHasOnlyDescendantsWithNoOverlap} from './Tree.js';
+import Tree, {checkUpdateHasOnlyDescendantsWithNoOverlap} from './Tree.js';
 import Bridge from './Bridge.js';
 import Dispatcher from './Dispatcher.js';
 
@@ -19,12 +19,6 @@ test.beforeEach(t => {
 
 test.afterEach(t => {
   t.context.tree.destroy();
-});
-
-test('joinPath', t => {
-  t.is(joinPath('/foo', 'bar'), '/foo/bar');
-  t.is(joinPath('/', 'foo/bar', 'baz'), '/foo/bar/baz');
-  t.is(joinPath('/foo', '/bar'), '/bar');
 });
 
 test('checkUpdateHasOnlyDescendantsWithNoOverlap', t => {

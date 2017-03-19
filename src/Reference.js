@@ -57,10 +57,13 @@ export class Handle {
         for (const key of arg) {
           const subRef =
             new Reference(this._tree, `${subPath}/${escapeKey(key)}`, this._annotations);
-          mapping[key] = subRef.children.apply(subRef, rest);
+          const subMapping = subRef.children.apply(subRef, rest);
+          if (subMapping) mapping[key] = subMapping;
         }
+        if (_.isEmpty(mapping)) return;
         return mapping;
       } else {
+        if (arg === undefined || arg === null) return;
         escapedKeys.push(escapeKey(arg));
       }
     }

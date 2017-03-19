@@ -81,8 +81,8 @@ const maxNumPathMatchers = 1000;
 class PathMatcher {
   constructor(pattern) {
     this.variables = [];
-    const prefixMatch = _.endsWith('/$*');
-    if (prefixMatch) pattern = pattern.slice(-3);
+    const prefixMatch = _.endsWith(pattern, '/$*');
+    if (prefixMatch) pattern = pattern.slice(0, -3);
     const pathTemplate = pattern.replace(/\/\$[^\/]*/g, match => {
       if (match.length > 1) this.variables.push(match.slice(1));
       return '\u0001';
@@ -178,6 +178,7 @@ class Bridge {
     this._suspended = false;
     this._servers = {};
     this._callbacks = {};
+    this._log = _.noop;
     this._simulatedTokenGenerator = null;
     this._maxSimulationDuration = 5000;
     this._simulatedCallFilter = null;
@@ -238,6 +239,15 @@ class Bridge {
     this._simulatedCallFilter = callFilter || function() {return true;};
   }
 
+  enableLogging(fn) {
+    if (fn) {
+      if (fn === true) fn = console.log.bind(console);
+      this._log = fn;
+    } else {
+      this._log = _.noop;
+    }
+  }
+
   _send(message) {
     message.id = ++this._idCounter;
     let promise;
@@ -257,6 +267,7 @@ class Bridge {
     if (!this._outboundMessages.length && !this._suspended) {
       Promise.resolve().then(this._flushMessageQueue);
     }
+    this._log('send:', message);
     this._outboundMessages.push(message);
     return promise;
   }
@@ -276,6 +287,7 @@ class Bridge {
 
   _receiveMessages(messages) {
     for (const message of messages) {
+      this._log('recv:', message);
       const fn = this[message.msg];
       if (typeof fn !== 'function') throw new Error('Unknown message: ' + message.msg);
       fn.call(this, message);
@@ -609,10 +621,13 @@ class Handle {
         for (const key of arg) {
           const subRef =
             new Reference(this._tree, `${subPath}/${escapeKey(key)}`, this._annotations);
-          mapping[key] = subRef.children.apply(subRef, rest);
+          const subMapping = subRef.children.apply(subRef, rest);
+          if (subMapping) mapping[key] = subMapping;
         }
+        if (_.isEmpty(mapping)) return;
         return mapping;
       } else {
+        if (arg === undefined || arg === null) return;
         escapedKeys.push(escapeKey(arg));
       }
     }
@@ -790,6 +805,7 @@ class Connector {
     this._unlinkScopeProperties();
     _.each(this._angularUnwatches, unwatch => {unwatch();});
     _.each(this._connections, (descriptor, key) => {this._disconnect(key);});
+    this._vue.$destroy();
   }
 
   _linkScopeProperties() {
@@ -800,7 +816,7 @@ class Connector {
       }
     }
     Object.defineProperties(this._scope, _.mapValues(this._connections, (descriptor, key) => ({
-      configurable: true, enumerable: true, get: () => this._vue.$data[key]
+      configurable: true, enumerable: true, get: () => this._vue[key]
     })));
   }
 
@@ -814,6 +830,8 @@ class Connector {
   _bindComputedConnection(key, fn) {
     const getter = this._computeConnection.bind(this, fn);
     const update = this._updateComputedConnection.bind(this, key, fn);
+    // Use this._vue.$watch instead of truss.watch here so that we can disable the immediate
+    // callback if we'll get one from Angular anyway.
     this._vue.$watch(getter, update, {immediate: !angularProxy.active, deep: true});
     if (angularProxy.active) {
       if (!this._angularUnwatches) this._angularUnwatches = [];
@@ -870,22 +888,26 @@ class Connector {
       const subConnector = this._subConnectors[key] =
         new Connector(subScope, descriptor, this._tree, this._method, subRefs);
       if (this._scope) {
-        const unwatch = this._vue.$watch(() => subConnector.ready, subReady => {
-          if (!subReady) return;
-          unwatch();
-          Vue.set(this._scope, key, subScope);
-          angularProxy.digest();
-        }, {immediate: true});
+        // Use a truss.watch here instead of this._vue.$watch so that the "immediate" execution
+        // actually takes place after we've captured the unwatch function, in case the subConnector
+        // is ready immediately.
+        const unwatch = this._disconnects[key] = this._tree.truss.watch(
+          () => subConnector.ready,
+          subReady => {
+            if (!subReady) return;
+            unwatch();
+            delete this._disconnects[key];
+            Vue.set(this._vue, key, subScope);
+            angularProxy.digest();
+          }
+        );
       }
     }
   }
 
   _disconnect(key) {
     delete this._refs[key];
-    if (this._scope) {
-      Vue.delete(this._scope, key);
-      angularProxy.digest();
-    }
+    if (this._scope) this._updateScopeRef(key, undefined);
     if (_.has(this._subConnectors, key)) {
       this._subConnectors[key].destroy();
       delete this._subConnectors[key];
@@ -896,19 +918,19 @@ class Connector {
   }
 
   _updateScopeRef(key, value) {
-    if (this._scope[key] !== value) {
-      Vue.set(this._scope, key, value);
+    if (this._vue[key] !== value) {
+      Vue.set(this._vue, key, value);
       angularProxy.digest();
     }
   }
 
   _updateScopeQuery(key, childKeys) {
     let changed = false;
-    if (!this._scope[key]) {
-      Vue.set(this._scope, key, {});
+    if (!this._vue[key]) {
+      Vue.set(this._vue, key, {});
       changed = true;
     }
-    const subScope = this._scope[key];
+    const subScope = this._vue[key];
     for (const childKey in subScope) {
       if (!subScope.hasOwnProperty(childKey)) continue;
       if (!_.contains(childKeys, childKey)) {
@@ -1048,7 +1070,7 @@ class Dispatcher {
 
   _addCallback(stage, interceptKey, callback) {
     if (!callback) return;
-    const key = this._getCallbacksKey(interceptKey, stage);
+    const key = this._getCallbacksKey(stage, interceptKey);
     const wrappedCallback = wrapPromiseCallback(callback);
     (this._callbacks[key] || (this._callbacks[key] = [])).push(wrappedCallback);
     return wrappedCallback;
@@ -1056,7 +1078,7 @@ class Dispatcher {
 
   _removeCallback(stage, interceptKey, wrappedCallback) {
     if (!wrappedCallback) return;
-    const key = this._getCallbacksKey(interceptKey, stage);
+    const key = this._getCallbacksKey(stage, interceptKey);
     if (this._callbacks[key]) _.pull(this._callbacks[key], wrappedCallback);
   }
 
@@ -1112,10 +1134,15 @@ class Dispatcher {
 
   retry(operation, error) {
     operation._incrementTries();
+    operation._error = error;
     return Promise.all(_.map(
       this._getCallbacks('onError', operation.type, operation.method),
       onError => onError(operation, error)
-    )).then(results => _.some(results));
+    )).then(results => {
+      const retrying = _.some(results);
+      if (retrying) delete operation._error;
+      return retrying;
+    });
   }
 
   _retryOrEnd(operation, error) {
@@ -1147,9 +1174,9 @@ class Dispatcher {
       const onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
       return this._bridge.probeError(operation.error).then(() => {
         if (onFailureCallbacks) {
-          setTimeout(0, () => {
+          setTimeout(() => {
             _.each(onFailureCallbacks, onFailure => onFailure(operation));
-          });
+          }, 0);
         }
         return Promise.reject(operation.error);
       });
@@ -1237,7 +1264,7 @@ class MetaTree {
   }
 
   _connectInfoProperty(property, attribute) {
-    const propertyUrl = `${this._rootUrl}/.info/{property}`;
+    const propertyUrl = `${this._rootUrl}/.info/${property}`;
     this._bridge.on(propertyUrl, propertyUrl, null, 'value', snap => {
       this.root[attribute] = snap.value;
     });
@@ -1966,7 +1993,8 @@ class Tree {
     let unwatch;
     if (valueCallback) {
       const segments = _(ref.path).split('/').map(segment => unescapeKey(segment)).value();
-      unwatch = this._vue.$watch(this.getObject.bind(segments), valueCallback);
+      unwatch = this._vue.$watch(
+        this.getObject.bind(this, segments), valueCallback, {immediate: true});
     }
     operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
     this._dispatcher.begin(operation).then(() => {
@@ -2023,7 +2051,7 @@ class Tree {
     }
     this._applyLocalWrite(values, method === 'override');
     if (method === 'override') return Promise.resolve();
-    const url = this.rootUrl + this._extractCommonPathPrefix(values);
+    const url = this._rootUrl + this._extractCommonPathPrefix(values);
     return this._dispatcher.execute('write', method, ref, () => {
       if (numValues === 1) {
         return this._bridge.set(url, values[''], this._writeSerial);
@@ -2108,7 +2136,7 @@ class Tree {
   _extractCommonPathPrefix(values) {
     let prefixSegments;
     _.each(values, (value, path) => {
-      const segments = path === '/' ? [] : path.split('/');
+      const segments = path === '/' ? [''] : path.split('/');
       if (prefixSegments) {
         let firstMismatchIndex = 0;
         const maxIndex = Math.min(prefixSegments.length, segments.length);
@@ -2122,7 +2150,7 @@ class Tree {
         prefixSegments = segments;
       }
     });
-    const pathPrefix = '/' + prefixSegments.join('/');
+    const pathPrefix = prefixSegments.length === 1 ? '/' : prefixSegments.join('/');
     _.each(_.keys(values), key => {
       values[key.slice(pathPrefix.length + 1)] = values[key];
       delete values[key];
@@ -2264,9 +2292,10 @@ class Tree {
   _prune(path, lockedDescendantPaths, remoteWrite) {
     lockedDescendantPaths = lockedDescendantPaths || {};
     const object = this.getObject(path);
-    if (!object) return;
+    if (object === undefined) return;
     if (remoteWrite && this._avoidLocalWritePaths(path, lockedDescendantPaths)) return;
-    if (!_.isEmpty(lockedDescendantPaths) || !this._pruneAncestors(object)) {
+    if (!(_.isEmpty(lockedDescendantPaths) && this._pruneAncestors(path, object)) &&
+        _.isObject(object)) {
       // The target object is a placeholder, and all ancestors are placeholders or otherwise needed
       // as well, so we can't delete it.  Instead, dive into its descendants to delete what we can.
       this._pruneDescendants(object, lockedDescendantPaths);
@@ -2291,20 +2320,28 @@ class Tree {
     }
   }
 
-  _pruneAncestors(targetObject) {
+  _pruneAncestors(targetPath, targetObject) {
     // Destroy the child (unless it's a placeholder that's still needed) and any ancestors that
     // are no longer needed to keep this child rooted, and have no other reason to exist.
     let deleted = false;
     let object = targetObject;
+    // The target object may be a primitive, in which case it won't have $parent and $key
+    // properties.  In that case, use the target path to figure those out instead.  Note that all
+    // ancestors of the target object will necessarily not be primitives and will have those
+    // properties.
+    const targetSegments = _(targetPath).split('/').map(unescapeKey).value();
     while (object && object !== this.root) {
+      const parent =
+        object.$parent || object === targetObject && this.getObject(targetSegments.slice(0, -1));
       if (!this._modeler.isPlaceholder(object.$path)) {
         const ghostObjects = deleted ? null : [targetObject];
         if (!this._holdsConcreteData(object, ghostObjects)) {
           deleted = true;
-          this._deleteFirebaseProperty(object.$parent, object.$key);
+          this._deleteFirebaseProperty(
+            parent, object.$key || object === targetObject && _.last(targetSegments));
         }
       }
-      object = object.$parent;
+      object = parent;
     }
     return deleted;
   }
@@ -2326,12 +2363,10 @@ class Tree {
         shouldDelete = false;
         valueLocked = true;
       } else if (value.$truss) {
-        if (this._modeler.isPlaceholder(value.$path)) {
+        const placeholder = this._modeler.isPlaceholder(value.$path);
+        if (placeholder || _.has(lockedDescendantPaths, value.$path)) {
           valueLocked = this._pruneDescendants(value, lockedDescendantPaths);
-          shouldDelete = false;
-        } else if (_.has(lockedDescendantPaths, value.$path)) {
-          valueLocked = this._pruneDescendants(value);
-          shouldDelete = !valueLocked;
+          shouldDelete = !placeholder && !valueLocked;
         }
       }
       if (shouldDelete) this._deleteFirebaseProperty(object, key);
@@ -2607,7 +2642,6 @@ class Truss {
   }
 
   static get worker() {return workerFunctions;}
-
   static preExpose(functionName) {
     Truss.worker[functionName] = bridge.bindExposedFunction(functionName);
   }
@@ -2625,6 +2659,8 @@ class Truss {
 
   static escapeKey(key) {return escapeKey(key);}
   static unescapeKey(escapedKey) {return unescapeKey(escapedKey);}
+
+  static enableLogging(fn) {return bridge.enableLogging(fn);}
 
   // Duplicate static constants on instance for convenience.
   get SERVER_TIMESTAMP() {return Truss.SERVER_TIMESTAMP;}

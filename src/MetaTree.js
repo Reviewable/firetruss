@@ -41,7 +41,7 @@ export default class MetaTree {
   }
 
   _connectInfoProperty(property, attribute) {
-    const propertyUrl = `${this._rootUrl}/.info/{property}`;
+    const propertyUrl = `${this._rootUrl}/.info/${property}`;
     this._bridge.on(propertyUrl, propertyUrl, null, 'value', snap => {
       this.root[attribute] = snap.value;
     });

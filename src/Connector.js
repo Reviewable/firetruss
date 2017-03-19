@@ -49,6 +49,7 @@ export default class Connector {
     this._unlinkScopeProperties();
     _.each(this._angularUnwatches, unwatch => {unwatch();});
     _.each(this._connections, (descriptor, key) => {this._disconnect(key);});
+    this._vue.$destroy();
   }
 
   _linkScopeProperties() {
@@ -59,7 +60,7 @@ export default class Connector {
       }
     }
     Object.defineProperties(this._scope, _.mapValues(this._connections, (descriptor, key) => ({
-      configurable: true, enumerable: true, get: () => this._vue.$data[key]
+      configurable: true, enumerable: true, get: () => this._vue[key]
     })));
   }
 
@@ -73,6 +74,8 @@ export default class Connector {
   _bindComputedConnection(key, fn) {
     const getter = this._computeConnection.bind(this, fn);
     const update = this._updateComputedConnection.bind(this, key, fn);
+    // Use this._vue.$watch instead of truss.watch here so that we can disable the immediate
+    // callback if we'll get one from Angular anyway.
     this._vue.$watch(getter, update, {immediate: !angular.active, deep: true});
     if (angular.active) {
       if (!this._angularUnwatches) this._angularUnwatches = [];
@@ -129,22 +132,26 @@ export default class Connector {
       const subConnector = this._subConnectors[key] =
         new Connector(subScope, descriptor, this._tree, this._method, subRefs);
       if (this._scope) {
-        const unwatch = this._vue.$watch(() => subConnector.ready, subReady => {
-          if (!subReady) return;
-          unwatch();
-          Vue.set(this._scope, key, subScope);
-          angular.digest();
-        }, {immediate: true});
+        // Use a truss.watch here instead of this._vue.$watch so that the "immediate" execution
+        // actually takes place after we've captured the unwatch function, in case the subConnector
+        // is ready immediately.
+        const unwatch = this._disconnects[key] = this._tree.truss.watch(
+          () => subConnector.ready,
+          subReady => {
+            if (!subReady) return;
+            unwatch();
+            delete this._disconnects[key];
+            Vue.set(this._vue, key, subScope);
+            angular.digest();
+          }
+        );
       }
     }
   }
 
   _disconnect(key) {
     delete this._refs[key];
-    if (this._scope) {
-      Vue.delete(this._scope, key);
-      angular.digest();
-    }
+    if (this._scope) this._updateScopeRef(key, undefined);
     if (_.has(this._subConnectors, key)) {
       this._subConnectors[key].destroy();
       delete this._subConnectors[key];
@@ -155,19 +162,19 @@ export default class Connector {
   }
 
   _updateScopeRef(key, value) {
-    if (this._scope[key] !== value) {
-      Vue.set(this._scope, key, value);
+    if (this._vue[key] !== value) {
+      Vue.set(this._vue, key, value);
       angular.digest();
     }
   }
 
   _updateScopeQuery(key, childKeys) {
     let changed = false;
-    if (!this._scope[key]) {
-      Vue.set(this._scope, key, {});
+    if (!this._vue[key]) {
+      Vue.set(this._vue, key, {});
       changed = true;
     }
-    const subScope = this._scope[key];
+    const subScope = this._vue[key];
     for (const childKey in subScope) {
       if (!subScope.hasOwnProperty(childKey)) continue;
       if (!_.contains(childKeys, childKey)) {

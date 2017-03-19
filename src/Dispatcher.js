@@ -114,7 +114,7 @@ export default class Dispatcher {
 
   _addCallback(stage, interceptKey, callback) {
     if (!callback) return;
-    const key = this._getCallbacksKey(interceptKey, stage);
+    const key = this._getCallbacksKey(stage, interceptKey);
     const wrappedCallback = wrapPromiseCallback(callback);
     (this._callbacks[key] || (this._callbacks[key] = [])).push(wrappedCallback);
     return wrappedCallback;
@@ -122,7 +122,7 @@ export default class Dispatcher {
 
   _removeCallback(stage, interceptKey, wrappedCallback) {
     if (!wrappedCallback) return;
-    const key = this._getCallbacksKey(interceptKey, stage);
+    const key = this._getCallbacksKey(stage, interceptKey);
     if (this._callbacks[key]) _.pull(this._callbacks[key], wrappedCallback);
   }
 
@@ -178,10 +178,15 @@ export default class Dispatcher {
 
   retry(operation, error) {
     operation._incrementTries();
+    operation._error = error;
     return Promise.all(_.map(
       this._getCallbacks('onError', operation.type, operation.method),
       onError => onError(operation, error)
-    )).then(results => _.some(results));
+    )).then(results => {
+      const retrying = _.some(results);
+      if (retrying) delete operation._error;
+      return retrying;
+    });
   }
 
   _retryOrEnd(operation, error) {
@@ -213,9 +218,9 @@ export default class Dispatcher {
       const onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
       return this._bridge.probeError(operation.error).then(() => {
         if (onFailureCallbacks) {
-          setTimeout(0, () => {
+          setTimeout(() => {
             _.each(onFailureCallbacks, onFailure => onFailure(operation));
-          });
+          }, 0);
         }
         return Promise.reject(operation.error);
       });

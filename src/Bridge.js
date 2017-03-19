@@ -1,4 +1,5 @@
 import {unescapeKey} from './utils.js';
+import _ from 'lodash';
 
 // jshint browser:true
 
@@ -45,6 +46,7 @@ export default class Bridge {
     this._suspended = false;
     this._servers = {};
     this._callbacks = {};
+    this._log = _.noop;
     this._simulatedTokenGenerator = null;
     this._maxSimulationDuration = 5000;
     this._simulatedCallFilter = null;
@@ -105,6 +107,15 @@ export default class Bridge {
     this._simulatedCallFilter = callFilter || function() {return true;};
   }
 
+  enableLogging(fn) {
+    if (fn) {
+      if (fn === true) fn = console.log.bind(console);
+      this._log = fn;
+    } else {
+      this._log = _.noop;
+    }
+  }
+
   _send(message) {
     message.id = ++this._idCounter;
     let promise;
@@ -124,6 +135,7 @@ export default class Bridge {
     if (!this._outboundMessages.length && !this._suspended) {
       Promise.resolve().then(this._flushMessageQueue);
     }
+    this._log('send:', message);
     this._outboundMessages.push(message);
     return promise;
   }
@@ -143,6 +155,7 @@ export default class Bridge {
 
   _receiveMessages(messages) {
     for (const message of messages) {
+      this._log('recv:', message);
       const fn = this[message.msg];
       if (typeof fn !== 'function') throw new Error('Unknown message: ' + message.msg);
       fn.call(this, message);

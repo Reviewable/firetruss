@@ -87,7 +87,8 @@ export default class Tree {
     let unwatch;
     if (valueCallback) {
       const segments = _(ref.path).split('/').map(segment => unescapeKey(segment)).value();
-      unwatch = this._vue.$watch(this.getObject.bind(segments), valueCallback);
+      unwatch = this._vue.$watch(
+        this.getObject.bind(this, segments), valueCallback, {immediate: true});
     }
     operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
     this._dispatcher.begin(operation).then(() => {
@@ -144,7 +145,7 @@ export default class Tree {
     }
     this._applyLocalWrite(values, method === 'override');
     if (method === 'override') return Promise.resolve();
-    const url = this.rootUrl + this._extractCommonPathPrefix(values);
+    const url = this._rootUrl + this._extractCommonPathPrefix(values);
     return this._dispatcher.execute('write', method, ref, () => {
       if (numValues === 1) {
         return this._bridge.set(url, values[''], this._writeSerial);
@@ -229,7 +230,7 @@ export default class Tree {
   _extractCommonPathPrefix(values) {
     let prefixSegments;
     _.each(values, (value, path) => {
-      const segments = path === '/' ? [] : path.split('/');
+      const segments = path === '/' ? [''] : path.split('/');
       if (prefixSegments) {
         let firstMismatchIndex = 0;
         const maxIndex = Math.min(prefixSegments.length, segments.length);
@@ -243,7 +244,7 @@ export default class Tree {
         prefixSegments = segments;
       }
     });
-    const pathPrefix = '/' + prefixSegments.join('/');
+    const pathPrefix = prefixSegments.length === 1 ? '/' : prefixSegments.join('/');
     _.each(_.keys(values), key => {
       values[key.slice(pathPrefix.length + 1)] = values[key];
       delete values[key];
@@ -385,9 +386,10 @@ export default class Tree {
   _prune(path, lockedDescendantPaths, remoteWrite) {
     lockedDescendantPaths = lockedDescendantPaths || {};
     const object = this.getObject(path);
-    if (!object) return;
+    if (object === undefined) return;
     if (remoteWrite && this._avoidLocalWritePaths(path, lockedDescendantPaths)) return;
-    if (!_.isEmpty(lockedDescendantPaths) || !this._pruneAncestors(object)) {
+    if (!(_.isEmpty(lockedDescendantPaths) && this._pruneAncestors(path, object)) &&
+        _.isObject(object)) {
       // The target object is a placeholder, and all ancestors are placeholders or otherwise needed
       // as well, so we can't delete it.  Instead, dive into its descendants to delete what we can.
       this._pruneDescendants(object, lockedDescendantPaths);
@@ -412,20 +414,28 @@ export default class Tree {
     }
   }
 
-  _pruneAncestors(targetObject) {
+  _pruneAncestors(targetPath, targetObject) {
     // Destroy the child (unless it's a placeholder that's still needed) and any ancestors that
     // are no longer needed to keep this child rooted, and have no other reason to exist.
     let deleted = false;
     let object = targetObject;
+    // The target object may be a primitive, in which case it won't have $parent and $key
+    // properties.  In that case, use the target path to figure those out instead.  Note that all
+    // ancestors of the target object will necessarily not be primitives and will have those
+    // properties.
+    const targetSegments = _(targetPath).split('/').map(unescapeKey).value();
     while (object && object !== this.root) {
+      const parent =
+        object.$parent || object === targetObject && this.getObject(targetSegments.slice(0, -1));
       if (!this._modeler.isPlaceholder(object.$path)) {
         const ghostObjects = deleted ? null : [targetObject];
         if (!this._holdsConcreteData(object, ghostObjects)) {
           deleted = true;
-          this._deleteFirebaseProperty(object.$parent, object.$key);
+          this._deleteFirebaseProperty(
+            parent, object.$key || object === targetObject && _.last(targetSegments));
         }
       }
-      object = object.$parent;
+      object = parent;
     }
     return deleted;
   }
@@ -447,12 +457,10 @@ export default class Tree {
         shouldDelete = false;
         valueLocked = true;
       } else if (value.$truss) {
-        if (this._modeler.isPlaceholder(value.$path)) {
+        const placeholder = this._modeler.isPlaceholder(value.$path);
+        if (placeholder || _.has(lockedDescendantPaths, value.$path)) {
           valueLocked = this._pruneDescendants(value, lockedDescendantPaths);
-          shouldDelete = false;
-        } else if (_.has(lockedDescendantPaths, value.$path)) {
-          valueLocked = this._pruneDescendants(value);
-          shouldDelete = !valueLocked;
+          shouldDelete = !placeholder && !valueLocked;
         }
       }
       if (shouldDelete) this._deleteFirebaseProperty(object, key);

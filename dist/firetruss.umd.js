@@ -89,8 +89,8 @@
 	  var this$1 = this;
 
 	  this.variables = [];
-	  var prefixMatch = _.endsWith('/$*');
-	  if (prefixMatch) { pattern = pattern.slice(-3); }
+	  var prefixMatch = _.endsWith(pattern, '/$*');
+	  if (prefixMatch) { pattern = pattern.slice(0, -3); }
 	  var pathTemplate = pattern.replace(/\/\$[^\/]*/g, function (match) {
 	    if (match.length > 1) { this$1.variables.push(match.slice(1)); }
 	    return '\u0001';
@@ -195,6 +195,7 @@
 	  this._suspended = false;
 	  this._servers = {};
 	  this._callbacks = {};
+	  this._log = _.noop;
 	  this._simulatedTokenGenerator = null;
 	  this._maxSimulationDuration = 5000;
 	  this._simulatedCallFilter = null;
@@ -255,6 +256,15 @@
 	  this._simulatedCallFilter = callFilter || function() {return true;};
 	};
 
+	Bridge.prototype.enableLogging = function enableLogging (fn) {
+	  if (fn) {
+	    if (fn === true) { fn = console.log.bind(console); }
+	    this._log = fn;
+	  } else {
+	    this._log = _.noop;
+	  }
+	};
+
 	Bridge.prototype._send = function _send (message) {
 	    var this$1 = this;
 
@@ -276,6 +286,7 @@
 	  if (!this._outboundMessages.length && !this._suspended) {
 	    Promise.resolve().then(this._flushMessageQueue);
 	  }
+	  this._log('send:', message);
 	  this._outboundMessages.push(message);
 	  return promise;
 	};
@@ -299,7 +310,8 @@
 	  for (var i = 0, list = messages; i < list.length; i += 1) {
 	    var message = list[i];
 
-	      var fn = this$1[message.msg];
+	      this$1._log('recv:', message);
+	    var fn = this$1[message.msg];
 	    if (typeof fn !== 'function') { throw new Error('Unknown message: ' + message.msg); }
 	    fn.call(this$1, message);
 	  }
@@ -660,10 +672,13 @@
 
 	          var subRef =
 	          new Reference(this$1._tree, (subPath + "/" + (escapeKey(key))), this$1._annotations);
-	        mapping[key] = subRef.children.apply(subRef, rest);
+	        var subMapping = subRef.children.apply(subRef, rest);
+	        if (subMapping) { mapping[key] = subMapping; }
 	      }
+	      if (_.isEmpty(mapping)) { return; }
 	      return mapping;
 	    } else {
+	      if (arg === undefined || arg === null) { return; }
 	      escapedKeys.push(escapeKey(arg));
 	    }
 	  }
@@ -869,6 +884,7 @@
 	  this._unlinkScopeProperties();
 	  _.each(this._angularUnwatches, function (unwatch) {unwatch();});
 	  _.each(this._connections, function (descriptor, key) {this$1._disconnect(key);});
+	  this._vue.$destroy();
 	};
 
 	Connector.prototype._linkScopeProperties = function _linkScopeProperties () {
@@ -881,7 +897,7 @@
 	    }
 	  }
 	  Object.defineProperties(this._scope, _.mapValues(this._connections, function (descriptor, key) { return ({
-	    configurable: true, enumerable: true, get: function () { return this$1._vue.$data[key]; }
+	    configurable: true, enumerable: true, get: function () { return this$1._vue[key]; }
 	  }); }));
 	};
 
@@ -897,6 +913,8 @@
 	Connector.prototype._bindComputedConnection = function _bindComputedConnection (key, fn) {
 	  var getter = this._computeConnection.bind(this, fn);
 	  var update = this._updateComputedConnection.bind(this, key, fn);
+	  // Use this._vue.$watch instead of truss.watch here so that we can disable the immediate
+	  // callback if we'll get one from Angular anyway.
 	  this._vue.$watch(getter, update, {immediate: !angularProxy.active, deep: true});
 	  if (angularProxy.active) {
 	    if (!this._angularUnwatches) { this._angularUnwatches = []; }
@@ -957,22 +975,26 @@
 	    var subConnector = this._subConnectors[key] =
 	      new Connector(subScope, descriptor, this._tree, this._method, subRefs);
 	    if (this._scope) {
-	      var unwatch = this._vue.$watch(function () { return subConnector.ready; }, function (subReady) {
-	        if (!subReady) { return; }
-	        unwatch();
-	        Vue.set(this$1._scope, key, subScope);
-	        angularProxy.digest();
-	      }, {immediate: true});
+	      // Use a truss.watch here instead of this._vue.$watch so that the "immediate" execution
+	      // actually takes place after we've captured the unwatch function, in case the subConnector
+	      // is ready immediately.
+	      var unwatch = this._disconnects[key] = this._tree.truss.watch(
+	        function () { return subConnector.ready; },
+	        function (subReady) {
+	          if (!subReady) { return; }
+	          unwatch();
+	          delete this$1._disconnects[key];
+	          Vue.set(this$1._vue, key, subScope);
+	          angularProxy.digest();
+	        }
+	      );
 	    }
 	  }
 	};
 
 	Connector.prototype._disconnect = function _disconnect (key) {
 	  delete this._refs[key];
-	  if (this._scope) {
-	    Vue.delete(this._scope, key);
-	    angularProxy.digest();
-	  }
+	  if (this._scope) { this._updateScopeRef(key, undefined); }
 	  if (_.has(this._subConnectors, key)) {
 	    this._subConnectors[key].destroy();
 	    delete this._subConnectors[key];
@@ -983,8 +1005,8 @@
 	};
 
 	Connector.prototype._updateScopeRef = function _updateScopeRef (key, value) {
-	  if (this._scope[key] !== value) {
-	    Vue.set(this._scope, key, value);
+	  if (this._vue[key] !== value) {
+	    Vue.set(this._vue, key, value);
 	    angularProxy.digest();
 	  }
 	};
@@ -993,11 +1015,11 @@
 	    var this$1 = this;
 
 	  var changed = false;
-	  if (!this._scope[key]) {
-	    Vue.set(this._scope, key, {});
+	  if (!this._vue[key]) {
+	    Vue.set(this._vue, key, {});
 	    changed = true;
 	  }
-	  var subScope = this._scope[key];
+	  var subScope = this._vue[key];
 	  for (var childKey in subScope) {
 	    if (!subScope.hasOwnProperty(childKey)) { continue; }
 	    if (!_.contains(childKeys, childKey)) {
@@ -1142,7 +1164,7 @@
 
 	Dispatcher.prototype._addCallback = function _addCallback (stage, interceptKey, callback) {
 	  if (!callback) { return; }
-	  var key = this._getCallbacksKey(interceptKey, stage);
+	  var key = this._getCallbacksKey(stage, interceptKey);
 	  var wrappedCallback = wrapPromiseCallback(callback);
 	  (this._callbacks[key] || (this._callbacks[key] = [])).push(wrappedCallback);
 	  return wrappedCallback;
@@ -1150,7 +1172,7 @@
 
 	Dispatcher.prototype._removeCallback = function _removeCallback (stage, interceptKey, wrappedCallback) {
 	  if (!wrappedCallback) { return; }
-	  var key = this._getCallbacksKey(interceptKey, stage);
+	  var key = this._getCallbacksKey(stage, interceptKey);
 	  if (this._callbacks[key]) { _.pull(this._callbacks[key], wrappedCallback); }
 	};
 
@@ -1212,10 +1234,15 @@
 
 	Dispatcher.prototype.retry = function retry (operation, error) {
 	  operation._incrementTries();
+	  operation._error = error;
 	  return Promise.all(_.map(
 	    this._getCallbacks('onError', operation.type, operation.method),
 	    function (onError) { return onError(operation, error); }
-	  )).then(function (results) { return _.some(results); });
+	  )).then(function (results) {
+	    var retrying = _.some(results);
+	    if (retrying) { delete operation._error; }
+	    return retrying;
+	  });
 	};
 
 	Dispatcher.prototype._retryOrEnd = function _retryOrEnd (operation, error) {
@@ -1251,9 +1278,9 @@
 	    var onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
 	    return this._bridge.probeError(operation.error).then(function () {
 	      if (onFailureCallbacks) {
-	        setTimeout(0, function () {
+	        setTimeout(function () {
 	          _.each(onFailureCallbacks, function (onFailure) { return onFailure(operation); });
-	        });
+	        }, 0);
 	      }
 	      return Promise.reject(operation.error);
 	    });
@@ -1345,7 +1372,7 @@
 	MetaTree.prototype._connectInfoProperty = function _connectInfoProperty (property, attribute) {
 	    var this$1 = this;
 
-	  var propertyUrl = (this._rootUrl) + "/.info/{property}";
+	  var propertyUrl = (this._rootUrl) + "/.info/" + property;
 	  this._bridge.on(propertyUrl, propertyUrl, null, 'value', function (snap) {
 	    this$1.root[attribute] = snap.value;
 	  });
@@ -2207,7 +2234,8 @@
 	  var unwatch;
 	  if (valueCallback) {
 	    var segments = _(ref.path).split('/').map(function (segment) { return unescapeKey(segment); }).value();
-	    unwatch = this._vue.$watch(this.getObject.bind(segments), valueCallback);
+	    unwatch = this._vue.$watch(
+	      this.getObject.bind(this, segments), valueCallback, {immediate: true});
 	  }
 	  operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
 	  this._dispatcher.begin(operation).then(function () {
@@ -2268,7 +2296,7 @@
 	  }
 	  this._applyLocalWrite(values, method === 'override');
 	  if (method === 'override') { return Promise.resolve(); }
-	  var url = this.rootUrl + this._extractCommonPathPrefix(values);
+	  var url = this._rootUrl + this._extractCommonPathPrefix(values);
 	  return this._dispatcher.execute('write', method, ref, function () {
 	    if (numValues === 1) {
 	      return this$1._bridge.set(url, values[''], this$1._writeSerial);
@@ -2362,7 +2390,7 @@
 	Tree.prototype._extractCommonPathPrefix = function _extractCommonPathPrefix (values) {
 	  var prefixSegments;
 	  _.each(values, function (value, path) {
-	    var segments = path === '/' ? [] : path.split('/');
+	    var segments = path === '/' ? [''] : path.split('/');
 	    if (prefixSegments) {
 	      var firstMismatchIndex = 0;
 	      var maxIndex = Math.min(prefixSegments.length, segments.length);
@@ -2376,7 +2404,7 @@
 	      prefixSegments = segments;
 	    }
 	  });
-	  var pathPrefix = '/' + prefixSegments.join('/');
+	  var pathPrefix = prefixSegments.length === 1 ? '/' : prefixSegments.join('/');
 	  _.each(_.keys(values), function (key) {
 	    values[key.slice(pathPrefix.length + 1)] = values[key];
 	    delete values[key];
@@ -2542,9 +2570,10 @@
 	Tree.prototype._prune = function _prune (path, lockedDescendantPaths, remoteWrite) {
 	  lockedDescendantPaths = lockedDescendantPaths || {};
 	  var object = this.getObject(path);
-	  if (!object) { return; }
+	  if (object === undefined) { return; }
 	  if (remoteWrite && this._avoidLocalWritePaths(path, lockedDescendantPaths)) { return; }
-	  if (!_.isEmpty(lockedDescendantPaths) || !this._pruneAncestors(object)) {
+	  if (!(_.isEmpty(lockedDescendantPaths) && this._pruneAncestors(path, object)) &&
+	      _.isObject(object)) {
 	    // The target object is a placeholder, and all ancestors are placeholders or otherwise needed
 	    // as well, so we can't delete it.Instead, dive into its descendants to delete what we can.
 	    this._pruneDescendants(object, lockedDescendantPaths);
@@ -2571,22 +2600,30 @@
 	  }
 	};
 
-	Tree.prototype._pruneAncestors = function _pruneAncestors (targetObject) {
+	Tree.prototype._pruneAncestors = function _pruneAncestors (targetPath, targetObject) {
 	    var this$1 = this;
 
 	  // Destroy the child (unless it's a placeholder that's still needed) and any ancestors that
 	  // are no longer needed to keep this child rooted, and have no other reason to exist.
 	  var deleted = false;
 	  var object = targetObject;
+	  // The target object may be a primitive, in which case it won't have $parent and $key
+	  // properties.In that case, use the target path to figure those out instead.Note that all
+	  // ancestors of the target object will necessarily not be primitives and will have those
+	  // properties.
+	  var targetSegments = _(targetPath).split('/').map(unescapeKey).value();
 	  while (object && object !== this.root) {
+	    var parent =
+	      object.$parent || object === targetObject && this$1.getObject(targetSegments.slice(0, -1));
 	    if (!this$1._modeler.isPlaceholder(object.$path)) {
 	      var ghostObjects = deleted ? null : [targetObject];
 	      if (!this$1._holdsConcreteData(object, ghostObjects)) {
 	        deleted = true;
-	        this$1._deleteFirebaseProperty(object.$parent, object.$key);
+	        this$1._deleteFirebaseProperty(
+	          parent, object.$key || object === targetObject && _.last(targetSegments));
 	      }
 	    }
-	    object = object.$parent;
+	    object = parent;
 	  }
 	  return deleted;
 	};
@@ -2612,12 +2649,10 @@
 	      shouldDelete = false;
 	      valueLocked = true;
 	    } else if (value.$truss) {
-	      if (this$1._modeler.isPlaceholder(value.$path)) {
+	      var placeholder = this$1._modeler.isPlaceholder(value.$path);
+	      if (placeholder || _.has(lockedDescendantPaths, value.$path)) {
 	        valueLocked = this$1._pruneDescendants(value, lockedDescendantPaths);
-	        shouldDelete = false;
-	      } else if (_.has(lockedDescendantPaths, value.$path)) {
-	        valueLocked = this$1._pruneDescendants(value);
-	        shouldDelete = !valueLocked;
+	        shouldDelete = !placeholder && !valueLocked;
 	      }
 	    }
 	    if (shouldDelete) { this$1._deleteFirebaseProperty(object, key); }
@@ -2905,7 +2940,6 @@
 	};
 
 	staticAccessors.worker.get = function () {return workerFunctions;};
-
 	Truss.preExpose = function preExpose (functionName) {
 	  Truss.worker[functionName] = bridge.bindExposedFunction(functionName);
 	};
@@ -2923,6 +2957,8 @@
 
 	Truss.escapeKey = function escapeKey (key) {return escapeKey(key);};
 	Truss.unescapeKey = function unescapeKey (escapedKey) {return unescapeKey(escapedKey);};
+
+	Truss.enableLogging = function enableLogging (fn) {return bridge.enableLogging(fn);};
 
 	// Duplicate static constants on instance for convenience.
 	prototypeAccessors.SERVER_TIMESTAMP.get = function () {return Truss.SERVER_TIMESTAMP;};

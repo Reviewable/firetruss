@@ -45,8 +45,8 @@ const maxNumPathMatchers = 1000;
 class PathMatcher {
   constructor(pattern) {
     this.variables = [];
-    const prefixMatch = _.endsWith('/$*');
-    if (prefixMatch) pattern = pattern.slice(-3);
+    const prefixMatch = _.endsWith(pattern, '/$*');
+    if (prefixMatch) pattern = pattern.slice(0, -3);
     const pathTemplate = pattern.replace(/\/\$[^\/]*/g, match => {
       if (match.length > 1) this.variables.push(match.slice(1));
       return '\u0001';
