@@ -1,7 +1,7 @@
 import test from 'ava';
 import td from 'testdouble';
 
-import Tree, {checkUpdateHasOnlyDescendantsWithNoOverlap} from './Tree.js';
+import Tree, {checkUpdateHasOnlyDescendantsWithNoOverlap, toFirebaseJson} from './Tree.js';
 import Bridge from './Bridge.js';
 import Dispatcher from './Dispatcher.js';
 
@@ -14,7 +14,8 @@ test.beforeEach(t => {
     truss: td.object()
   };
   t.context.tree = new Tree(
-    t.context.truss, t.context.rootUrl, t.context.bridge, t.context.dispatcher, []);
+    t.context.truss, t.context.rootUrl, t.context.bridge, t.context.dispatcher);
+  t.context.tree.init([]);
 });
 
 test.afterEach(t => {
@@ -87,3 +88,42 @@ test('checkUpdateHasOnlyDescendantsWithNoOverlap', t => {
   checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'/foo/bar': 1, '/foo/barz': 2});
 });
 
+test('plantValue', t => {
+  const tree = t.context.tree;
+
+  t.deepEqual(toFirebaseJson(tree.root), {});
+  tree._plantValue('/foo', 'foo', {bar: 'x'}, tree.root);
+  t.deepEqual(toFirebaseJson(tree.root), {foo: {bar: 'x'}});
+  const foo = tree.root.foo;
+  tree._plantValue('/foo', 'foo', {bar: 'x', baz: 'y'}, tree.root);
+  t.is(tree.root.foo, foo);
+  t.deepEqual(toFirebaseJson(tree.root), {foo: {bar: 'x', baz: 'y'}});
+  tree._plantValue('/foo/qux', 'qux', 'z', foo);
+  t.is(tree.root.foo, foo);
+  t.deepEqual(toFirebaseJson(tree.root), {foo: {bar: 'x', baz: 'y', qux: 'z'}});
+  tree._plantValue('/foo', 'foo', {bar: 'x'}, tree.root);
+  t.is(tree.root.foo, foo);
+  t.deepEqual(toFirebaseJson(tree.root), {foo: {bar: 'x'}});
+  tree._plantValue('/foo', 'foo', {bar: {qux: 'y'}}, tree.root);
+  t.deepEqual(toFirebaseJson(tree.root), {foo: {bar: {qux: 'y'}}});
+});
+
+test('prune', t => {
+  const tree = t.context.tree;
+
+  tree._plantValue('/foo', 'foo', {bar: 'x'}, tree.root);
+  tree._prune('/foo');
+  t.deepEqual(toFirebaseJson(tree.root), {});
+
+  tree._plantValue('/foo', 'foo', {bar: 'x'}, tree.root);
+  tree._prune('/foo/bar');
+  t.deepEqual(toFirebaseJson(tree.root), {});
+
+  tree._plantValue('/foo', 'foo', {bar: 'x', baz: 'y'}, tree.root);
+  tree._prune('/foo/bar');
+  t.deepEqual(toFirebaseJson(tree.root), {foo: {baz: 'y'}});
+
+  tree._plantValue('/foo', 'foo', {bar: 'x', baz: {qux: 'y'}}, tree.root);
+  tree._prune('/foo/baz/qux');
+  t.deepEqual(toFirebaseJson(tree.root), {foo: {bar: 'x'}});
+});

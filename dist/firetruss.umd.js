@@ -857,7 +857,7 @@
 	    }
 	  });
 
-	  if (angularProxy.active && scope && scope.$on && scope.$$id) {
+	  if (angularProxy.active && scope && scope.$on && scope.$id) {
 	    scope.$on('$destroy', function () {this$1.destroy();});
 	  }
 	};
@@ -926,8 +926,8 @@
 	  return flattenRefs(fn.call(this._scope));
 	};
 
-	Connector.prototype._updateComputedConnection = function _updateComputedConnection (key, fn) {
-	  var newDescriptor = fn(this._scope);
+	Connector.prototype._updateComputedConnection = function _updateComputedConnection (key, value) {
+	  var newDescriptor = _.isFunction(value) ? value(this._scope) : value;
 	  var oldDescriptor = this._currentDescriptors[key];
 	  if (oldDescriptor === newDescriptor ||
 	      newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) { return; }
@@ -1731,13 +1731,12 @@
 	    if (node.listening) { node.unlisten(); }
 	  }
 	  if (!node.active) {
-	    var coupledDescendantPaths = node.collectCoupledDescendantPaths();
-	    this._prunePath(segments.join('/'), coupledDescendantPaths);
 	    for (var i = ancestors.length - 1; i > 0; i--) {
 	      node = ancestors[i];
 	      if (node === this$1._root || node.active || !_.isEmpty(node.children)) { break; }
 	      Vue.delete(ancestors[i - 1].children, segments[i]);
 	    }
+	    this._prunePath(segments.join('/'), this.findCoupledDescendantPaths(segments));
 	  }
 	};
 
@@ -1774,10 +1773,10 @@
 	  return false;
 	};
 
-	Coupler.prototype.findCoupledDescendantPaths = function findCoupledDescendantPaths (path) {
+	Coupler.prototype.findCoupledDescendantPaths = function findCoupledDescendantPaths (pathOrSegments) {
 	    var this$1 = this;
 
-	  var segments = path.split('/');
+	  var segments = _.isString(pathOrSegments) ? pathOrSegments.split('/') : pathOrSegments;
 	  var node;
 	  for (var i = 0, list = segments; i < list.length; i += 1) {
 	    var segment = list[i];
@@ -1785,7 +1784,7 @@
 	      node = segment ? node.children && node.children[segment] : this$1._root;
 	    if (!node) { break; }
 	  }
-	  return node ? node.collectCoupledDescendantPaths() : {};
+	  return node && node.collectCoupledDescendantPaths();
 	};
 
 	Coupler.prototype.isSubtreeReady = function isSubtreeReady (path) {
@@ -1857,7 +1856,7 @@
 
 	// These are defined separately for each object so they're not included in Value below.
 	var RESERVED_VALUE_PROPERTY_NAMES = {
-	  $truss: true, $parent: true, $key: true, $path: true, $ref:true,
+	  $truss: true, $parent: true, $key: true, $path: true, $ref: true,
 	  $$touchThis: true, $$initializers: true, $$finalizers: true,
 	  __ob__: true
 	};
@@ -1867,13 +1866,22 @@
 
 	var Value = function Value () {};
 
-	var prototypeAccessors$8 = { $ref: {},$refs: {},$keys: {},$values: {},$root: {},$ready: {},$overridden: {} };
+	var prototypeAccessors$8 = { $truss: {},$ref: {},$refs: {},$key: {},$keys: {},$values: {},$root: {},$ready: {},$overridden: {},$$finalizers: {} };
 
+	prototypeAccessors$8.$truss.get = function () {
+	  Object.defineProperty(this, '$truss', {value: this.$parent.$truss});
+	  return this.$truss;
+	};
 	prototypeAccessors$8.$ref.get = function () {
 	  Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
 	  return this.$ref;
 	};
 	prototypeAccessors$8.$refs.get = function () {return this.$ref;};
+	prototypeAccessors$8.$key.get = function () {
+	  Object.defineProperty(
+	    this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
+	  return this.$key;
+	};
 	prototypeAccessors$8.$keys.get = function () {return _.keys(this);};
 	prototypeAccessors$8.$values.get = function () {return _.values(this);};
 	prototypeAccessors$8.$root.get = function () {return this.$truss.root;};// access indirectly to leave dependency trace
@@ -1890,10 +1898,6 @@
 	    return subjectFn.call(this$1);
 	  }, callbackFn.bind(this), options);
 
-	  if (!this.$$finalizers) {
-	    Object.defineProperty(this, '$$finalizers', {
-	      value: [], writable: false, enumerable: false, configurable: false});
-	  }
 	  unwatchAndRemoveDestructor = function () {
 	    unwatch();
 	    _.pull(this$1.$$finalizers, unwatchAndRemoveDestructor);
@@ -1902,10 +1906,39 @@
 	  return unwatchAndRemoveDestructor;
 	};
 
+	Value.prototype.$when = function $when (expression, options) {
+	    var this$1 = this;
+
+	  var promise = this.$truss.when(function () {
+	    this$1.$$touchThis();
+	    return expression.call(this$1);
+	  }, options);
+
+	  var originalCancel = promise.cancel;
+	  promise.cancel = function () {
+	    originalCancel();
+	    _.pull(this$1.$$finalizers, promise.cancel);
+	  };
+	  this.$$finalizers.push(promise.cancel);
+	  return promise;
+	};
+
 	Value.prototype.$set = function $set (value) {return this.$ref.set(value);};
 	Value.prototype.$update = function $update (values) {return this.$ref.update(values);};
 	Value.prototype.$override = function $override (values) {return this.$ref.override(values);};
 	Value.prototype.$commit = function $commit (options, updateFn) {return this.$ref.commit(options, updateFn);};
+
+	Value.prototype.$$touchThis = function $$touchThis () {
+	  // jshint expr:true
+	  if (this.$parent) { this.$parent[this.$key]; } else { this.$root; }
+	  // jshint expr:false
+	};
+
+	prototypeAccessors$8.$$finalizers.get = function () {
+	  Object.defineProperty(this, '$$finalizers', {
+	    value: [], writable: false, enumerable: false, configurable: false});
+	  return this.$$finalizers;
+	};
 
 	Object.defineProperties( Value.prototype, prototypeAccessors$8 );
 
@@ -2008,7 +2041,7 @@
 	 * them up and make the reactive, so you should call _completeCreateObject once it's done so and
 	 * before any Firebase properties are added.
 	 */
-	Modeler.prototype.createObject = function createObject (path, properties) {
+	Modeler.prototype.createObject = function createObject (path, properties, truss) {
 	    var this$1 = this;
 
 	  var Class = Value;
@@ -2029,7 +2062,7 @@
 	    }
 	  }
 
-	  var object = new Class(properties.$truss.value);
+	  var object = new Class(truss);
 
 	  if (computedProperties) {
 	    _.each(computedProperties, function (prop) {
@@ -2053,10 +2086,6 @@
 	  var writeAllowed = false;
 	  var firstCallback = true;
 
-	  if (!object.$$finalizers) {
-	    Object.defineProperty(object, '$$finalizers', {
-	      value: [], writable: false, enumerable: false, configurable: false});
-	  }
 	  if (!object.$$initializers) {
 	    Object.defineProperty(object, '$$initializers', {
 	      value: [], writable: false, enumerable: false, configurable: true});
@@ -2188,7 +2217,7 @@
 	Object.defineProperties( Transaction.prototype, prototypeAccessors$6 );
 
 
-	var Tree = function Tree(truss, rootUrl, bridge, dispatcher, classes) {
+	var Tree = function Tree(truss, rootUrl, bridge, dispatcher) {
 	  this._truss = truss;
 	  this._rootUrl = rootUrl;
 	  this._bridge = bridge;
@@ -2203,10 +2232,9 @@
 	  if (angularProxy.active) {
 	    this._vue.$watch('$data', angularProxy.digest, {deep: true});
 	  }
-	  this._modeler = new Modeler(classes);
-	  this._vue.$data.$root = this._createObject('/', '');
-	  this._completeCreateObject(this.root);
-	  this._plantPlaceholders(this.root, '/');
+	  // Call this.init(classes) to complete initialization; we need two phases so that truss can bind
+	  // the tree into its own accessors prior to defining computed functions, which may try to
+	  // access the tree root via truss.
 	};
 
 	var prototypeAccessors$1$1 = { root: {},truss: {} };
@@ -2220,9 +2248,16 @@
 	  return this._truss;
 	};
 
+	Tree.prototype.init = function init (classes) {
+	  this._modeler = new Modeler(classes);
+	  this._vue.$data.$root = this._createObject('/', '');
+	  this._completeCreateObject(this.root);
+	  this._plantPlaceholders(this.root, '/');
+	};
+
 	Tree.prototype.destroy = function destroy () {
 	  this._coupler.destroy();
-	  this._modeler.destroy();
+	  if (this._modeler) { this._modeler.destroy(); }
 	  this._vue.$destroy();
 	};
 
@@ -2239,7 +2274,10 @@
 	  }
 	  operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
 	  this._dispatcher.begin(operation).then(function () {
-	    if (operation.running) { this$1._coupler.couple(ref.path, operation); }
+	    if (operation.running && !operation._disconnected) {
+	      this$1._coupler.couple(ref.path, operation);
+	      operation._coupled = true;
+	    }
 	  }).catch(function (e) {});// ignore exception, let onFailure handlers deal with it
 	  return operation._disconnect;
 	};
@@ -2248,7 +2286,10 @@
 	  if (operation._disconnected) { return; }
 	  operation._disconnected = true;
 	  if (unwatch) { unwatch(); }
-	  this._coupler.decouple(ref.path, operation);// will call back to _prune if necessary
+	  if (operation._coupled) {
+	    this._coupler.decouple(ref.path, operation);// will call back to _prune if necessary
+	    operation._coupled = false;
+	  }
 	  this._dispatcher.end(operation, error).catch(function (e) {});
 	};
 
@@ -2264,7 +2305,10 @@
 	  var operation = this._dispatcher.createOperation('read', method, query);
 	  operation._disconnect = this._disconnectQuery.bind(this, query, operation);
 	  this._dispatcher.begin(operation).then(function () {
-	    if (operation.running) { this$1._coupler.subscribe(query, operation, keysCallback); }
+	    if (operation.running && !operation._disconnected) {
+	      this$1._coupler.subscribe(query, operation, keysCallback);
+	      operation._coupled = true;
+	    }
 	  }).catch(function (e) {});// ignore exception, let onFailure handlers deal with it
 	  return operation._disconnect;
 	};
@@ -2272,7 +2316,10 @@
 	Tree.prototype._disconnectQuery = function _disconnectQuery (query, operation, error) {
 	  if (operation._disconnected) { return; }
 	  operation._disconnected = true;
-	  this._coupler.unsubscribe(query, operation);// will call back to _prune if necessary
+	  if (operation._coupled) {
+	    this._coupler.unsubscribe(query, operation);// will call back to _prune if necessary
+	    operation._coupled = false;
+	  }
 	  this._dispatcher.end(operation, error).catch(function (e) {});
 	};
 
@@ -2419,22 +2466,18 @@
 	 * before any Firebase properties are added.
 	 */
 	Tree.prototype._createObject = function _createObject (path, key, parent) {
-	    var this$1 = this;
-
-	  if (parent && _.has(parent, key)) { throw new Error(("Duplicate object created for " + path)); }
 	  var properties = {
-	    $truss: {value: this._truss, writable: false, configurable: false, enumerable: false},
 	    // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
-	    $parent: {value: parent, writable: false, configurable: true, enumerable: true},
-	    $key: {value: key, writable: false, configurable: false, enumerable: false},
-	    $path: {value: path, writable: false, configurable: false, enumerable: false},
-	    $$touchThis: {
-	      value: parent ? function () { return parent[key]; } : function () { return this$1._vue.$data.$root; },
-	      writable: false, configurable: false, enumerable: false
-	    }
+	    $parent: {value: parent, configurable: true, enumerable: true},
+	    $path: {value: path},
+	    // $$touchThis: {
+	    // value: parent ? () => parent[key] : () => this._vue.$data.$root,
+	    // writable: false, configurable: false, enumerable: false
+	    // }
 	  };
+	  if (path === '/') { properties.$truss = {value: this._truss}; }
 
-	  var object = this._modeler.createObject(path, properties);
+	  var object = this._modeler.createObject(path, properties, this._truss);
 	  Object.defineProperties(object, properties);
 	  return object;
 	};
@@ -2450,10 +2493,7 @@
 	      var descriptor = Object.getOwnPropertyDescriptor(object, name);
 	    if (descriptor.configurable && descriptor.enumerable) {
 	      descriptor.enumerable = false;
-	      if (name === '$parent') {
-	        descriptor.configurable = false;
-	        descriptor.set = throwReadOnlyError;
-	      }
+	      if (name === '$parent') { descriptor.configurable = false; }
 	      Object.defineProperty(object, name, descriptor);
 	    }
 	  }
@@ -2530,7 +2570,7 @@
 	    return;
 	  }
 	  var object = parent[key];
-	  if (object === undefined) {
+	  if (!_.isObject(object)) {
 	    object = this._createObject(path, key, parent);
 	    this._setFirebaseProperty(parent, key, object);
 	    this._completeCreateObject(object);
@@ -2631,7 +2671,7 @@
 	Tree.prototype._holdsConcreteData = function _holdsConcreteData (object, ghostObjects) {
 	    var this$1 = this;
 
-	  if (ghostObjects && _.contains(ghostObjects, object)) { return false; }
+	  if (ghostObjects && _.includes(ghostObjects, object)) { return false; }
 	  if (_.some(object, function (value) { return !value.$truss; })) { return true; }
 	  return _.some(object, function (value) { return this$1._holdsConcreteData(value, ghostObjects); });
 	};
@@ -2732,8 +2772,6 @@
 	Object.defineProperties( Tree.prototype, prototypeAccessors$1$1 );
 	Object.defineProperties( Tree, staticAccessors$1 );
 
-	function throwReadOnlyError() {throw new Error('Read-only property');}
-
 	function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativizePaths) {
 	  // First, check all paths for correctness and absolutize them, since there could be a mix of
 	  // absolute paths and relative keys.
@@ -2787,6 +2825,7 @@
 	}
 
 	var bridge;
+	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
 	var VERSION = 'dev';
@@ -2804,7 +2843,8 @@
 
 	  bridge.trackServer(this._rootUrl);
 	  this._metaTree = new MetaTree(this._rootUrl, bridge);
-	  this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher, classes);
+	  this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher);
+	  this._tree.init(classes);
 	};
 
 	var prototypeAccessors = { meta: {},root: {},now: {},SERVER_TIMESTAMP: {},VERSION: {},FIREBASE_SDK_VERSION: {} };
@@ -2885,6 +2925,7 @@
 	      // Delay the immediate callback until we've had a chance to return the unwatch function.
 	      Promise.resolve().then(function () {
 	        if (numCallbacks > 1) { return; }
+	        if (subjectFn() !== newValue) { return; }
 	        callbackFn(newValue, oldValue);
 	        angularProxy.digest();
 	      });
@@ -2900,14 +2941,17 @@
 	Truss.prototype.when = function when (expression, options) {
 	    var this$1 = this;
 
-	  return new Promise(function (resolve) {
-	    var unwatch = this$1.watch(expression, function (value) {
-	      if (value) {
-	        unwatch();
+	  var unwatch;
+	  var promise = new Promise(function (resolve) {
+	    unwatch = this$1.watch(expression, function (value) {
+	      if (value !== undefined && value !== null) {
+	        promise.cancel();
 	        resolve(value);
 	      }
 	    }, options);
 	  });
+	  promise.cancel = unwatch;
+	  return promise;
 	};
 
 	Truss.prototype.checkObjectsForRogueProperties = function checkObjectsForRogueProperties () {
@@ -2924,6 +2968,7 @@
 	    webWorker = new Worker(webWorker);
 	  }
 	  bridge = new Bridge(webWorker);
+	  if (logging) { bridge.enableLogging(logging); }
 	  return bridge.init(webWorker).then(
 	    function (ref) {
 	        var exposedFunctionNames = ref.exposedFunctionNames;
@@ -2958,7 +3003,10 @@
 	Truss.escapeKey = function escapeKey (key) {return escapeKey(key);};
 	Truss.unescapeKey = function unescapeKey (escapedKey) {return unescapeKey(escapedKey);};
 
-	Truss.enableLogging = function enableLogging (fn) {return bridge.enableLogging(fn);};
+	Truss.enableLogging = function enableLogging (fn) {
+	  logging = fn;
+	  if (bridge) { bridge.enableLogging(fn); }
+	};
 
 	// Duplicate static constants on instance for convenience.
 	prototypeAccessors.SERVER_TIMESTAMP.get = function () {return Truss.SERVER_TIMESTAMP;};

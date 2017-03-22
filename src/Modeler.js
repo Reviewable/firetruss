@@ -1,12 +1,12 @@
 import Reference from './Reference.js';
-import {makePathMatcher, joinPath, escapeKey} from './utils.js';
+import {makePathMatcher, joinPath, escapeKey, unescapeKey} from './utils.js';
 
 import _ from 'lodash';
 import performanceNow from 'performance-now';
 
 // These are defined separately for each object so they're not included in Value below.
 const RESERVED_VALUE_PROPERTY_NAMES = {
-  $truss: true, $parent: true, $key: true, $path: true, $ref:true,
+  $truss: true, $parent: true, $key: true, $path: true, $ref: true,
   $$touchThis: true, $$initializers: true, $$finalizers: true,
   __ob__: true
 };
@@ -15,11 +15,20 @@ const computedPropertyStats = {};
 
 
 class Value {
+  get $truss() {
+    Object.defineProperty(this, '$truss', {value: this.$parent.$truss});
+    return this.$truss;
+  }
   get $ref() {
     Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
     return this.$ref;
   }
   get $refs() {return this.$ref;}
+  get $key() {
+    Object.defineProperty(
+      this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
+    return this.$key;
+  }
   get $keys() {return _.keys(this);}
   get $values() {return _.values(this);}
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
@@ -34,10 +43,6 @@ class Value {
       return subjectFn.call(this);
     }, callbackFn.bind(this), options);
 
-    if (!this.$$finalizers) {
-      Object.defineProperty(this, '$$finalizers', {
-        value: [], writable: false, enumerable: false, configurable: false});
-    }
     unwatchAndRemoveDestructor = () => {
       unwatch();
       _.pull(this.$$finalizers, unwatchAndRemoveDestructor);
@@ -46,10 +51,37 @@ class Value {
     return unwatchAndRemoveDestructor;
   }
 
+  $when(expression, options) {
+    const promise = this.$truss.when(() => {
+      this.$$touchThis();
+      return expression.call(this);
+    }, options);
+
+    const originalCancel = promise.cancel;
+    promise.cancel = () => {
+      originalCancel();
+      _.pull(this.$$finalizers, promise.cancel);
+    };
+    this.$$finalizers.push(promise.cancel);
+    return promise;
+  }
+
   $set(value) {return this.$ref.set(value);}
   $update(values) {return this.$ref.update(values);}
   $override(values) {return this.$ref.override(values);}
   $commit(options, updateFn) {return this.$ref.commit(options, updateFn);}
+
+  $$touchThis() {
+    // jshint expr:true
+    if (this.$parent) this.$parent[this.$key]; else this.$root;
+    // jshint expr:false
+  }
+
+  get $$finalizers() {
+    Object.defineProperty(this, '$$finalizers', {
+      value: [], writable: false, enumerable: false, configurable: false});
+    return this.$$finalizers;
+  }
 }
 
 class ComputedPropertyStats {
@@ -147,7 +179,7 @@ export default class Modeler {
    * them up and make the reactive, so you should call _completeCreateObject once it's done so and
    * before any Firebase properties are added.
    */
-  createObject(path, properties) {
+  createObject(path, properties, truss) {
     let Class = Value;
     let computedProperties;
     for (const mount of this._mounts) {
@@ -164,7 +196,7 @@ export default class Modeler {
       }
     }
 
-    const object = new Class(properties.$truss.value);
+    const object = new Class(truss);
 
     if (computedProperties) {
       _.each(computedProperties, prop => {
@@ -188,10 +220,6 @@ export default class Modeler {
     let writeAllowed = false;
     let firstCallback = true;
 
-    if (!object.$$finalizers) {
-      Object.defineProperty(object, '$$finalizers', {
-        value: [], writable: false, enumerable: false, configurable: false});
-    }
     if (!object.$$initializers) {
       Object.defineProperty(object, '$$initializers', {
         value: [], writable: false, enumerable: false, configurable: true});

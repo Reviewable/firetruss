@@ -784,7 +784,7 @@ class Connector {
       }
     });
 
-    if (angularProxy.active && scope && scope.$on && scope.$$id) {
+    if (angularProxy.active && scope && scope.$on && scope.$id) {
       scope.$on('$destroy', () => {this.destroy();});
     }
   }
@@ -843,8 +843,8 @@ class Connector {
     return flattenRefs(fn.call(this._scope));
   }
 
-  _updateComputedConnection(key, fn) {
-    const newDescriptor = fn(this._scope);
+  _updateComputedConnection(key, value) {
+    const newDescriptor = _.isFunction(value) ? value(this._scope) : value;
     const oldDescriptor = this._currentDescriptors[key];
     if (oldDescriptor === newDescriptor ||
         newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) return;
@@ -1571,13 +1571,12 @@ class Coupler {
       if (node.listening) node.unlisten();
     }
     if (!node.active) {
-      const coupledDescendantPaths = node.collectCoupledDescendantPaths();
-      this._prunePath(segments.join('/'), coupledDescendantPaths);
       for (let i = ancestors.length - 1; i > 0; i--) {
         node = ancestors[i];
         if (node === this._root || node.active || !_.isEmpty(node.children)) break;
         Vue.delete(ancestors[i - 1].children, segments[i]);
       }
+      this._prunePath(segments.join('/'), this.findCoupledDescendantPaths(segments));
     }
   }
 
@@ -1610,14 +1609,14 @@ class Coupler {
     return false;
   }
 
-  findCoupledDescendantPaths(path) {
-    const segments = path.split('/');
+  findCoupledDescendantPaths(pathOrSegments) {
+    const segments = _.isString(pathOrSegments) ? pathOrSegments.split('/') : pathOrSegments;
     let node;
     for (const segment of segments) {
       node = segment ? node.children && node.children[segment] : this._root;
       if (!node) break;
     }
-    return node ? node.collectCoupledDescendantPaths() : {};
+    return node && node.collectCoupledDescendantPaths();
   }
 
   isSubtreeReady(path) {
@@ -1640,7 +1639,7 @@ class Coupler {
 
 // These are defined separately for each object so they're not included in Value below.
 const RESERVED_VALUE_PROPERTY_NAMES = {
-  $truss: true, $parent: true, $key: true, $path: true, $ref:true,
+  $truss: true, $parent: true, $key: true, $path: true, $ref: true,
   $$touchThis: true, $$initializers: true, $$finalizers: true,
   __ob__: true
 };
@@ -1649,11 +1648,20 @@ const computedPropertyStats = {};
 
 
 class Value {
+  get $truss() {
+    Object.defineProperty(this, '$truss', {value: this.$parent.$truss});
+    return this.$truss;
+  }
   get $ref() {
     Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
     return this.$ref;
   }
   get $refs() {return this.$ref;}
+  get $key() {
+    Object.defineProperty(
+      this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
+    return this.$key;
+  }
   get $keys() {return _.keys(this);}
   get $values() {return _.values(this);}
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
@@ -1668,10 +1676,6 @@ class Value {
       return subjectFn.call(this);
     }, callbackFn.bind(this), options);
 
-    if (!this.$$finalizers) {
-      Object.defineProperty(this, '$$finalizers', {
-        value: [], writable: false, enumerable: false, configurable: false});
-    }
     unwatchAndRemoveDestructor = () => {
       unwatch();
       _.pull(this.$$finalizers, unwatchAndRemoveDestructor);
@@ -1680,10 +1684,37 @@ class Value {
     return unwatchAndRemoveDestructor;
   }
 
+  $when(expression, options) {
+    const promise = this.$truss.when(() => {
+      this.$$touchThis();
+      return expression.call(this);
+    }, options);
+
+    const originalCancel = promise.cancel;
+    promise.cancel = () => {
+      originalCancel();
+      _.pull(this.$$finalizers, promise.cancel);
+    };
+    this.$$finalizers.push(promise.cancel);
+    return promise;
+  }
+
   $set(value) {return this.$ref.set(value);}
   $update(values) {return this.$ref.update(values);}
   $override(values) {return this.$ref.override(values);}
   $commit(options, updateFn) {return this.$ref.commit(options, updateFn);}
+
+  $$touchThis() {
+    // jshint expr:true
+    if (this.$parent) this.$parent[this.$key]; else this.$root;
+    // jshint expr:false
+  }
+
+  get $$finalizers() {
+    Object.defineProperty(this, '$$finalizers', {
+      value: [], writable: false, enumerable: false, configurable: false});
+    return this.$$finalizers;
+  }
 }
 
 class ComputedPropertyStats {
@@ -1781,7 +1812,7 @@ class Modeler {
    * them up and make the reactive, so you should call _completeCreateObject once it's done so and
    * before any Firebase properties are added.
    */
-  createObject(path, properties) {
+  createObject(path, properties, truss) {
     let Class = Value;
     let computedProperties;
     for (const mount of this._mounts) {
@@ -1798,7 +1829,7 @@ class Modeler {
       }
     }
 
-    const object = new Class(properties.$truss.value);
+    const object = new Class(truss);
 
     if (computedProperties) {
       _.each(computedProperties, prop => {
@@ -1822,10 +1853,6 @@ class Modeler {
     let writeAllowed = false;
     let firstCallback = true;
 
-    if (!object.$$finalizers) {
-      Object.defineProperty(object, '$$finalizers', {
-        value: [], writable: false, enumerable: false, configurable: false});
-    }
     if (!object.$$initializers) {
       Object.defineProperty(object, '$$initializers', {
         value: [], writable: false, enumerable: false, configurable: true});
@@ -1952,7 +1979,7 @@ class Transaction {
 
 
 class Tree {
-  constructor(truss, rootUrl, bridge, dispatcher, classes) {
+  constructor(truss, rootUrl, bridge, dispatcher) {
     this._truss = truss;
     this._rootUrl = rootUrl;
     this._bridge = bridge;
@@ -1967,10 +1994,9 @@ class Tree {
     if (angularProxy.active) {
       this._vue.$watch('$data', angularProxy.digest, {deep: true});
     }
-    this._modeler = new Modeler(classes);
-    this._vue.$data.$root = this._createObject('/', '');
-    this._completeCreateObject(this.root);
-    this._plantPlaceholders(this.root, '/');
+    // Call this.init(classes) to complete initialization; we need two phases so that truss can bind
+    // the tree into its own accessors prior to defining computed functions, which may try to
+    // access the tree root via truss.
   }
 
   get root() {
@@ -1981,9 +2007,16 @@ class Tree {
     return this._truss;
   }
 
+  init(classes) {
+    this._modeler = new Modeler(classes);
+    this._vue.$data.$root = this._createObject('/', '');
+    this._completeCreateObject(this.root);
+    this._plantPlaceholders(this.root, '/');
+  }
+
   destroy() {
     this._coupler.destroy();
-    this._modeler.destroy();
+    if (this._modeler) this._modeler.destroy();
     this._vue.$destroy();
   }
 
@@ -1998,7 +2031,10 @@ class Tree {
     }
     operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
     this._dispatcher.begin(operation).then(() => {
-      if (operation.running) this._coupler.couple(ref.path, operation);
+      if (operation.running && !operation._disconnected) {
+        this._coupler.couple(ref.path, operation);
+        operation._coupled = true;
+      }
     }).catch(e => {});  // ignore exception, let onFailure handlers deal with it
     return operation._disconnect;
   }
@@ -2007,7 +2043,10 @@ class Tree {
     if (operation._disconnected) return;
     operation._disconnected = true;
     if (unwatch) unwatch();
-    this._coupler.decouple(ref.path, operation);  // will call back to _prune if necessary
+    if (operation._coupled) {
+      this._coupler.decouple(ref.path, operation);  // will call back to _prune if necessary
+      operation._coupled = false;
+    }
     this._dispatcher.end(operation, error).catch(e => {});
   }
 
@@ -2021,7 +2060,10 @@ class Tree {
     const operation = this._dispatcher.createOperation('read', method, query);
     operation._disconnect = this._disconnectQuery.bind(this, query, operation);
     this._dispatcher.begin(operation).then(() => {
-      if (operation.running) this._coupler.subscribe(query, operation, keysCallback);
+      if (operation.running && !operation._disconnected) {
+        this._coupler.subscribe(query, operation, keysCallback);
+        operation._coupled = true;
+      }
     }).catch(e => {});  // ignore exception, let onFailure handlers deal with it
     return operation._disconnect;
   }
@@ -2029,7 +2071,10 @@ class Tree {
   _disconnectQuery(query, operation, error) {
     if (operation._disconnected) return;
     operation._disconnected = true;
-    this._coupler.unsubscribe(query, operation);  // will call back to _prune if necessary
+    if (operation._coupled) {
+      this._coupler.unsubscribe(query, operation);  // will call back to _prune if necessary
+      operation._coupled = false;
+    }
     this._dispatcher.end(operation, error).catch(e => {});
   }
 
@@ -2165,20 +2210,18 @@ class Tree {
    * before any Firebase properties are added.
    */
   _createObject(path, key, parent) {
-    if (parent && _.has(parent, key)) throw new Error(`Duplicate object created for ${path}`);
     let properties = {
-      $truss: {value: this._truss, writable: false, configurable: false, enumerable: false},
       // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
-      $parent: {value: parent, writable: false, configurable: true, enumerable: true},
-      $key: {value: key, writable: false, configurable: false, enumerable: false},
-      $path: {value: path, writable: false, configurable: false, enumerable: false},
-      $$touchThis: {
-        value: parent ? () => parent[key] : () => this._vue.$data.$root,
-        writable: false, configurable: false, enumerable: false
-      }
+      $parent: {value: parent, configurable: true, enumerable: true},
+      $path: {value: path},
+      // $$touchThis: {
+      //   value: parent ? () => parent[key] : () => this._vue.$data.$root,
+      //   writable: false, configurable: false, enumerable: false
+      // }
     };
+    if (path === '/') properties.$truss = {value: this._truss};
 
-    const object = this._modeler.createObject(path, properties);
+    const object = this._modeler.createObject(path, properties, this._truss);
     Object.defineProperties(object, properties);
     return object;
   }
@@ -2190,10 +2233,7 @@ class Tree {
       const descriptor = Object.getOwnPropertyDescriptor(object, name);
       if (descriptor.configurable && descriptor.enumerable) {
         descriptor.enumerable = false;
-        if (name === '$parent') {
-          descriptor.configurable = false;
-          descriptor.set = throwReadOnlyError;
-        }
+        if (name === '$parent') descriptor.configurable = false;
         Object.defineProperty(object, name, descriptor);
       }
     }
@@ -2254,7 +2294,7 @@ class Tree {
       return;
     }
     let object = parent[key];
-    if (object === undefined) {
+    if (!_.isObject(object)) {
       object = this._createObject(path, key, parent);
       this._setFirebaseProperty(parent, key, object);
       this._completeCreateObject(object);
@@ -2347,7 +2387,7 @@ class Tree {
   }
 
   _holdsConcreteData(object, ghostObjects) {
-    if (ghostObjects && _.contains(ghostObjects, object)) return false;
+    if (ghostObjects && _.includes(ghostObjects, object)) return false;
     if (_.some(object, value => !value.$truss)) return true;
     return _.some(object, value => this._holdsConcreteData(value, ghostObjects));
   }
@@ -2441,8 +2481,6 @@ class Tree {
 }
 
 
-function throwReadOnlyError() {throw new Error('Read-only property');}
-
 function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativizePaths) {
   // First, check all paths for correctness and absolutize them, since there could be a mix of
   // absolute paths and relative keys.
@@ -2494,6 +2532,7 @@ function toFirebaseJson(object) {
 }
 
 let bridge;
+let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
 const VERSION = 'dev';
@@ -2522,7 +2561,8 @@ class Truss {
 
     bridge.trackServer(this._rootUrl);
     this._metaTree = new MetaTree(this._rootUrl, bridge);
-    this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher, classes);
+    this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher);
+    this._tree.init(classes);
   }
 
   get meta() {return this._metaTree.root;}
@@ -2594,6 +2634,7 @@ class Truss {
         // Delay the immediate callback until we've had a chance to return the unwatch function.
         Promise.resolve().then(() => {
           if (numCallbacks > 1) return;
+          if (subjectFn() !== newValue) return;
           callbackFn(newValue, oldValue);
           angularProxy.digest();
         });
@@ -2607,14 +2648,17 @@ class Truss {
   }
 
   when(expression, options) {
-    return new Promise(resolve => {
-      const unwatch = this.watch(expression, value => {
-        if (value) {
-          unwatch();
+    let unwatch;
+    const promise = new Promise(resolve => {
+      unwatch = this.watch(expression, value => {
+        if (value !== undefined && value !== null) {
+          promise.cancel();
           resolve(value);
         }
       }, options);
     });
+    promise.cancel = unwatch;
+    return promise;
   }
 
   checkObjectsForRogueProperties() {
@@ -2631,6 +2675,7 @@ class Truss {
       webWorker = new Worker(webWorker);
     }
     bridge = new Bridge(webWorker);
+    if (logging) bridge.enableLogging(logging);
     return bridge.init(webWorker).then(
       ({exposedFunctionNames, firebaseSdkVersion}) => {
         Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
@@ -2660,7 +2705,10 @@ class Truss {
   static escapeKey(key) {return escapeKey(key);}
   static unescapeKey(escapedKey) {return unescapeKey(escapedKey);}
 
-  static enableLogging(fn) {return bridge.enableLogging(fn);}
+  static enableLogging(fn) {
+    logging = fn;
+    if (bridge) bridge.enableLogging(fn);
+  }
 
   // Duplicate static constants on instance for convenience.
   get SERVER_TIMESTAMP() {return Truss.SERVER_TIMESTAMP;}

@@ -28,7 +28,7 @@ export default class Connector {
       }
     });
 
-    if (angular.active && scope && scope.$on && scope.$$id) {
+    if (angular.active && scope && scope.$on && scope.$id) {
       scope.$on('$destroy', () => {this.destroy();});
     }
   }
@@ -87,8 +87,8 @@ export default class Connector {
     return flattenRefs(fn.call(this._scope));
   }
 
-  _updateComputedConnection(key, fn) {
-    const newDescriptor = fn(this._scope);
+  _updateComputedConnection(key, value) {
+    const newDescriptor = _.isFunction(value) ? value(this._scope) : value;
     const oldDescriptor = this._currentDescriptors[key];
     if (oldDescriptor === newDescriptor ||
         newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) return;

@@ -303,13 +303,12 @@ export default class Coupler {
       if (node.listening) node.unlisten();
     }
     if (!node.active) {
-      const coupledDescendantPaths = node.collectCoupledDescendantPaths();
-      this._prunePath(segments.join('/'), coupledDescendantPaths);
       for (let i = ancestors.length - 1; i > 0; i--) {
         node = ancestors[i];
         if (node === this._root || node.active || !_.isEmpty(node.children)) break;
         Vue.delete(ancestors[i - 1].children, segments[i]);
       }
+      this._prunePath(segments.join('/'), this.findCoupledDescendantPaths(segments));
     }
   }
 
@@ -342,14 +341,14 @@ export default class Coupler {
     return false;
   }
 
-  findCoupledDescendantPaths(path) {
-    const segments = path.split('/');
+  findCoupledDescendantPaths(pathOrSegments) {
+    const segments = _.isString(pathOrSegments) ? pathOrSegments.split('/') : pathOrSegments;
     let node;
     for (const segment of segments) {
       node = segment ? node.children && node.children[segment] : this._root;
       if (!node) break;
     }
-    return node ? node.collectCoupledDescendantPaths() : {};
+    return node && node.collectCoupledDescendantPaths();
   }
 
   isSubtreeReady(path) {

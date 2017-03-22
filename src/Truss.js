@@ -11,7 +11,7 @@ import Tree from './Tree.js';
 import {escapeKey, unescapeKey, wrapPromiseCallback, SERVER_TIMESTAMP} from './utils.js';
 
 
-let bridge;
+let bridge, logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
 const VERSION = 'dev';
@@ -40,7 +40,8 @@ export default class Truss {
 
     bridge.trackServer(this._rootUrl);
     this._metaTree = new MetaTree(this._rootUrl, bridge);
-    this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher, classes);
+    this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher);
+    this._tree.init(classes);
   }
 
   get meta() {return this._metaTree.root;}
@@ -112,6 +113,7 @@ export default class Truss {
         // Delay the immediate callback until we've had a chance to return the unwatch function.
         Promise.resolve().then(() => {
           if (numCallbacks > 1) return;
+          if (subjectFn() !== newValue) return;
           callbackFn(newValue, oldValue);
           angularCompatibility.digest();
         });
@@ -125,14 +127,17 @@ export default class Truss {
   }
 
   when(expression, options) {
-    return new Promise(resolve => {
-      const unwatch = this.watch(expression, value => {
-        if (value) {
-          unwatch();
+    let unwatch;
+    const promise = new Promise(resolve => {
+      unwatch = this.watch(expression, value => {
+        if (value !== undefined && value !== null) {
+          promise.cancel();
           resolve(value);
         }
       }, options);
     });
+    promise.cancel = unwatch;
+    return promise;
   }
 
   checkObjectsForRogueProperties() {
@@ -149,6 +154,7 @@ export default class Truss {
       webWorker = new Worker(webWorker);
     }
     bridge = new Bridge(webWorker);
+    if (logging) bridge.enableLogging(logging);
     return bridge.init(webWorker).then(
       ({exposedFunctionNames, firebaseSdkVersion}) => {
         Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
@@ -178,7 +184,10 @@ export default class Truss {
   static escapeKey(key) {return escapeKey(key);}
   static unescapeKey(escapedKey) {return unescapeKey(escapedKey);}
 
-  static enableLogging(fn) {return bridge.enableLogging(fn);}
+  static enableLogging(fn) {
+    logging = fn;
+    if (bridge) bridge.enableLogging(fn);
+  }
 
   // Duplicate static constants on instance for convenience.
   get SERVER_TIMESTAMP() {return Truss.SERVER_TIMESTAMP;}

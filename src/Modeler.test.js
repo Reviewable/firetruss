@@ -45,10 +45,11 @@ test.beforeEach(t => {
     rootUrl: 'https://example.firebaseio.com',
     bridge: td.object(Bridge),
     dispatcher: td.object(Dispatcher),
-    truss: td.object()
+    truss: {get root() {return t.context.tree.root;}}
   };
   t.context.tree = new Tree(
-    t.context.truss, t.context.rootUrl, t.context.bridge, t.context.dispatcher, [Root, Subroot]);
+    t.context.truss, t.context.rootUrl, t.context.bridge, t.context.dispatcher);
+  t.context.tree.init([Root, Subroot]);
 });
 
 test.afterEach(t => {

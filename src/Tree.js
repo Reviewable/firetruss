@@ -46,7 +46,7 @@ class Transaction {
 
 
 export default class Tree {
-  constructor(truss, rootUrl, bridge, dispatcher, classes) {
+  constructor(truss, rootUrl, bridge, dispatcher) {
     this._truss = truss;
     this._rootUrl = rootUrl;
     this._bridge = bridge;
@@ -61,10 +61,9 @@ export default class Tree {
     if (angularCompatibility.active) {
       this._vue.$watch('$data', angularCompatibility.digest, {deep: true});
     }
-    this._modeler = new Modeler(classes);
-    this._vue.$data.$root = this._createObject('/', '');
-    this._completeCreateObject(this.root);
-    this._plantPlaceholders(this.root, '/');
+    // Call this.init(classes) to complete initialization; we need two phases so that truss can bind
+    // the tree into its own accessors prior to defining computed functions, which may try to
+    // access the tree root via truss.
   }
 
   get root() {
@@ -75,9 +74,16 @@ export default class Tree {
     return this._truss;
   }
 
+  init(classes) {
+    this._modeler = new Modeler(classes);
+    this._vue.$data.$root = this._createObject('/', '');
+    this._completeCreateObject(this.root);
+    this._plantPlaceholders(this.root, '/');
+  }
+
   destroy() {
     this._coupler.destroy();
-    this._modeler.destroy();
+    if (this._modeler) this._modeler.destroy();
     this._vue.$destroy();
   }
 
@@ -92,7 +98,10 @@ export default class Tree {
     }
     operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
     this._dispatcher.begin(operation).then(() => {
-      if (operation.running) this._coupler.couple(ref.path, operation);
+      if (operation.running && !operation._disconnected) {
+        this._coupler.couple(ref.path, operation);
+        operation._coupled = true;
+      }
     }).catch(e => {});  // ignore exception, let onFailure handlers deal with it
     return operation._disconnect;
   }
@@ -101,7 +110,10 @@ export default class Tree {
     if (operation._disconnected) return;
     operation._disconnected = true;
     if (unwatch) unwatch();
-    this._coupler.decouple(ref.path, operation);  // will call back to _prune if necessary
+    if (operation._coupled) {
+      this._coupler.decouple(ref.path, operation);  // will call back to _prune if necessary
+      operation._coupled = false;
+    }
     this._dispatcher.end(operation, error).catch(e => {});
   }
 
@@ -115,7 +127,10 @@ export default class Tree {
     const operation = this._dispatcher.createOperation('read', method, query);
     operation._disconnect = this._disconnectQuery.bind(this, query, operation);
     this._dispatcher.begin(operation).then(() => {
-      if (operation.running) this._coupler.subscribe(query, operation, keysCallback);
+      if (operation.running && !operation._disconnected) {
+        this._coupler.subscribe(query, operation, keysCallback);
+        operation._coupled = true;
+      }
     }).catch(e => {});  // ignore exception, let onFailure handlers deal with it
     return operation._disconnect;
   }
@@ -123,7 +138,10 @@ export default class Tree {
   _disconnectQuery(query, operation, error) {
     if (operation._disconnected) return;
     operation._disconnected = true;
-    this._coupler.unsubscribe(query, operation);  // will call back to _prune if necessary
+    if (operation._coupled) {
+      this._coupler.unsubscribe(query, operation);  // will call back to _prune if necessary
+      operation._coupled = false;
+    }
     this._dispatcher.end(operation, error).catch(e => {});
   }
 
@@ -259,20 +277,18 @@ export default class Tree {
    * before any Firebase properties are added.
    */
   _createObject(path, key, parent) {
-    if (parent && _.has(parent, key)) throw new Error(`Duplicate object created for ${path}`);
     let properties = {
-      $truss: {value: this._truss, writable: false, configurable: false, enumerable: false},
       // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
-      $parent: {value: parent, writable: false, configurable: true, enumerable: true},
-      $key: {value: key, writable: false, configurable: false, enumerable: false},
-      $path: {value: path, writable: false, configurable: false, enumerable: false},
-      $$touchThis: {
-        value: parent ? () => parent[key] : () => this._vue.$data.$root,
-        writable: false, configurable: false, enumerable: false
-      }
+      $parent: {value: parent, configurable: true, enumerable: true},
+      $path: {value: path},
+      // $$touchThis: {
+      //   value: parent ? () => parent[key] : () => this._vue.$data.$root,
+      //   writable: false, configurable: false, enumerable: false
+      // }
     };
+    if (path === '/') properties.$truss = {value: this._truss};
 
-    const object = this._modeler.createObject(path, properties);
+    const object = this._modeler.createObject(path, properties, this._truss);
     Object.defineProperties(object, properties);
     return object;
   }
@@ -284,10 +300,7 @@ export default class Tree {
       const descriptor = Object.getOwnPropertyDescriptor(object, name);
       if (descriptor.configurable && descriptor.enumerable) {
         descriptor.enumerable = false;
-        if (name === '$parent') {
-          descriptor.configurable = false;
-          descriptor.set = throwReadOnlyError;
-        }
+        if (name === '$parent') descriptor.configurable = false;
         Object.defineProperty(object, name, descriptor);
       }
     }
@@ -348,7 +361,7 @@ export default class Tree {
       return;
     }
     let object = parent[key];
-    if (object === undefined) {
+    if (!_.isObject(object)) {
       object = this._createObject(path, key, parent);
       this._setFirebaseProperty(parent, key, object);
       this._completeCreateObject(object);
@@ -441,7 +454,7 @@ export default class Tree {
   }
 
   _holdsConcreteData(object, ghostObjects) {
-    if (ghostObjects && _.contains(ghostObjects, object)) return false;
+    if (ghostObjects && _.includes(ghostObjects, object)) return false;
     if (_.some(object, value => !value.$truss)) return true;
     return _.some(object, value => this._holdsConcreteData(value, ghostObjects));
   }
@@ -534,8 +547,6 @@ export default class Tree {
   }
 }
 
-
-function throwReadOnlyError() {throw new Error('Read-only property');}
 
 export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativizePaths) {
   // First, check all paths for correctness and absolutize them, since there could be a mix of
