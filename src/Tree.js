@@ -312,10 +312,7 @@ export default class Tree {
 
   _destroyObject(object) {
     if (!(object && object.$truss)) return;
-    if (object.$$finalizers) {
-      // Some destructors remove themselves from the array, so clone it before iterating.
-      for (const fn of _.clone(object.$$finalizers)) fn();
-    }
+    this._modeler.destroyObject(object);
     for (const key in object) {
       if (!Object.hasOwnProperty(object, key)) continue;
       this._destroyObject(object[key]);

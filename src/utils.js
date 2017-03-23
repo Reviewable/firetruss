@@ -27,6 +27,42 @@ export function wrapPromiseCallback(callback) {
   };
 }
 
+export function makePromiseCancelable(promise, cancel) {
+  promise = promiseFinally(promise, () => {cancel = null;});
+  promise.cancel = () => {
+    if (!cancel) return;
+    cancel();
+    cancel = null;
+  };
+  propagatePromiseProperty(promise, 'cancel');
+  return promise;
+}
+
+function propagatePromiseProperty(promise, propertyName) {
+  const originalThen = promise.then, originalCatch = promise.catch;
+  promise.then = (onResolved, onRejected) => {
+    const derivedPromise = originalThen.call(promise, onResolved, onRejected);
+    derivedPromise[propertyName] = promise[propertyName];
+    propagatePromiseProperty(derivedPromise, propertyName);
+  };
+  promise.catch = onRejected => {
+    const derivedPromise = originalCatch.call(promise, onRejected);
+    derivedPromise[propertyName] = promise[propertyName];
+    propagatePromiseProperty(derivedPromise, propertyName);
+  };
+  return promise;
+}
+
+export function promiseFinally(promise, onFinally) {
+  if (!onFinally) return promise;
+  onFinally = wrapPromiseCallback(onFinally);
+  return promise.then(result => {
+    return onFinally().then(() => result);
+  }, error => {
+    return onFinally().then(() => Promise.reject(error));
+  });
+}
+
 export function joinPath() {
   const segments = [];
   for (const segment of arguments) {

@@ -1,5 +1,5 @@
 import Reference from './Reference.js';
-import {makePathMatcher, joinPath, escapeKey, unescapeKey} from './utils.js';
+import {makePathMatcher, joinPath, escapeKey, unescapeKey, promiseFinally} from './utils.js';
 
 import _ from 'lodash';
 import performanceNow from 'performance-now';
@@ -35,33 +35,35 @@ class Value {
   get $ready() {return this.$ref.ready;}
   get $overridden() {return false;}
 
+  $peek(target, callback) {
+    const promise = promiseFinally(
+      this.$truss.peek(target, callback), () => {_.pull(this.$$finalizers, promise.cancel);}
+    );
+    this.$$finalizers.push(promise.cancel);
+    return promise;
+  }
+
   $watch(subjectFn, callbackFn, options) {
-    let unwatchAndRemoveDestructor;
+    let unwatchAndRemoveFinalizer;
 
     const unwatch = this.$truss.watch(() => {
       this.$$touchThis();
       return subjectFn.call(this);
     }, callbackFn.bind(this), options);
 
-    unwatchAndRemoveDestructor = () => {
+    unwatchAndRemoveFinalizer = () => {
       unwatch();
-      _.pull(this.$$finalizers, unwatchAndRemoveDestructor);
+      _.pull(this.$$finalizers, unwatchAndRemoveFinalizer);
     };
-    this.$$finalizers.push(unwatchAndRemoveDestructor);
-    return unwatchAndRemoveDestructor;
+    this.$$finalizers.push(unwatchAndRemoveFinalizer);
+    return unwatchAndRemoveFinalizer;
   }
 
   $when(expression, options) {
-    const promise = this.$truss.when(() => {
+    const promise = promiseFinally(this.$truss.when(() => {
       this.$$touchThis();
       return expression.call(this);
-    }, options);
-
-    const originalCancel = promise.cancel;
-    promise.cancel = () => {
-      originalCancel();
-      _.pull(this.$$finalizers, promise.cancel);
-    };
+    }, options), () => {_.pull(this.$$finalizers, promise.cancel);});
     this.$$finalizers.push(promise.cancel);
     return promise;
   }
@@ -252,6 +254,13 @@ export default class Modeler {
         value = newValue;
       }
     };
+  }
+
+  destroyObject(object) {
+    if (_.has(object, '$$finalizers')) {
+      // Some destructors remove themselves from the array, so clone it before iterating.
+      for (const fn of _.clone(object.$$finalizers)) fn();
+    }
   }
 
   isPlaceholder(path) {

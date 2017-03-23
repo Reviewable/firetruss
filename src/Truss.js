@@ -8,7 +8,10 @@ import KeyGenerator from './KeyGenerator.js';
 import MetaTree from './MetaTree.js';
 import {Handle, Reference} from './Reference.js';
 import Tree from './Tree.js';
-import {escapeKey, unescapeKey, wrapPromiseCallback, SERVER_TIMESTAMP} from './utils.js';
+import {
+  escapeKey, unescapeKey, wrapPromiseCallback, makePromiseCancelable, promiseFinally,
+  SERVER_TIMESTAMP
+} from './utils.js';
 
 
 let bridge, logging;
@@ -87,21 +90,48 @@ export default class Truss {
   // target is Reference, Query, or connection Object like above
   peek(target, callback) {
     callback = wrapPromiseCallback(callback);
-    return new Promise((resolve, reject) => {
+    let cleanup, cancel;
+    const promise = new Promise((resolve, reject) => {
       const scope = {};
-      const connector = new Connector(scope, {result: target}, this._tree, 'peek');
-      const unwatch = this._vue.$watch(() => connector.ready, ready => {
+      let callbackPromise;
+
+      let connector = new Connector(scope, {result: target}, this._tree, 'peek');
+
+      let unintercept = this.intercept('peek', {onFailure: op => {
+        function match(descriptor) {
+          if (!descriptor) return;
+          if (descriptor instanceof Handle) return op.target.isEqual(descriptor);
+          return _.some(descriptor, value => match(value));
+        }
+        if (match(connector.at)) {
+          reject(op.error);
+          cleanup();
+        }
+      }});
+
+      let unwatch = this.watch(() => connector.ready, ready => {
         if (!ready) return;
         unwatch();
-        callback(scope.result).then(result => {
-          connector.destroy();
-          resolve(result);
-        }, error => {
-          connector.destroy();
-          reject(error);
-        });
+        unwatch = null;
+        callbackPromise = promiseFinally(
+          callback(scope.result), () => {callbackPromise = null; cleanup();}
+        ).then(result => {resolve(result);}, error => {reject(error);});
       });
+
+      cleanup = () => {
+        if (unwatch) {unwatch(); unwatch = null;}
+        if (unintercept) {unintercept(); unintercept = null;}
+        if (connector) {connector.destroy(); connector = null;}
+        if (callbackPromise && callbackPromise.cancel) callbackPromise.cancel();
+      };
+
+      cancel = () => {
+        reject(new Error('Canceled'));
+        cleanup();
+      };
     });
+    makePromiseCancelable(promise, cancel);
+    return promise;
   }
 
   watch(subjectFn, callbackFn, options) {
@@ -112,8 +142,7 @@ export default class Truss {
       if (numCallbacks === 1) {
         // Delay the immediate callback until we've had a chance to return the unwatch function.
         Promise.resolve().then(() => {
-          if (numCallbacks > 1) return;
-          if (subjectFn() !== newValue) return;
+          if (numCallbacks > 1 || subjectFn() !== newValue) return;
           callbackFn(newValue, oldValue);
           angularCompatibility.digest();
         });
@@ -127,16 +156,29 @@ export default class Truss {
   }
 
   when(expression, options) {
-    let unwatch;
-    const promise = new Promise(resolve => {
-      unwatch = this.watch(expression, value => {
-        if (value !== undefined && value !== null) {
-          promise.cancel();
+    let cleanup, timeoutHandle;
+    let promise = new Promise((resolve, reject) => {
+      let unwatch = this.watch(expression, value => {
+        if (value) {
           resolve(value);
+          cleanup();
         }
-      }, options);
+      });
+      if (_.has(options, 'timeout')) {
+        timeoutHandle = setTimeout(() => {
+          timeoutHandle = null;
+          reject(new Error(options.timeoutMessage || 'Timeout'));
+          cleanup();
+        }, options.timeout);
+      }
+      cleanup = () => {
+        if (unwatch) {unwatch(); unwatch = null;}
+        if (timeoutHandle) {clearTimeout(timeoutHandle); timeoutHandle = null;}
+        reject(new Error('Canceled'));
+      };
     });
-    promise.cancel = unwatch;
+    promise = promiseFinally(promise, cleanup);
+    makePromiseCancelable(promise, cleanup);
     return promise;
   }
 

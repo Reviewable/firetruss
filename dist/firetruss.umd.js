@@ -68,6 +68,42 @@
 	  };
 	}
 
+	function makePromiseCancelable(promise, cancel) {
+	  promise = promiseFinally(promise, function () {cancel = null;});
+	  promise.cancel = function () {
+	    if (!cancel) { return; }
+	    cancel();
+	    cancel = null;
+	  };
+	  propagatePromiseProperty(promise, 'cancel');
+	  return promise;
+	}
+
+	function propagatePromiseProperty(promise, propertyName) {
+	  var originalThen = promise.then, originalCatch = promise.catch;
+	  promise.then = function (onResolved, onRejected) {
+	    var derivedPromise = originalThen.call(promise, onResolved, onRejected);
+	    derivedPromise[propertyName] = promise[propertyName];
+	    propagatePromiseProperty(derivedPromise, propertyName);
+	  };
+	  promise.catch = function (onRejected) {
+	    var derivedPromise = originalCatch.call(promise, onRejected);
+	    derivedPromise[propertyName] = promise[propertyName];
+	    propagatePromiseProperty(derivedPromise, propertyName);
+	  };
+	  return promise;
+	}
+
+	function promiseFinally(promise, onFinally) {
+	  if (!onFinally) { return promise; }
+	  onFinally = wrapPromiseCallback(onFinally);
+	  return promise.then(function (result) {
+	    return onFinally().then(function () { return result; });
+	  }, function (error) {
+	    return onFinally().then(function () { return Promise.reject(error); });
+	  });
+	}
+
 	function joinPath() {
 	  var segments = [];
 	  for (var i = 0, list = arguments; i < list.length; i += 1) {
@@ -1888,37 +1924,41 @@
 	prototypeAccessors$8.$ready.get = function () {return this.$ref.ready;};
 	prototypeAccessors$8.$overridden.get = function () {return false;};
 
+	Value.prototype.$peek = function $peek (target, callback) {
+	    var this$1 = this;
+
+	  var promise = promiseFinally(
+	    this.$truss.peek(target, callback), function () {_.pull(this$1.$$finalizers, promise.cancel);}
+	  );
+	  this.$$finalizers.push(promise.cancel);
+	  return promise;
+	};
+
 	Value.prototype.$watch = function $watch (subjectFn, callbackFn, options) {
 	    var this$1 = this;
 
-	  var unwatchAndRemoveDestructor;
+	  var unwatchAndRemoveFinalizer;
 
 	  var unwatch = this.$truss.watch(function () {
 	    this$1.$$touchThis();
 	    return subjectFn.call(this$1);
 	  }, callbackFn.bind(this), options);
 
-	  unwatchAndRemoveDestructor = function () {
+	  unwatchAndRemoveFinalizer = function () {
 	    unwatch();
-	    _.pull(this$1.$$finalizers, unwatchAndRemoveDestructor);
+	    _.pull(this$1.$$finalizers, unwatchAndRemoveFinalizer);
 	  };
-	  this.$$finalizers.push(unwatchAndRemoveDestructor);
-	  return unwatchAndRemoveDestructor;
+	  this.$$finalizers.push(unwatchAndRemoveFinalizer);
+	  return unwatchAndRemoveFinalizer;
 	};
 
 	Value.prototype.$when = function $when (expression, options) {
 	    var this$1 = this;
 
-	  var promise = this.$truss.when(function () {
+	  var promise = promiseFinally(this.$truss.when(function () {
 	    this$1.$$touchThis();
 	    return expression.call(this$1);
-	  }, options);
-
-	  var originalCancel = promise.cancel;
-	  promise.cancel = function () {
-	    originalCancel();
-	    _.pull(this$1.$$finalizers, promise.cancel);
-	  };
+	  }, options), function () {_.pull(this$1.$$finalizers, promise.cancel);});
 	  this.$$finalizers.push(promise.cancel);
 	  return promise;
 	};
@@ -2118,6 +2158,17 @@
 	      value = newValue;
 	    }
 	  };
+	};
+
+	Modeler.prototype.destroyObject = function destroyObject (object) {
+	  if (_.has(object, '$$finalizers')) {
+	    // Some destructors remove themselves from the array, so clone it before iterating.
+	    for (var i = 0, list = _.clone(object.$$finalizers); i < list.length; i += 1) {
+	        var fn = list[i];
+
+	        fn();
+	      }
+	  }
 	};
 
 	Modeler.prototype.isPlaceholder = function isPlaceholder (path) {
@@ -2511,14 +2562,7 @@
 	    var this$1 = this;
 
 	  if (!(object && object.$truss)) { return; }
-	  if (object.$$finalizers) {
-	    // Some destructors remove themselves from the array, so clone it before iterating.
-	    for (var i = 0, list = _.clone(object.$$finalizers); i < list.length; i += 1) {
-	        var fn = list[i];
-
-	        fn();
-	      }
-	  }
+	  this._modeler.destroyObject(object);
 	  for (var key in object) {
 	    if (!Object.hasOwnProperty(object, key)) { continue; }
 	    this$1._destroyObject(object[key]);
@@ -2899,21 +2943,48 @@
 	    var this$1 = this;
 
 	  callback = wrapPromiseCallback(callback);
-	  return new Promise(function (resolve, reject) {
+	  var cleanup, cancel;
+	  var promise = new Promise(function (resolve, reject) {
 	    var scope = {};
+	    var callbackPromise;
+
 	    var connector = new Connector(scope, {result: target}, this$1._tree, 'peek');
-	    var unwatch = this$1._vue.$watch(function () { return connector.ready; }, function (ready) {
+
+	    var unintercept = this$1.intercept('peek', {onFailure: function (op) {
+	      function match(descriptor) {
+	        if (!descriptor) { return; }
+	        if (descriptor instanceof Handle) { return op.target.isEqual(descriptor); }
+	        return _.some(descriptor, function (value) { return match(value); });
+	      }
+	      if (match(connector.at)) {
+	        reject(op.error);
+	        cleanup();
+	      }
+	    }});
+
+	    var unwatch = this$1.watch(function () { return connector.ready; }, function (ready) {
 	      if (!ready) { return; }
 	      unwatch();
-	      callback(scope.result).then(function (result) {
-	        connector.destroy();
-	        resolve(result);
-	      }, function (error) {
-	        connector.destroy();
-	        reject(error);
-	      });
+	      unwatch = null;
+	      callbackPromise = promiseFinally(
+	        callback(scope.result), function () {callbackPromise = null; cleanup();}
+	      ).then(function (result) {resolve(result);}, function (error) {reject(error);});
 	    });
+
+	    cleanup = function () {
+	      if (unwatch) {unwatch(); unwatch = null;}
+	      if (unintercept) {unintercept(); unintercept = null;}
+	      if (connector) {connector.destroy(); connector = null;}
+	      if (callbackPromise && callbackPromise.cancel) { callbackPromise.cancel(); }
+	    };
+
+	    cancel = function () {
+	      reject(new Error('Canceled'));
+	      cleanup();
+	    };
 	  });
+	  makePromiseCancelable(promise, cancel);
+	  return promise;
 	};
 
 	Truss.prototype.watch = function watch (subjectFn, callbackFn, options) {
@@ -2924,8 +2995,7 @@
 	    if (numCallbacks === 1) {
 	      // Delay the immediate callback until we've had a chance to return the unwatch function.
 	      Promise.resolve().then(function () {
-	        if (numCallbacks > 1) { return; }
-	        if (subjectFn() !== newValue) { return; }
+	        if (numCallbacks > 1 || subjectFn() !== newValue) { return; }
 	        callbackFn(newValue, oldValue);
 	        angularProxy.digest();
 	      });
@@ -2941,16 +3011,29 @@
 	Truss.prototype.when = function when (expression, options) {
 	    var this$1 = this;
 
-	  var unwatch;
-	  var promise = new Promise(function (resolve) {
-	    unwatch = this$1.watch(expression, function (value) {
-	      if (value !== undefined && value !== null) {
-	        promise.cancel();
+	  var cleanup, timeoutHandle;
+	  var promise = new Promise(function (resolve, reject) {
+	    var unwatch = this$1.watch(expression, function (value) {
+	      if (value) {
 	        resolve(value);
+	        cleanup();
 	      }
-	    }, options);
+	    });
+	    if (_.has(options, 'timeout')) {
+	      timeoutHandle = setTimeout(function () {
+	        timeoutHandle = null;
+	        reject(new Error(options.timeoutMessage || 'Timeout'));
+	        cleanup();
+	      }, options.timeout);
+	    }
+	    cleanup = function () {
+	      if (unwatch) {unwatch(); unwatch = null;}
+	      if (timeoutHandle) {clearTimeout(timeoutHandle); timeoutHandle = null;}
+	      reject(new Error('Canceled'));
+	    };
 	  });
-	  promise.cancel = unwatch;
+	  promise = promiseFinally(promise, cleanup);
+	  makePromiseCancelable(promise, cleanup);
 	  return promise;
 	};
 

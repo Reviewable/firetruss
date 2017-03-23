@@ -63,6 +63,42 @@ function wrapPromiseCallback(callback) {
   };
 }
 
+function makePromiseCancelable(promise, cancel) {
+  promise = promiseFinally(promise, () => {cancel = null;});
+  promise.cancel = () => {
+    if (!cancel) return;
+    cancel();
+    cancel = null;
+  };
+  propagatePromiseProperty(promise, 'cancel');
+  return promise;
+}
+
+function propagatePromiseProperty(promise, propertyName) {
+  const originalThen = promise.then, originalCatch = promise.catch;
+  promise.then = (onResolved, onRejected) => {
+    const derivedPromise = originalThen.call(promise, onResolved, onRejected);
+    derivedPromise[propertyName] = promise[propertyName];
+    propagatePromiseProperty(derivedPromise, propertyName);
+  };
+  promise.catch = onRejected => {
+    const derivedPromise = originalCatch.call(promise, onRejected);
+    derivedPromise[propertyName] = promise[propertyName];
+    propagatePromiseProperty(derivedPromise, propertyName);
+  };
+  return promise;
+}
+
+function promiseFinally(promise, onFinally) {
+  if (!onFinally) return promise;
+  onFinally = wrapPromiseCallback(onFinally);
+  return promise.then(result => {
+    return onFinally().then(() => result);
+  }, error => {
+    return onFinally().then(() => Promise.reject(error));
+  });
+}
+
 function joinPath() {
   const segments = [];
   for (const segment of arguments) {
@@ -1668,33 +1704,35 @@ class Value {
   get $ready() {return this.$ref.ready;}
   get $overridden() {return false;}
 
+  $peek(target, callback) {
+    const promise = promiseFinally(
+      this.$truss.peek(target, callback), () => {_.pull(this.$$finalizers, promise.cancel);}
+    );
+    this.$$finalizers.push(promise.cancel);
+    return promise;
+  }
+
   $watch(subjectFn, callbackFn, options) {
-    let unwatchAndRemoveDestructor;
+    let unwatchAndRemoveFinalizer;
 
     const unwatch = this.$truss.watch(() => {
       this.$$touchThis();
       return subjectFn.call(this);
     }, callbackFn.bind(this), options);
 
-    unwatchAndRemoveDestructor = () => {
+    unwatchAndRemoveFinalizer = () => {
       unwatch();
-      _.pull(this.$$finalizers, unwatchAndRemoveDestructor);
+      _.pull(this.$$finalizers, unwatchAndRemoveFinalizer);
     };
-    this.$$finalizers.push(unwatchAndRemoveDestructor);
-    return unwatchAndRemoveDestructor;
+    this.$$finalizers.push(unwatchAndRemoveFinalizer);
+    return unwatchAndRemoveFinalizer;
   }
 
   $when(expression, options) {
-    const promise = this.$truss.when(() => {
+    const promise = promiseFinally(this.$truss.when(() => {
       this.$$touchThis();
       return expression.call(this);
-    }, options);
-
-    const originalCancel = promise.cancel;
-    promise.cancel = () => {
-      originalCancel();
-      _.pull(this.$$finalizers, promise.cancel);
-    };
+    }, options), () => {_.pull(this.$$finalizers, promise.cancel);});
     this.$$finalizers.push(promise.cancel);
     return promise;
   }
@@ -1885,6 +1923,13 @@ class Modeler {
         value = newValue;
       }
     };
+  }
+
+  destroyObject(object) {
+    if (_.has(object, '$$finalizers')) {
+      // Some destructors remove themselves from the array, so clone it before iterating.
+      for (const fn of _.clone(object.$$finalizers)) fn();
+    }
   }
 
   isPlaceholder(path) {
@@ -2245,10 +2290,7 @@ class Tree {
 
   _destroyObject(object) {
     if (!(object && object.$truss)) return;
-    if (object.$$finalizers) {
-      // Some destructors remove themselves from the array, so clone it before iterating.
-      for (const fn of _.clone(object.$$finalizers)) fn();
-    }
+    this._modeler.destroyObject(object);
     for (const key in object) {
       if (!Object.hasOwnProperty(object, key)) continue;
       this._destroyObject(object[key]);
@@ -2608,21 +2650,48 @@ class Truss {
   // target is Reference, Query, or connection Object like above
   peek(target, callback) {
     callback = wrapPromiseCallback(callback);
-    return new Promise((resolve, reject) => {
+    let cleanup, cancel;
+    const promise = new Promise((resolve, reject) => {
       const scope = {};
-      const connector = new Connector(scope, {result: target}, this._tree, 'peek');
-      const unwatch = this._vue.$watch(() => connector.ready, ready => {
+      let callbackPromise;
+
+      let connector = new Connector(scope, {result: target}, this._tree, 'peek');
+
+      let unintercept = this.intercept('peek', {onFailure: op => {
+        function match(descriptor) {
+          if (!descriptor) return;
+          if (descriptor instanceof Handle) return op.target.isEqual(descriptor);
+          return _.some(descriptor, value => match(value));
+        }
+        if (match(connector.at)) {
+          reject(op.error);
+          cleanup();
+        }
+      }});
+
+      let unwatch = this.watch(() => connector.ready, ready => {
         if (!ready) return;
         unwatch();
-        callback(scope.result).then(result => {
-          connector.destroy();
-          resolve(result);
-        }, error => {
-          connector.destroy();
-          reject(error);
-        });
+        unwatch = null;
+        callbackPromise = promiseFinally(
+          callback(scope.result), () => {callbackPromise = null; cleanup();}
+        ).then(result => {resolve(result);}, error => {reject(error);});
       });
+
+      cleanup = () => {
+        if (unwatch) {unwatch(); unwatch = null;}
+        if (unintercept) {unintercept(); unintercept = null;}
+        if (connector) {connector.destroy(); connector = null;}
+        if (callbackPromise && callbackPromise.cancel) callbackPromise.cancel();
+      };
+
+      cancel = () => {
+        reject(new Error('Canceled'));
+        cleanup();
+      };
     });
+    makePromiseCancelable(promise, cancel);
+    return promise;
   }
 
   watch(subjectFn, callbackFn, options) {
@@ -2633,8 +2702,7 @@ class Truss {
       if (numCallbacks === 1) {
         // Delay the immediate callback until we've had a chance to return the unwatch function.
         Promise.resolve().then(() => {
-          if (numCallbacks > 1) return;
-          if (subjectFn() !== newValue) return;
+          if (numCallbacks > 1 || subjectFn() !== newValue) return;
           callbackFn(newValue, oldValue);
           angularProxy.digest();
         });
@@ -2648,16 +2716,29 @@ class Truss {
   }
 
   when(expression, options) {
-    let unwatch;
-    const promise = new Promise(resolve => {
-      unwatch = this.watch(expression, value => {
-        if (value !== undefined && value !== null) {
-          promise.cancel();
+    let cleanup, timeoutHandle;
+    let promise = new Promise((resolve, reject) => {
+      let unwatch = this.watch(expression, value => {
+        if (value) {
           resolve(value);
+          cleanup();
         }
-      }, options);
+      });
+      if (_.has(options, 'timeout')) {
+        timeoutHandle = setTimeout(() => {
+          timeoutHandle = null;
+          reject(new Error(options.timeoutMessage || 'Timeout'));
+          cleanup();
+        }, options.timeout);
+      }
+      cleanup = () => {
+        if (unwatch) {unwatch(); unwatch = null;}
+        if (timeoutHandle) {clearTimeout(timeoutHandle); timeoutHandle = null;}
+        reject(new Error('Canceled'));
+      };
     });
-    promise.cancel = unwatch;
+    promise = promiseFinally(promise, cleanup);
+    makePromiseCancelable(promise, cleanup);
     return promise;
   }
 
