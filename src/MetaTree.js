@@ -7,12 +7,17 @@ export default class MetaTree {
     this._bridge = bridge;
     this._vue = new Vue({data: {$root: {
       connected: undefined, timeOffset: 0, user: undefined, userid: undefined,
-      updateNowAtIntervals(name, intervalMillis) {
-        if (this.hasOwnProperty(name)) throw new Error(`Property "${name}" already defined`);
-        Vue.set(this, name, Date.now() + this.timeOffset);
-        setInterval(() => {
-          this[name] = Date.now() + this.timeOffset;
-        }, intervalMillis);
+      nowAtInterval(intervalMillis) {
+        const key = 'now' + intervalMillis;
+        if (!this.hasOwnProperty(key)) {
+          const update = () => {
+            this[key] = Date.now() + this.timeOffset;
+            angularCompatibility.digest();
+          };
+          update();
+          setInterval(() => update, intervalMillis);
+        }
+        return this[key];
       }
     }}});
 

@@ -141,7 +141,7 @@ export default class Connector {
             if (!subReady) return;
             unwatch();
             delete this._disconnects[key];
-            Vue.set(this._vue, key, subScope);
+            Vue.set(this._vue.$data, key, subScope);
             angular.digest();
           }
         );
@@ -163,7 +163,7 @@ export default class Connector {
 
   _updateScopeRef(key, value) {
     if (this._vue[key] !== value) {
-      Vue.set(this._vue, key, value);
+      Vue.set(this._vue.$data, key, value);
       angular.digest();
     }
   }
@@ -171,7 +171,7 @@ export default class Connector {
   _updateScopeQuery(key, childKeys) {
     let changed = false;
     if (!this._vue[key]) {
-      Vue.set(this._vue, key, {});
+      Vue.set(this._vue.$data, key, {});
       changed = true;
     }
     const subScope = this._vue[key];

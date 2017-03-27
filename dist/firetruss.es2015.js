@@ -933,7 +933,7 @@ class Connector {
             if (!subReady) return;
             unwatch();
             delete this._disconnects[key];
-            Vue.set(this._vue, key, subScope);
+            Vue.set(this._vue.$data, key, subScope);
             angularProxy.digest();
           }
         );
@@ -955,7 +955,7 @@ class Connector {
 
   _updateScopeRef(key, value) {
     if (this._vue[key] !== value) {
-      Vue.set(this._vue, key, value);
+      Vue.set(this._vue.$data, key, value);
       angularProxy.digest();
     }
   }
@@ -963,7 +963,7 @@ class Connector {
   _updateScopeQuery(key, childKeys) {
     let changed = false;
     if (!this._vue[key]) {
-      Vue.set(this._vue, key, {});
+      Vue.set(this._vue.$data, key, {});
       changed = true;
     }
     const subScope = this._vue[key];
@@ -1266,12 +1266,17 @@ class MetaTree {
     this._bridge = bridge;
     this._vue = new Vue({data: {$root: {
       connected: undefined, timeOffset: 0, user: undefined, userid: undefined,
-      updateNowAtIntervals(name, intervalMillis) {
-        if (this.hasOwnProperty(name)) throw new Error(`Property "${name}" already defined`);
-        Vue.set(this, name, Date.now() + this.timeOffset);
-        setInterval(() => {
-          this[name] = Date.now() + this.timeOffset;
-        }, intervalMillis);
+      nowAtInterval(intervalMillis) {
+        const key = 'now' + intervalMillis;
+        if (!this.hasOwnProperty(key)) {
+          const update = () => {
+            this[key] = Date.now() + this.timeOffset;
+            angularProxy.digest();
+          };
+          update();
+          setInterval(() => update, intervalMillis);
+        }
+        return this[key];
       }
     }}});
 
@@ -1682,8 +1687,15 @@ const RESERVED_VALUE_PROPERTY_NAMES = {
 
 const computedPropertyStats = {};
 
+// Holds properties that we're going to set on a model object that's being created right now as soon
+// as it's been created, but that we'd like to be accessible in the constructor.  The object
+// prototype's getters will pick those up until they get overridden in the instance.
+let creatingObjectProperties;
+
 
 class Value {
+  get $parent() {return creatingObjectProperties.$parent.value;}
+  get $path() {return creatingObjectProperties.$path.value;}
   get $truss() {
     Object.defineProperty(this, '$truss', {value: this.$parent.$truss});
     return this.$truss;
@@ -1700,9 +1712,21 @@ class Value {
   }
   get $keys() {return _.keys(this);}
   get $values() {return _.values(this);}
+  get $meta() {return this.$truss.meta;}
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
+  get $now() {return this.$truss.now;}
   get $ready() {return this.$ref.ready;}
   get $overridden() {return false;}
+
+  $intercept(actionType, callbacks) {
+    const unintercept = this.$truss.intercept(actionType, callbacks);
+    const uninterceptAndRemoveFinalizer = () => {
+      unintercept();
+      _.pull(this.$$finalizers, uninterceptAndRemoveFinalizer);
+    };
+    this.$$finalizers.push(uninterceptAndRemoveFinalizer);
+    return uninterceptAndRemoveFinalizer;
+  }
 
   $peek(target, callback) {
     const promise = promiseFinally(
@@ -1850,7 +1874,7 @@ class Modeler {
    * them up and make the reactive, so you should call _completeCreateObject once it's done so and
    * before any Firebase properties are added.
    */
-  createObject(path, properties, truss) {
+  createObject(path, properties) {
     let Class = Value;
     let computedProperties;
     for (const mount of this._mounts) {
@@ -1867,7 +1891,9 @@ class Modeler {
       }
     }
 
-    const object = new Class(truss);
+    creatingObjectProperties = properties;
+    const object = new Class();
+    creatingObjectProperties = null;
 
     if (computedProperties) {
       _.each(computedProperties, prop => {
@@ -1889,7 +1915,6 @@ class Modeler {
 
     let value;
     let writeAllowed = false;
-    let firstCallback = true;
 
     if (!object.$$initializers) {
       Object.defineProperty(object, '$$initializers', {
@@ -1898,17 +1923,11 @@ class Modeler {
     object.$$initializers.push(vue => {
       object.$$finalizers.push(
         vue.$watch(computeValue.bind(object, prop, stats), newValue => {
-          if (firstCallback) {
-            stats.numUpdates += 1;
-            value = newValue;
-            firstCallback = false;
-          } else {
-            if (_.isEqual(value, newValue, isTrussValueEqual)) return;
-            stats.numUpdates += 1;
-            writeAllowed = true;
-            object[prop.name] = newValue;
-            writeAllowed = false;
-          }
+          if (_.isEqual(value, newValue, isTrussValueEqual)) return;
+          stats.numUpdates += 1;
+          writeAllowed = true;
+          object[prop.name] = newValue;
+          writeAllowed = false;
         }, {immediate: true})  // use immediate:true since watcher will run computeValue anyway
       );
     });
@@ -1945,15 +1964,39 @@ class Modeler {
     });
   }
 
-  checkVueObject(object, path) {
+  checkVueObject(object, path, checkedObjects) {
+    checkedObjects = checkedObjects || [];
     for (const key of Object.getOwnPropertyNames(object)) {
       if (RESERVED_VALUE_PROPERTY_NAMES[key]) continue;
-      const descriptor = Object.getOwnPropertyDescriptor(object, key);
-      if ('value' in descriptor || !descriptor.get || !descriptor.set) {
-        throw new Error(`Firetruss object at ${path} has a rogue property: ${key}`);
+      // jshint loopfunc:true
+      const mount = _.find(this._mounts, mount => mount.Class === object.constructor);
+      // jshint loopfunc:false
+      if (mount && _.includes(mount.matcher.variables, key)) continue;
+      if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
+        const descriptor = Object.getOwnPropertyDescriptor(object, key);
+        if ('value' in descriptor || !descriptor.get) {
+          throw new Error(
+            `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
+        }
       }
       const value = object[key];
-      if (_.isObject(value)) this.checkVueObject(value, joinPath(path, escapeKey(key)));
+      if (_.isObject(value) && !(value instanceof Connector) && !(value instanceof Function) &&
+          !_.includes(checkedObjects, value)) {
+        checkedObjects.push(value);
+        this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
+      }
+    }
+    if (object.$truss) {
+      for (const key in object) {
+        if (!object.hasOwnProperty(key)) continue;
+        try {
+          object[key] = object[key];
+          throw new Error(
+            `Firetruss object at ${path} has an enumerable non-Firebase property: ${key}`);
+        } catch (e) {
+          if (e.trussCode !== 'firebase_overwrite') throw e;
+        }
+      }
     }
   }
 
@@ -2258,15 +2301,11 @@ class Tree {
     let properties = {
       // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
       $parent: {value: parent, configurable: true, enumerable: true},
-      $path: {value: path},
-      // $$touchThis: {
-      //   value: parent ? () => parent[key] : () => this._vue.$data.$root,
-      //   writable: false, configurable: false, enumerable: false
-      // }
+      $path: {value: path}
     };
     if (path === '/') properties.$truss = {value: this._truss};
 
-    const object = this._modeler.createObject(path, properties, this._truss);
+    const object = this._modeler.createObject(path, properties);
     Object.defineProperties(object, properties);
     return object;
   }
@@ -2501,7 +2540,9 @@ class Tree {
 
   _overwriteFirebaseProperty(descriptor, key, newValue) {
     if (!this._firebasePropertyEditAllowed) {
-      throw new Error(`Firebase data cannot be mutated directly: ${key}`);
+      const e = new Error(`Firebase data cannot be mutated directly: ${key}`);
+      e.trussCode = 'firebase_overwrite';
+      throw e;
     }
     descriptor.set.call(this, newValue);
   }

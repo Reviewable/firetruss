@@ -27,6 +27,12 @@ class Root {
   makeA() {
     Vue.set(this, 'a', 2);
   }
+  get complex() {
+    return {b: this.x || 5};
+  }
+  get derived() {
+    return this.complex.b + 1;
+  }
 }
 
 class Subroot {
@@ -79,5 +85,15 @@ test('update after new instance property created', t => {
     t.is(tree.root.z, 3);
     t.is(tree.root.sub.z, 4);
     t.is(tree.root.w, 14);
+  });
+});
+
+test('computing non-primitive values', t => {
+  const tree = t.context.tree;
+  t.is(tree.root.derived, 2);
+  tree.root.x = 3;
+  return Promise.resolve().then(() => {
+    t.is(tree.root.derived, 4);
+    tree.checkVueObject(tree.root, '/');
   });
 });

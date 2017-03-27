@@ -1020,7 +1020,7 @@
 	          if (!subReady) { return; }
 	          unwatch();
 	          delete this$1._disconnects[key];
-	          Vue.set(this$1._vue, key, subScope);
+	          Vue.set(this$1._vue.$data, key, subScope);
 	          angularProxy.digest();
 	        }
 	      );
@@ -1042,7 +1042,7 @@
 
 	Connector.prototype._updateScopeRef = function _updateScopeRef (key, value) {
 	  if (this._vue[key] !== value) {
-	    Vue.set(this._vue, key, value);
+	    Vue.set(this._vue.$data, key, value);
 	    angularProxy.digest();
 	  }
 	};
@@ -1052,7 +1052,7 @@
 
 	  var changed = false;
 	  if (!this._vue[key]) {
-	    Vue.set(this._vue, key, {});
+	    Vue.set(this._vue.$data, key, {});
 	    changed = true;
 	  }
 	  var subScope = this._vue[key];
@@ -1368,14 +1368,19 @@
 	  this._bridge = bridge;
 	  this._vue = new Vue({data: {$root: {
 	    connected: undefined, timeOffset: 0, user: undefined, userid: undefined,
-	    updateNowAtIntervals: function updateNowAtIntervals(name, intervalMillis) {
+	    nowAtInterval: function nowAtInterval(intervalMillis) {
 	      var this$1 = this;
 
-	      if (this.hasOwnProperty(name)) { throw new Error(("Property \"" + name + "\" already defined")); }
-	      Vue.set(this, name, Date.now() + this.timeOffset);
-	      setInterval(function () {
-	        this$1[name] = Date.now() + this$1.timeOffset;
-	      }, intervalMillis);
+	      var key = 'now' + intervalMillis;
+	      if (!this.hasOwnProperty(key)) {
+	        var update = function () {
+	          this$1[key] = Date.now() + this$1.timeOffset;
+	          angularProxy.digest();
+	        };
+	        update();
+	        setInterval(function () { return update; }, intervalMillis);
+	      }
+	      return this[key];
 	    }
 	  }}});
 
@@ -1899,11 +1904,18 @@
 
 	var computedPropertyStats = {};
 
+	// Holds properties that we're going to set on a model object that's being created right now as soon
+	// as it's been created, but that we'd like to be accessible in the constructor.  The object
+	// prototype's getters will pick those up until they get overridden in the instance.
+	var creatingObjectProperties;
+
 
 	var Value = function Value () {};
 
-	var prototypeAccessors$8 = { $truss: {},$ref: {},$refs: {},$key: {},$keys: {},$values: {},$root: {},$ready: {},$overridden: {},$$finalizers: {} };
+	var prototypeAccessors$8 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$finalizers: {} };
 
+	prototypeAccessors$8.$parent.get = function () {return creatingObjectProperties.$parent.value;};
+	prototypeAccessors$8.$path.get = function () {return creatingObjectProperties.$path.value;};
 	prototypeAccessors$8.$truss.get = function () {
 	  Object.defineProperty(this, '$truss', {value: this.$parent.$truss});
 	  return this.$truss;
@@ -1920,9 +1932,23 @@
 	};
 	prototypeAccessors$8.$keys.get = function () {return _.keys(this);};
 	prototypeAccessors$8.$values.get = function () {return _.values(this);};
+	prototypeAccessors$8.$meta.get = function () {return this.$truss.meta;};
 	prototypeAccessors$8.$root.get = function () {return this.$truss.root;};// access indirectly to leave dependency trace
+	prototypeAccessors$8.$now.get = function () {return this.$truss.now;};
 	prototypeAccessors$8.$ready.get = function () {return this.$ref.ready;};
 	prototypeAccessors$8.$overridden.get = function () {return false;};
+
+	Value.prototype.$intercept = function $intercept (actionType, callbacks) {
+	    var this$1 = this;
+
+	  var unintercept = this.$truss.intercept(actionType, callbacks);
+	  var uninterceptAndRemoveFinalizer = function () {
+	    unintercept();
+	    _.pull(this$1.$$finalizers, uninterceptAndRemoveFinalizer);
+	  };
+	  this.$$finalizers.push(uninterceptAndRemoveFinalizer);
+	  return uninterceptAndRemoveFinalizer;
+	};
 
 	Value.prototype.$peek = function $peek (target, callback) {
 	    var this$1 = this;
@@ -2081,7 +2107,7 @@
 	 * them up and make the reactive, so you should call _completeCreateObject once it's done so and
 	 * before any Firebase properties are added.
 	 */
-	Modeler.prototype.createObject = function createObject (path, properties, truss) {
+	Modeler.prototype.createObject = function createObject (path, properties) {
 	    var this$1 = this;
 
 	  var Class = Value;
@@ -2102,7 +2128,9 @@
 	    }
 	  }
 
-	  var object = new Class(truss);
+	  creatingObjectProperties = properties;
+	  var object = new Class();
+	  creatingObjectProperties = null;
 
 	  if (computedProperties) {
 	    _.each(computedProperties, function (prop) {
@@ -2124,7 +2152,6 @@
 
 	  var value;
 	  var writeAllowed = false;
-	  var firstCallback = true;
 
 	  if (!object.$$initializers) {
 	    Object.defineProperty(object, '$$initializers', {
@@ -2133,17 +2160,11 @@
 	  object.$$initializers.push(function (vue) {
 	    object.$$finalizers.push(
 	      vue.$watch(computeValue.bind(object, prop, stats), function (newValue) {
-	        if (firstCallback) {
-	          stats.numUpdates += 1;
-	          value = newValue;
-	          firstCallback = false;
-	        } else {
-	          if (_.isEqual(value, newValue, isTrussValueEqual)) { return; }
-	          stats.numUpdates += 1;
-	          writeAllowed = true;
-	          object[prop.name] = newValue;
-	          writeAllowed = false;
-	        }
+	        if (_.isEqual(value, newValue, isTrussValueEqual)) { return; }
+	        stats.numUpdates += 1;
+	        writeAllowed = true;
+	        object[prop.name] = newValue;
+	        writeAllowed = false;
 	      }, {immediate: true})// use immediate:true since watcher will run computeValue anyway
 	    );
 	  });
@@ -2184,19 +2205,43 @@
 	  });
 	};
 
-	Modeler.prototype.checkVueObject = function checkVueObject (object, path) {
+	Modeler.prototype.checkVueObject = function checkVueObject (object, path, checkedObjects) {
 	    var this$1 = this;
 
+	  checkedObjects = checkedObjects || [];
 	  for (var i = 0, list = Object.getOwnPropertyNames(object); i < list.length; i += 1) {
 	    var key = list[i];
 
 	      if (RESERVED_VALUE_PROPERTY_NAMES[key]) { continue; }
-	    var descriptor = Object.getOwnPropertyDescriptor(object, key);
-	    if ('value' in descriptor || !descriptor.get || !descriptor.set) {
-	      throw new Error(("Firetruss object at " + path + " has a rogue property: " + key));
+	    // jshint loopfunc:true
+	    var mount = _.find(this$1._mounts, function (mount) { return mount.Class === object.constructor; });
+	    // jshint loopfunc:false
+	    if (mount && _.includes(mount.matcher.variables, key)) { continue; }
+	    if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
+	      var descriptor = Object.getOwnPropertyDescriptor(object, key);
+	      if ('value' in descriptor || !descriptor.get) {
+	        throw new Error(
+	          ("Value at " + path + ", contained in a Firetruss object, has a rogue property: " + key));
+	      }
 	    }
 	    var value = object[key];
-	    if (_.isObject(value)) { this$1.checkVueObject(value, joinPath(path, escapeKey(key))); }
+	    if (_.isObject(value) && !(value instanceof Connector) && !(value instanceof Function) &&
+	        !_.includes(checkedObjects, value)) {
+	      checkedObjects.push(value);
+	      this$1.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
+	    }
+	  }
+	  if (object.$truss) {
+	    for (var key$1 in object) {
+	      if (!object.hasOwnProperty(key$1)) { continue; }
+	      try {
+	        object[key$1] = object[key$1];
+	        throw new Error(
+	          ("Firetruss object at " + path + " has an enumerable non-Firebase property: " + key$1));
+	      } catch (e) {
+	        if (e.trussCode !== 'firebase_overwrite') { throw e; }
+	      }
+	    }
 	  }
 	};
 
@@ -2520,15 +2565,11 @@
 	  var properties = {
 	    // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
 	    $parent: {value: parent, configurable: true, enumerable: true},
-	    $path: {value: path},
-	    // $$touchThis: {
-	    // value: parent ? () => parent[key] : () => this._vue.$data.$root,
-	    // writable: false, configurable: false, enumerable: false
-	    // }
+	    $path: {value: path}
 	  };
 	  if (path === '/') { properties.$truss = {value: this._truss}; }
 
-	  var object = this._modeler.createObject(path, properties, this._truss);
+	  var object = this._modeler.createObject(path, properties);
 	  Object.defineProperties(object, properties);
 	  return object;
 	};
@@ -2793,7 +2834,9 @@
 
 	Tree.prototype._overwriteFirebaseProperty = function _overwriteFirebaseProperty (descriptor, key, newValue) {
 	  if (!this._firebasePropertyEditAllowed) {
-	    throw new Error(("Firebase data cannot be mutated directly: " + key));
+	    var e = new Error(("Firebase data cannot be mutated directly: " + key));
+	    e.trussCode = 'firebase_overwrite';
+	    throw e;
 	  }
 	  descriptor.set.call(this, newValue);
 	};

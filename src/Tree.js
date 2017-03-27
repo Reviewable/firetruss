@@ -280,15 +280,11 @@ export default class Tree {
     let properties = {
       // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
       $parent: {value: parent, configurable: true, enumerable: true},
-      $path: {value: path},
-      // $$touchThis: {
-      //   value: parent ? () => parent[key] : () => this._vue.$data.$root,
-      //   writable: false, configurable: false, enumerable: false
-      // }
+      $path: {value: path}
     };
     if (path === '/') properties.$truss = {value: this._truss};
 
-    const object = this._modeler.createObject(path, properties, this._truss);
+    const object = this._modeler.createObject(path, properties);
     Object.defineProperties(object, properties);
     return object;
   }
@@ -523,7 +519,9 @@ export default class Tree {
 
   _overwriteFirebaseProperty(descriptor, key, newValue) {
     if (!this._firebasePropertyEditAllowed) {
-      throw new Error(`Firebase data cannot be mutated directly: ${key}`);
+      const e = new Error(`Firebase data cannot be mutated directly: ${key}`);
+      e.trussCode = 'firebase_overwrite';
+      throw e;
     }
     descriptor.set.call(this, newValue);
   }
