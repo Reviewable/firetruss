@@ -79,6 +79,7 @@ export default class Tree {
     this._vue.$data.$root = this._createObject('/', '');
     this._completeCreateObject(this.root);
     this._plantPlaceholders(this.root, '/');
+    Object.seal(this);
   }
 
   destroy() {

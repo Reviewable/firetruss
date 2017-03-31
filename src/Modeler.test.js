@@ -45,6 +45,9 @@ class Subroot {
   }
 }
 
+class SubrootFoo {
+  static get $trussMount() {return {path: '/sub/foo', placeholder: {}};}
+}
 
 test.beforeEach(t => {
   t.context = {
@@ -55,7 +58,7 @@ test.beforeEach(t => {
   };
   t.context.tree = new Tree(
     t.context.truss, t.context.rootUrl, t.context.bridge, t.context.dispatcher);
-  t.context.tree.init([Root, Subroot]);
+  t.context.tree.init([Root, SubrootFoo, Subroot]);
 });
 
 test.afterEach(t => {
@@ -66,6 +69,7 @@ test('initialize placeholders', t => {
   const tree = t.context.tree;
   t.is(tree.root.constructor, Root);
   t.is(tree.root.sub.constructor, Subroot);
+  t.is(tree.root.sub.foo.constructor, SubrootFoo);
 });
 
 test('update after instance property change', t => {

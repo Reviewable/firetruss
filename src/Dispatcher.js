@@ -92,6 +92,7 @@ export default class Dispatcher {
   constructor(bridge) {
     this._bridge = bridge;
     this._callbacks = {};
+    Object.freeze(this);
   }
 
   intercept(interceptKey, callbacks) {

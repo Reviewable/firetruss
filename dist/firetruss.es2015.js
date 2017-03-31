@@ -694,6 +694,7 @@ class Query extends Handle {
   constructor(tree, path, spec, annotations) {
     super(tree, path, annotations);
     this._spec = this._copyAndValidateSpec(spec);
+    Object.freeze(this);
   }
 
   // Vue-bound
@@ -766,6 +767,7 @@ class Reference extends Handle {
 
   constructor(tree, path, annotations) {
     super(tree, path, annotations);
+    Object.freeze(this);
   }
 
   get ready() {return this._tree.isReferenceReady(this);}  // Vue-bound
@@ -808,7 +810,9 @@ class Connector {
     this._subConnectors = {};
     this._currentDescriptors = {};
     this._disconnects = {};
+    this._angularUnwatches = undefined;
     this._vue = new Vue({data: _.mapValues(connections, _.constant(undefined))});
+    Object.seal(this);
 
     this._linkScopeProperties();
 
@@ -1084,6 +1088,7 @@ class Dispatcher {
   constructor(bridge) {
     this._bridge = bridge;
     this._callbacks = {};
+    Object.freeze(this);
   }
 
   intercept(interceptKey, callbacks) {
@@ -1288,6 +1293,7 @@ class MetaTree {
 
     this._connectInfoProperty('serverTimeOffset', 'timeOffset');
     this._connectInfoProperty('connected', 'connected');
+    Object.freeze(this);
   }
 
   get root() {
@@ -1541,6 +1547,7 @@ class Coupler {
     this._applySnapshot = applySnapshot;
     this._prunePath = prunePath;
     this._vue = new Vue({data: {root: new Node(this, '/'), queryHandlers: {}}});
+    Object.freeze(this);
   }
 
   get _root() {return this._vue.root;}
@@ -1682,6 +1689,7 @@ class Coupler {
 const RESERVED_VALUE_PROPERTY_NAMES = {
   $truss: true, $parent: true, $key: true, $path: true, $ref: true,
   $$touchThis: true, $$initializers: true, $$finalizers: true,
+  $$$trussCheck: true,
   __ob__: true
 };
 
@@ -1805,6 +1813,7 @@ class Modeler {
         .value();
       throw new Error('Paths have multiple mounted classes: ' + badPaths.join(', '));
     }
+    Object.freeze(this);
   }
 
   destroy() {
@@ -1965,6 +1974,7 @@ class Modeler {
   }
 
   checkVueObject(object, path, checkedObjects) {
+    const top = !checkedObjects;
     checkedObjects = checkedObjects || [];
     for (const key of Object.getOwnPropertyNames(object)) {
       if (RESERVED_VALUE_PROPERTY_NAMES[key]) continue;
@@ -1978,25 +1988,26 @@ class Modeler {
           throw new Error(
             `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
         }
+        if (object.$truss && descriptor.enumerable) {
+          try {
+            object[key] = object[key];
+            throw new Error(
+              `Firetruss object at ${path} has an enumerable non-Firebase property: ${key}`);
+          } catch (e) {
+            if (e.trussCode !== 'firebase_overwrite') throw e;
+          }
+        }
       }
       const value = object[key];
-      if (_.isObject(value) && !(value instanceof Connector) && !(value instanceof Function) &&
-          !_.includes(checkedObjects, value)) {
+      if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
+          !(value instanceof Function)) {
+        value.$$$trussCheck = true;
         checkedObjects.push(value);
         this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
       }
     }
-    if (object.$truss) {
-      for (const key in object) {
-        if (!object.hasOwnProperty(key)) continue;
-        try {
-          object[key] = object[key];
-          throw new Error(
-            `Firetruss object at ${path} has an enumerable non-Firebase property: ${key}`);
-        } catch (e) {
-          if (e.trussCode !== 'firebase_overwrite') throw e;
-        }
-      }
+    if (top) {
+      for (const item of checkedObjects) delete item.$$$trussCheck;
     }
   }
 
@@ -2100,6 +2111,7 @@ class Tree {
     this._vue.$data.$root = this._createObject('/', '');
     this._completeCreateObject(this.root);
     this._plantPlaceholders(this.root, '/');
+    Object.seal(this);
   }
 
   destroy() {
@@ -2646,6 +2658,8 @@ class Truss {
     this._metaTree = new MetaTree(this._rootUrl, bridge);
     this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher);
     this._tree.init(classes);
+
+    Object.freeze(this);
   }
 
   get meta() {return this._metaTree.root;}

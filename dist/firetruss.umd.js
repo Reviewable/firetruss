@@ -746,6 +746,7 @@
 	  function Query(tree, path, spec, annotations) {
 	    Handle.call(this, tree, path, annotations);
 	    this._spec = this._copyAndValidateSpec(spec);
+	    Object.freeze(this);
 	  }
 
 	  if ( Handle ) Query.__proto__ = Handle;
@@ -826,6 +827,7 @@
 	var Reference = (function (Handle) {
 	  function Reference(tree, path, annotations) {
 	    Handle.call(this, tree, path, annotations);
+	    Object.freeze(this);
 	  }
 
 	  if ( Handle ) Reference.__proto__ = Handle;
@@ -881,7 +883,9 @@
 	  this._subConnectors = {};
 	  this._currentDescriptors = {};
 	  this._disconnects = {};
+	  this._angularUnwatches = undefined;
 	  this._vue = new Vue({data: _.mapValues(connections, _.constant(undefined))});
+	  Object.seal(this);
 
 	  this._linkScopeProperties();
 
@@ -1178,6 +1182,7 @@
 	var Dispatcher = function Dispatcher(bridge) {
 	  this._bridge = bridge;
 	  this._callbacks = {};
+	  Object.freeze(this);
 	};
 
 	Dispatcher.prototype.intercept = function intercept (interceptKey, callbacks) {
@@ -1392,6 +1397,7 @@
 
 	  this._connectInfoProperty('serverTimeOffset', 'timeOffset');
 	  this._connectInfoProperty('connected', 'connected');
+	  Object.freeze(this);
 	};
 
 	var prototypeAccessors$5 = { root: {} };
@@ -1691,6 +1697,7 @@
 	  this._applySnapshot = applySnapshot;
 	  this._prunePath = prunePath;
 	  this._vue = new Vue({data: {root: new Node(this, '/'), queryHandlers: {}}});
+	  Object.freeze(this);
 	};
 
 	var prototypeAccessors$1$2 = { _root: {},_queryHandlers: {} };
@@ -1899,6 +1906,7 @@
 	var RESERVED_VALUE_PROPERTY_NAMES = {
 	  $truss: true, $parent: true, $key: true, $path: true, $ref: true,
 	  $$touchThis: true, $$initializers: true, $$finalizers: true,
+	  $$$trussCheck: true,
 	  __ob__: true
 	};
 
@@ -2030,6 +2038,7 @@
 	      .value();
 	    throw new Error('Paths have multiple mounted classes: ' + badPaths.join(', '));
 	  }
+	  Object.freeze(this);
 	};
 
 	var staticAccessors$2 = { computedPropertyStats: {} };
@@ -2208,6 +2217,7 @@
 	Modeler.prototype.checkVueObject = function checkVueObject (object, path, checkedObjects) {
 	    var this$1 = this;
 
+	  var top = !checkedObjects;
 	  checkedObjects = checkedObjects || [];
 	  for (var i = 0, list = Object.getOwnPropertyNames(object); i < list.length; i += 1) {
 	    var key = list[i];
@@ -2223,25 +2233,30 @@
 	        throw new Error(
 	          ("Value at " + path + ", contained in a Firetruss object, has a rogue property: " + key));
 	      }
+	      if (object.$truss && descriptor.enumerable) {
+	        try {
+	          object[key] = object[key];
+	          throw new Error(
+	            ("Firetruss object at " + path + " has an enumerable non-Firebase property: " + key));
+	        } catch (e) {
+	          if (e.trussCode !== 'firebase_overwrite') { throw e; }
+	        }
+	      }
 	    }
 	    var value = object[key];
-	    if (_.isObject(value) && !(value instanceof Connector) && !(value instanceof Function) &&
-	        !_.includes(checkedObjects, value)) {
+	    if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
+	        !(value instanceof Function)) {
+	      value.$$$trussCheck = true;
 	      checkedObjects.push(value);
 	      this$1.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
 	    }
 	  }
-	  if (object.$truss) {
-	    for (var key$1 in object) {
-	      if (!object.hasOwnProperty(key$1)) { continue; }
-	      try {
-	        object[key$1] = object[key$1];
-	        throw new Error(
-	          ("Firetruss object at " + path + " has an enumerable non-Firebase property: " + key$1));
-	      } catch (e) {
-	        if (e.trussCode !== 'firebase_overwrite') { throw e; }
+	  if (top) {
+	    for (var i$1 = 0, list$1 = checkedObjects; i$1 < list$1.length; i$1 += 1) {
+	        var item = list$1[i$1];
+
+	        delete item.$$$trussCheck;
 	      }
-	    }
 	  }
 	};
 
@@ -2349,6 +2364,7 @@
 	  this._vue.$data.$root = this._createObject('/', '');
 	  this._completeCreateObject(this.root);
 	  this._plantPlaceholders(this.root, '/');
+	  Object.seal(this);
 	};
 
 	Tree.prototype.destroy = function destroy () {
@@ -2932,6 +2948,8 @@
 	  this._metaTree = new MetaTree(this._rootUrl, bridge);
 	  this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher);
 	  this._tree.init(classes);
+
+	  Object.freeze(this);
 	};
 
 	var prototypeAccessors = { meta: {},root: {},now: {},SERVER_TIMESTAMP: {},VERSION: {},FIREBASE_SDK_VERSION: {} };

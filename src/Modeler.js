@@ -9,6 +9,7 @@ import performanceNow from 'performance-now';
 const RESERVED_VALUE_PROPERTY_NAMES = {
   $truss: true, $parent: true, $key: true, $path: true, $ref: true,
   $$touchThis: true, $$initializers: true, $$finalizers: true,
+  $$$trussCheck: true,
   __ob__: true
 };
 
@@ -132,6 +133,7 @@ export default class Modeler {
         .value();
       throw new Error('Paths have multiple mounted classes: ' + badPaths.join(', '));
     }
+    Object.freeze(this);
   }
 
   destroy() {
@@ -292,6 +294,7 @@ export default class Modeler {
   }
 
   checkVueObject(object, path, checkedObjects) {
+    const top = !checkedObjects;
     checkedObjects = checkedObjects || [];
     for (const key of Object.getOwnPropertyNames(object)) {
       if (RESERVED_VALUE_PROPERTY_NAMES[key]) continue;
@@ -305,25 +308,26 @@ export default class Modeler {
           throw new Error(
             `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
         }
+        if (object.$truss && descriptor.enumerable) {
+          try {
+            object[key] = object[key];
+            throw new Error(
+              `Firetruss object at ${path} has an enumerable non-Firebase property: ${key}`);
+          } catch (e) {
+            if (e.trussCode !== 'firebase_overwrite') throw e;
+          }
+        }
       }
       const value = object[key];
-      if (_.isObject(value) && !(value instanceof Connector) && !(value instanceof Function) &&
-          !_.includes(checkedObjects, value)) {
+      if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
+          !(value instanceof Function)) {
+        value.$$$trussCheck = true;
         checkedObjects.push(value);
         this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
       }
     }
-    if (object.$truss) {
-      for (const key in object) {
-        if (!object.hasOwnProperty(key)) continue;
-        try {
-          object[key] = object[key];
-          throw new Error(
-            `Firetruss object at ${path} has an enumerable non-Firebase property: ${key}`);
-        } catch (e) {
-          if (e.trussCode !== 'firebase_overwrite') throw e;
-        }
-      }
+    if (top) {
+      for (const item of checkedObjects) delete item.$$$trussCheck;
     }
   }
 

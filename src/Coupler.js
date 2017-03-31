@@ -232,6 +232,7 @@ export default class Coupler {
     this._applySnapshot = applySnapshot;
     this._prunePath = prunePath;
     this._vue = new Vue({data: {root: new Node(this, '/'), queryHandlers: {}}});
+    Object.freeze(this);
   }
 
   get _root() {return this._vue.root;}

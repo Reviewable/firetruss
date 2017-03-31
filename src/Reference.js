@@ -94,6 +94,7 @@ export class Query extends Handle {
   constructor(tree, path, spec, annotations) {
     super(tree, path, annotations);
     this._spec = this._copyAndValidateSpec(spec);
+    Object.freeze(this);
   }
 
   // Vue-bound
@@ -166,6 +167,7 @@ export class Reference extends Handle {
 
   constructor(tree, path, annotations) {
     super(tree, path, annotations);
+    Object.freeze(this);
   }
 
   get ready() {return this._tree.isReferenceReady(this);}  // Vue-bound

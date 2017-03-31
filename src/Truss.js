@@ -45,6 +45,8 @@ export default class Truss {
     this._metaTree = new MetaTree(this._rootUrl, bridge);
     this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher);
     this._tree.init(classes);
+
+    Object.freeze(this);
   }
 
   get meta() {return this._metaTree.root;}

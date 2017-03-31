@@ -29,6 +29,7 @@ export default class MetaTree {
 
     this._connectInfoProperty('serverTimeOffset', 'timeOffset');
     this._connectInfoProperty('connected', 'connected');
+    Object.freeze(this);
   }
 
   get root() {
