@@ -1,7 +1,9 @@
 import test from 'ava';
 import td from 'testdouble';
 
-import Tree, {checkUpdateHasOnlyDescendantsWithNoOverlap, toFirebaseJson} from './Tree.js';
+import Tree, {
+  checkUpdateHasOnlyDescendantsWithNoOverlap, relativizePaths, toFirebaseJson
+} from './Tree.js';
 import Bridge from './Bridge.js';
 import Dispatcher from './Dispatcher.js';
 
@@ -27,23 +29,15 @@ test('checkUpdateHasOnlyDescendantsWithNoOverlap', t => {
 
   updates = {'/foo': 1};
   checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', updates);
-  checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', updates, true);
-  t.deepEqual(updates, {'': 1});
 
   updates = {'/': 1};
   checkUpdateHasOnlyDescendantsWithNoOverlap('/', updates);
-  checkUpdateHasOnlyDescendantsWithNoOverlap('/', updates, true);
-  t.deepEqual(updates, {'': 1});
 
   updates = {'/foo/bar': 1, '/foo/baz/qux': 2};
   checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', updates);
-  checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', updates, true);
-  t.deepEqual(updates, {'bar': 1, 'baz/qux': 2});
 
   updates = {'/foo/bar': 1, '/foo/baz/qux': 2};
   checkUpdateHasOnlyDescendantsWithNoOverlap('/', updates);
-  checkUpdateHasOnlyDescendantsWithNoOverlap('/', updates, true);
-  t.deepEqual(updates, {'foo/bar': 1, 'foo/baz/qux': 2});
 
   updates = {'foo': 1, 'bar': 2};
   checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', updates);
@@ -86,6 +80,26 @@ test('checkUpdateHasOnlyDescendantsWithNoOverlap', t => {
   }, /overlap/);
 
   checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'/foo/bar': 1, '/foo/barz': 2});
+});
+
+test('relativizePaths', t => {
+  let updates;
+
+  updates = {'/foo': 1};
+  relativizePaths('/foo', updates);
+  t.deepEqual(updates, {'': 1});
+
+  updates = {'/': 1};
+  relativizePaths('/', updates);
+  t.deepEqual(updates, {'': 1});
+
+  updates = {'/foo/bar': 1, '/foo/baz/qux': 2};
+  relativizePaths('/foo', updates);
+  t.deepEqual(updates, {'bar': 1, 'baz/qux': 2});
+
+  updates = {'/foo/bar': 1, '/foo/baz/qux': 2};
+  relativizePaths('/', updates);
+  t.deepEqual(updates, {'foo/bar': 1, 'foo/baz/qux': 2});
 });
 
 test('plantValue', t => {

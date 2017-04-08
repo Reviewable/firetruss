@@ -4,9 +4,9 @@ import performanceNow from 'performance-now';
 
 /* globals window */
 
-let earlyDigestPending;
+let digestRequested;
 let bareDigest = function() {
-  earlyDigestPending = true;
+  digestRequested = true;
 };
 
 
@@ -26,8 +26,12 @@ if (angularProxy.active) {
   angularProxy.digest = bareDigest;
   angularProxy.watch = function() {throw new Error('Angular watch proxy not yet initialized');};
   window.angular.module('firetruss', []).run(['$rootScope', function($rootScope) {
-    bareDigest = $rootScope.$evalAsync.bind($rootScope);
-    if (earlyDigestPending) bareDigest();
+    angularProxy.digest = function () {
+      if (digestRequested) return;
+      digestRequested = true;
+      $rootScope.$evalAsync(function() {digestRequested = false;});
+    };
+    if (digestRequested) angularProxy.digest();
     angularProxy.watch = $rootScope.$watch.bind($rootScope);
   }]);
   angularProxy.defineModule = function(Truss) {
@@ -129,8 +133,6 @@ class PathMatcher {
     }
     this._regex = new RegExp(
       '^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + (prefixMatch ? '($|/)' : '$'));
-    this._parentRegex = new RegExp(
-      '^' + (pathTemplate.replace(/\/[^/]*$/, '').replace(/\u0001/g, '/([^/]+)') || '/') + '$');
   }
 
   match(path) {
@@ -146,10 +148,6 @@ class PathMatcher {
 
   test(path) {
     return this._regex.test(path);
-  }
-
-  testParent(path) {
-    return this._parentRegex.test(path);
   }
 
   toString() {
@@ -1802,21 +1800,46 @@ class ErrorWrapper {
 
 class Modeler {
   constructor(classes) {
-    this._mounts = _(classes).uniq().map(Class => this._mountClass(Class)).flatten().value();
-    const patterns = _.map(this._mounts, mount => mount.matcher.toString());
-    if (patterns.length !== _.uniq(patterns).length) {
-      const badPaths = _(patterns)
-        .groupBy()
-        .map((group, key) =>
-          group.length === 1 ? null : key.replace(/\(\[\^\/\]\+\)/g, '$').slice(1, -1))
-        .compact()
-        .value();
-      throw new Error('Paths have multiple mounted classes: ' + badPaths.join(', '));
-    }
+    this._trie = {Class: Value};
+    _(classes).uniq().each(Class => this._mountClass(Class)).commit();
+    this._decorateTrie(this._trie);
     Object.freeze(this);
   }
 
   destroy() {
+  }
+
+  _getMount(path, scaffold, predicate) {
+    const segments = path.split('/');
+    let node;
+    for (const segment of segments) {
+      let child = segment ?
+        node.children && (node.children[segment] || node.children.$) : this._trie;
+      if (!child) {
+        if (!scaffold) return;
+        node.children = node.children || {};
+        child = node.children[segment] = {Class: Value};
+      }
+      node = child;
+      if (predicate && predicate(node)) break;
+    }
+    return node;
+  }
+
+  _findMount(predicate, node) {
+    if (!node) node = this._trie;
+    if (predicate(node)) return node;
+    for (const childKey of _.keys(node.children)) {
+      const result = this._findMount(predicate, node.children[childKey]);
+      if (result) return result;
+    }
+  }
+
+  _decorateTrie(node) {
+    _.each(node.children, child => {
+      this._decorateTrie(child);
+      if (child.local || child.localDescendants) node.localDescendants = true;
+    });
   }
 
   _augmentClass(Class) {
@@ -1855,7 +1878,7 @@ class Modeler {
     let mounts = Class.$trussMount;
     if (!mounts) throw new Error(`Class ${Class.name} lacks a $trussMount static property`);
     if (!_.isArray(mounts)) mounts = [mounts];
-    return _.map(mounts, mount => {
+    _.each(mounts, mount => {
       if (_.isString(mount)) mount = {path: mount};
       const matcher = makePathMatcher(mount.path);
       for (const variable of matcher.variables) {
@@ -1869,11 +1892,23 @@ class Modeler {
         }
       }
       const escapedKey = mount.path.match(/\/([^/]*)$/)[1];
-      if (mount.placeholder && escapedKey.charAt(0) === '$') {
-        throw new Error(
-          `Class ${Class.name} mounted at wildcard ${escapedKey} cannot be a placeholder`);
+      if (escapedKey.charAt(0) === '$') {
+        if (mount.placeholder) {
+          throw new Error(
+            `Class ${Class.name} mounted at wildcard ${escapedKey} cannot be a placeholder`);
+        }
+      } else {
+        if (!_.has(mount, 'placeholder')) mount.placeholder = {};
       }
-      return {Class, matcher, computedProperties, escapedKey, placeholder: mount.placeholder};
+      const targetMount = this._getMount(mount.path.replace(/\$[^/]*/g, '$'), true);
+      if (targetMount.matcher) {
+        throw new Error(
+          `Multiple classes mounted at ${mount.path}: ${targetMount.Class.name}, ${Class.name}`);
+      }
+      _.extend(targetMount, {
+        Class, matcher, computedProperties, escapedKey, placeholder: mount.placeholder,
+        local: mount.local
+      });
     });
   }
 
@@ -1884,28 +1919,20 @@ class Modeler {
    * before any Firebase properties are added.
    */
   createObject(path, properties) {
-    let Class = Value;
-    let computedProperties;
-    for (const mount of this._mounts) {
+    let mount = this._getMount(path) || {Class: Value};
+    if (mount.matcher) {
       const match = mount.matcher.match(path);
-      if (match) {
-        Class = mount.Class;
-        computedProperties = mount.computedProperties;
-        for (const variable in match) {
-          properties[variable] = {
-            value: match[variable], writable: false, configurable: false, enumerable: false
-          };
-        }
-        break;
+      for (const variable in match) {
+        properties[variable] = {value: match[variable]};
       }
     }
 
     creatingObjectProperties = properties;
-    const object = new Class();
+    const object = new mount.Class();
     creatingObjectProperties = null;
 
-    if (computedProperties) {
-      _.each(computedProperties, prop => {
+    if (mount.computedProperties) {
+      _.each(mount.computedProperties, prop => {
         properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop);
       });
     }
@@ -1933,10 +1960,12 @@ class Modeler {
       object.$$finalizers.push(
         vue.$watch(computeValue.bind(object, prop, stats), newValue => {
           if (_.isEqual(value, newValue, isTrussValueEqual)) return;
+          // console.log('updating', prop.fullName, 'from', value, 'to', newValue);
           stats.numUpdates += 1;
           writeAllowed = true;
           object[prop.name] = newValue;
           writeAllowed = false;
+          if (newValue instanceof ErrorWrapper) throw newValue.error;
         }, {immediate: true})  // use immediate:true since watcher will run computeValue anyway
       );
     });
@@ -1961,15 +1990,22 @@ class Modeler {
   }
 
   isPlaceholder(path) {
-    // TODO: optimize by precomputing a single all-placeholder-paths regex
-    return _.some(this._mounts, mount => mount.placeholder && mount.matcher.test(path));
+    const mount = this._getMount(path);
+    return mount && mount.placeholder;
+  }
+
+  isLocal(path) {
+    const mount = this._getMount(path, false, mount => mount.local);
+    if (!mount) return false;
+    if (mount.local) return true;
+    if (mount.localDescendants) throw new Error(`Subtree mixes local and remote data: ${path}`);
+    return false;
   }
 
   forEachPlaceholderChild(path, iteratee) {
-    _.each(this._mounts, mount => {
-      if (mount.placeholder && mount.matcher.testParent(path)) {
-        iteratee(mount.escapedKey, mount.placeholder);
-      }
+    const mount = this._getMount(path);
+    _.each(mount && mount.children, child => {
+      if (child.placeholder) iteratee(child.escapedKey, child.placeholder);
     });
   }
 
@@ -1979,9 +2015,9 @@ class Modeler {
     for (const key of Object.getOwnPropertyNames(object)) {
       if (RESERVED_VALUE_PROPERTY_NAMES[key]) continue;
       // jshint loopfunc:true
-      const mount = _.find(this._mounts, mount => mount.Class === object.constructor);
+      const mount = this._findMount(mount => mount.Class === object.constructor);
       // jshint loopfunc:false
-      if (mount && _.includes(mount.matcher.variables, key)) continue;
+      if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) continue;
       if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
         const descriptor = Object.getOwnPropertyDescriptor(object, key);
         if ('value' in descriptor || !descriptor.get) {
@@ -2091,7 +2127,7 @@ class Tree {
       rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
     this._vue = new Vue({data: {$root: undefined}});
     if (angularProxy.active) {
-      this._vue.$watch('$data', angularProxy.digest, {deep: true});
+      this._vue.$watch('$data', () => {angularProxy.digest();}, {deep: true});
     }
     // Call this.init(classes) to complete initialization; we need two phases so that truss can bind
     // the tree into its own accessors prior to defining computed functions, which may try to
@@ -2189,13 +2225,19 @@ class Tree {
   }
 
   update(ref, method, values) {
-    const numValues = _.size(values);
-    if (!numValues) return;
+    values = _.clone(values);
+    let numValues = _.size(values);
+    if (!numValues) return Promise.resolve();
     if (method === 'update' || method === 'override') {
       checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
     }
     this._applyLocalWrite(values, method === 'override');
     if (method === 'override') return Promise.resolve();
+    for (const path of _.keys(values)) {
+      if (this._modeler.isLocal(path)) delete values[path];
+    }
+    numValues = _.size(values);
+    if (!numValues) return Promise.resolve();
     const url = this._rootUrl + this._extractCommonPathPrefix(values);
     return this._dispatcher.execute('write', method, ref, () => {
       if (numValues === 1) {
@@ -2217,23 +2259,31 @@ class Tree {
       } catch (e) {
         return Promise.reject(e);
       }
+      const values = _.clone(txn.values);
       const oldValue = toFirebaseJson(this.getObject(ref.path));
       switch (txn.outcome) {
         case 'abort': return;
         case 'cancel':
           break;
         case 'set':
-          this._applyLocalWrite({[ref.path]: txn.values['']});
+          if (this._modeler.isLocal(ref.path)) {
+            throw new Error(`Commit in local subtree: ${ref.path}`);
+          }
+          this._applyLocalWrite({[ref.path]: values['']});
           break;
         case 'update':
-          checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, txn.values, true);
-          this._applyLocalWrite(txn.values);
+          checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
+          _(values).keys().each(path => {
+            if (this._modeler.isLocal(path)) throw new Error(`Commit in local subtree: ${path}`);
+          });
+          this._applyLocalWrite(values);
+          relativizePaths(ref.path, values);
           break;
         default:
           throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
       }
       return this._bridge.transaction(
-        this._rootUrl + ref.path, oldValue, txn.values
+        this._rootUrl + ref.path, oldValue, values
       ).then(committed => {
         if (!committed) return attemptTransaction();
         return txn;
@@ -2251,7 +2301,9 @@ class Tree {
     this._writeSerial++;
     this._localWriteTimestamp = this._truss.now;
     _.each(values, (value, path) => {
-      const coupledDescendantPaths = this._coupler.findCoupledDescendantPaths(path);
+      const local = this._modeler.isLocal(path);
+      const coupledDescendantPaths =
+        local ? [path] : this._coupler.findCoupledDescendantPaths(path);
       if (_.isEmpty(coupledDescendantPaths)) return;
       const offset = (path === '/' ? 0 : path.length) + 1;
       for (const descendantPath of coupledDescendantPaths) {
@@ -2273,7 +2325,9 @@ class Tree {
             override
           );
         }
-        if (!override) this._localWrites[descendantPath] = this._writeSerial;
+        if (!override && !local) {
+          this._localWrites[descendantPath] = this._writeSerial;
+        }
       }
     });
   }
@@ -2382,7 +2436,7 @@ class Tree {
     }
     if (remoteWrite && this._localWrites[path]) return;
     if (value === SERVER_TIMESTAMP) value = this._localWriteTimestamp;
-    if (!_.isArray(value) && !_.isObject(value)) {
+    if (!_.isArray(value) && !(_.isObject(value) && value.constructor === Object)) {
       this._setFirebaseProperty(parent, key, value);
       return;
     }
@@ -2458,7 +2512,7 @@ class Tree {
     // are no longer needed to keep this child rooted, and have no other reason to exist.
     let deleted = false;
     let object = targetObject;
-    // The target object may be a primitive, in which case it won't have $parent and $key
+    // The target object may be a primitive, in which case it won't have $path, $parent and $key
     // properties.  In that case, use the target path to figure those out instead.  Note that all
     // ancestors of the target object will necessarily not be primitives and will have those
     // properties.
@@ -2466,7 +2520,7 @@ class Tree {
     while (object && object !== this.root) {
       const parent =
         object.$parent || object === targetObject && this.getObject(targetSegments.slice(0, -1));
-      if (!this._modeler.isPlaceholder(object.$path)) {
+      if (!this._modeler.isPlaceholder(object.$path || targetPath)) {
         const ghostObjects = deleted ? null : [targetObject];
         if (!this._holdsConcreteData(object, ghostObjects)) {
           deleted = true;
@@ -2576,7 +2630,7 @@ class Tree {
 }
 
 
-function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativizePaths) {
+function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
   // First, check all paths for correctness and absolutize them, since there could be a mix of
   // absolute paths and relative keys.
   _.each(_.keys(values), path => {
@@ -2597,19 +2651,22 @@ function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativize
       delete values[path];
     }
   });
-  // Then check for overlaps and relativize if desired.
+  // Then check for overlaps;
   const allPaths = _(values).keys().map(path => joinPath(path, '')).sortBy('length').value();
-  _.each(_.keys(values), path => {
+  _.each(values, (value, path) => {
     for (const otherPath of allPaths) {
       if (otherPath.length > path.length) break;
       if (path !== otherPath && _.startsWith(path, otherPath)) {
         throw new Error(`Update items overlap: ${otherPath} and ${path}`);
       }
     }
-    if (relativizePaths) {
-      values[path.slice(rootPath === '/' ? 1 : rootPath.length + 1)] = values[path];
-      delete values[path];
-    }
+  });
+}
+
+function relativizePaths(rootPath, values) {
+  _.each(_.keys(values), path => {
+    values[path.slice(rootPath === '/' ? 1 : rootPath.length + 1)] = values[path];
+    delete values[path];
   });
 }
 

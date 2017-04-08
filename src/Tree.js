@@ -59,7 +59,7 @@ export default class Tree {
       rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
     this._vue = new Vue({data: {$root: undefined}});
     if (angularCompatibility.active) {
-      this._vue.$watch('$data', angularCompatibility.digest, {deep: true});
+      this._vue.$watch('$data', () => {angularCompatibility.digest();}, {deep: true});
     }
     // Call this.init(classes) to complete initialization; we need two phases so that truss can bind
     // the tree into its own accessors prior to defining computed functions, which may try to
@@ -157,13 +157,19 @@ export default class Tree {
   }
 
   update(ref, method, values) {
-    const numValues = _.size(values);
-    if (!numValues) return;
+    values = _.clone(values);
+    let numValues = _.size(values);
+    if (!numValues) return Promise.resolve();
     if (method === 'update' || method === 'override') {
       checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
     }
     this._applyLocalWrite(values, method === 'override');
     if (method === 'override') return Promise.resolve();
+    for (const path of _.keys(values)) {
+      if (this._modeler.isLocal(path)) delete values[path];
+    }
+    numValues = _.size(values);
+    if (!numValues) return Promise.resolve();
     const url = this._rootUrl + this._extractCommonPathPrefix(values);
     return this._dispatcher.execute('write', method, ref, () => {
       if (numValues === 1) {
@@ -185,23 +191,31 @@ export default class Tree {
       } catch (e) {
         return Promise.reject(e);
       }
+      const values = _.clone(txn.values);
       const oldValue = toFirebaseJson(this.getObject(ref.path));
       switch (txn.outcome) {
         case 'abort': return;
         case 'cancel':
           break;
         case 'set':
-          this._applyLocalWrite({[ref.path]: txn.values['']});
+          if (this._modeler.isLocal(ref.path)) {
+            throw new Error(`Commit in local subtree: ${ref.path}`);
+          }
+          this._applyLocalWrite({[ref.path]: values['']});
           break;
         case 'update':
-          checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, txn.values, true);
-          this._applyLocalWrite(txn.values);
+          checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
+          _(values).keys().each(path => {
+            if (this._modeler.isLocal(path)) throw new Error(`Commit in local subtree: ${path}`);
+          });
+          this._applyLocalWrite(values);
+          relativizePaths(ref.path, values);
           break;
         default:
           throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
       }
       return this._bridge.transaction(
-        this._rootUrl + ref.path, oldValue, txn.values
+        this._rootUrl + ref.path, oldValue, values
       ).then(committed => {
         if (!committed) return attemptTransaction();
         return txn;
@@ -219,7 +233,9 @@ export default class Tree {
     this._writeSerial++;
     this._localWriteTimestamp = this._truss.now;
     _.each(values, (value, path) => {
-      const coupledDescendantPaths = this._coupler.findCoupledDescendantPaths(path);
+      const local = this._modeler.isLocal(path);
+      const coupledDescendantPaths =
+        local ? [path] : this._coupler.findCoupledDescendantPaths(path);
       if (_.isEmpty(coupledDescendantPaths)) return;
       const offset = (path === '/' ? 0 : path.length) + 1;
       for (const descendantPath of coupledDescendantPaths) {
@@ -241,7 +257,9 @@ export default class Tree {
             override
           );
         }
-        if (!override) this._localWrites[descendantPath] = this._writeSerial;
+        if (!override && !local) {
+          this._localWrites[descendantPath] = this._writeSerial;
+        }
       }
     });
   }
@@ -350,7 +368,7 @@ export default class Tree {
     }
     if (remoteWrite && this._localWrites[path]) return;
     if (value === SERVER_TIMESTAMP) value = this._localWriteTimestamp;
-    if (!_.isArray(value) && !_.isObject(value)) {
+    if (!_.isArray(value) && !(_.isObject(value) && value.constructor === Object)) {
       this._setFirebaseProperty(parent, key, value);
       return;
     }
@@ -426,7 +444,7 @@ export default class Tree {
     // are no longer needed to keep this child rooted, and have no other reason to exist.
     let deleted = false;
     let object = targetObject;
-    // The target object may be a primitive, in which case it won't have $parent and $key
+    // The target object may be a primitive, in which case it won't have $path, $parent and $key
     // properties.  In that case, use the target path to figure those out instead.  Note that all
     // ancestors of the target object will necessarily not be primitives and will have those
     // properties.
@@ -434,7 +452,7 @@ export default class Tree {
     while (object && object !== this.root) {
       const parent =
         object.$parent || object === targetObject && this.getObject(targetSegments.slice(0, -1));
-      if (!this._modeler.isPlaceholder(object.$path)) {
+      if (!this._modeler.isPlaceholder(object.$path || targetPath)) {
         const ghostObjects = deleted ? null : [targetObject];
         if (!this._holdsConcreteData(object, ghostObjects)) {
           deleted = true;
@@ -544,7 +562,7 @@ export default class Tree {
 }
 
 
-export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, relativizePaths) {
+export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
   // First, check all paths for correctness and absolutize them, since there could be a mix of
   // absolute paths and relative keys.
   _.each(_.keys(values), path => {
@@ -565,19 +583,22 @@ export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values, rel
       delete values[path];
     }
   });
-  // Then check for overlaps and relativize if desired.
+  // Then check for overlaps;
   const allPaths = _(values).keys().map(path => joinPath(path, '')).sortBy('length').value();
-  _.each(_.keys(values), path => {
+  _.each(values, (value, path) => {
     for (const otherPath of allPaths) {
       if (otherPath.length > path.length) break;
       if (path !== otherPath && _.startsWith(path, otherPath)) {
         throw new Error(`Update items overlap: ${otherPath} and ${path}`);
       }
     }
-    if (relativizePaths) {
-      values[path.slice(rootPath === '/' ? 1 : rootPath.length + 1)] = values[path];
-      delete values[path];
-    }
+  });
+}
+
+export function relativizePaths(rootPath, values) {
+  _.each(_.keys(values), path => {
+    values[path.slice(rootPath === '/' ? 1 : rootPath.length + 1)] = values[path];
+    delete values[path];
   });
 }
 

@@ -93,8 +93,6 @@ class PathMatcher {
     }
     this._regex = new RegExp(
       '^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + (prefixMatch ? '($|/)' : '$'));
-    this._parentRegex = new RegExp(
-      '^' + (pathTemplate.replace(/\/[^/]*$/, '').replace(/\u0001/g, '/([^/]+)') || '/') + '$');
   }
 
   match(path) {
@@ -110,10 +108,6 @@ class PathMatcher {
 
   test(path) {
     return this._regex.test(path);
-  }
-
-  testParent(path) {
-    return this._parentRegex.test(path);
   }
 
   toString() {

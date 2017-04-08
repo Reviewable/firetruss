@@ -36,7 +36,7 @@ class Root {
 }
 
 class Subroot {
-  static get $trussMount() {return {path: '/sub', placeholder: {}};}
+  static get $trussMount() {return '/sub';}
   get y() {
     return this.$parent.x + 2;
   }
@@ -46,7 +46,7 @@ class Subroot {
 }
 
 class SubrootFoo {
-  static get $trussMount() {return {path: '/sub/foo', placeholder: {}};}
+  static get $trussMount() {return '/sub/foo';}
 }
 
 test.beforeEach(t => {

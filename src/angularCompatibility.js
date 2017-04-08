@@ -3,9 +3,9 @@
 import _ from 'lodash';
 
 
-let earlyDigestPending;
+let digestRequested;
 let bareDigest = function() {
-  earlyDigestPending = true;
+  digestRequested = true;
 };
 
 
@@ -25,8 +25,12 @@ if (angularProxy.active) {
   angularProxy.digest = bareDigest;
   angularProxy.watch = function() {throw new Error('Angular watch proxy not yet initialized');};
   window.angular.module('firetruss', []).run(['$rootScope', function($rootScope) {
-    bareDigest = $rootScope.$evalAsync.bind($rootScope);
-    if (earlyDigestPending) bareDigest();
+    angularProxy.digest = function () {
+      if (digestRequested) return;
+      digestRequested = true;
+      $rootScope.$evalAsync(function() {digestRequested = false;});
+    };
+    if (digestRequested) angularProxy.digest();
     angularProxy.watch = $rootScope.$watch.bind($rootScope);
   }]);
   angularProxy.defineModule = function(Truss) {

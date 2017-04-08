@@ -1,5 +1,4 @@
 import Reference from './Reference.js';
-import Connector from './Connector.js';
 import {makePathMatcher, joinPath, escapeKey, unescapeKey, promiseFinally} from './utils.js';
 
 import _ from 'lodash';
@@ -122,21 +121,46 @@ class ErrorWrapper {
 
 export default class Modeler {
   constructor(classes) {
-    this._mounts = _(classes).uniq().map(Class => this._mountClass(Class)).flatten().value();
-    const patterns = _.map(this._mounts, mount => mount.matcher.toString());
-    if (patterns.length !== _.uniq(patterns).length) {
-      const badPaths = _(patterns)
-        .groupBy()
-        .map((group, key) =>
-          group.length === 1 ? null : key.replace(/\(\[\^\/\]\+\)/g, '$').slice(1, -1))
-        .compact()
-        .value();
-      throw new Error('Paths have multiple mounted classes: ' + badPaths.join(', '));
-    }
+    this._trie = {Class: Value};
+    _(classes).uniq().each(Class => this._mountClass(Class)).commit();
+    this._decorateTrie(this._trie);
     Object.freeze(this);
   }
 
   destroy() {
+  }
+
+  _getMount(path, scaffold, predicate) {
+    const segments = path.split('/');
+    let node;
+    for (const segment of segments) {
+      let child = segment ?
+        node.children && (node.children[segment] || node.children.$) : this._trie;
+      if (!child) {
+        if (!scaffold) return;
+        node.children = node.children || {};
+        child = node.children[segment] = {Class: Value};
+      }
+      node = child;
+      if (predicate && predicate(node)) break;
+    }
+    return node;
+  }
+
+  _findMount(predicate, node) {
+    if (!node) node = this._trie;
+    if (predicate(node)) return node;
+    for (const childKey of _.keys(node.children)) {
+      const result = this._findMount(predicate, node.children[childKey]);
+      if (result) return result;
+    }
+  }
+
+  _decorateTrie(node) {
+    _.each(node.children, child => {
+      this._decorateTrie(child);
+      if (child.local || child.localDescendants) node.localDescendants = true;
+    });
   }
 
   _augmentClass(Class) {
@@ -175,7 +199,7 @@ export default class Modeler {
     let mounts = Class.$trussMount;
     if (!mounts) throw new Error(`Class ${Class.name} lacks a $trussMount static property`);
     if (!_.isArray(mounts)) mounts = [mounts];
-    return _.map(mounts, mount => {
+    _.each(mounts, mount => {
       if (_.isString(mount)) mount = {path: mount};
       const matcher = makePathMatcher(mount.path);
       for (const variable of matcher.variables) {
@@ -189,11 +213,23 @@ export default class Modeler {
         }
       }
       const escapedKey = mount.path.match(/\/([^/]*)$/)[1];
-      if (mount.placeholder && escapedKey.charAt(0) === '$') {
-        throw new Error(
-          `Class ${Class.name} mounted at wildcard ${escapedKey} cannot be a placeholder`);
+      if (escapedKey.charAt(0) === '$') {
+        if (mount.placeholder) {
+          throw new Error(
+            `Class ${Class.name} mounted at wildcard ${escapedKey} cannot be a placeholder`);
+        }
+      } else {
+        if (!_.has(mount, 'placeholder')) mount.placeholder = {};
       }
-      return {Class, matcher, computedProperties, escapedKey, placeholder: mount.placeholder};
+      const targetMount = this._getMount(mount.path.replace(/\$[^/]*/g, '$'), true);
+      if (targetMount.matcher) {
+        throw new Error(
+          `Multiple classes mounted at ${mount.path}: ${targetMount.Class.name}, ${Class.name}`);
+      }
+      _.extend(targetMount, {
+        Class, matcher, computedProperties, escapedKey, placeholder: mount.placeholder,
+        local: mount.local
+      });
     });
   }
 
@@ -204,28 +240,20 @@ export default class Modeler {
    * before any Firebase properties are added.
    */
   createObject(path, properties) {
-    let Class = Value;
-    let computedProperties;
-    for (const mount of this._mounts) {
+    let mount = this._getMount(path) || {Class: Value};
+    if (mount.matcher) {
       const match = mount.matcher.match(path);
-      if (match) {
-        Class = mount.Class;
-        computedProperties = mount.computedProperties;
-        for (const variable in match) {
-          properties[variable] = {
-            value: match[variable], writable: false, configurable: false, enumerable: false
-          };
-        }
-        break;
+      for (const variable in match) {
+        properties[variable] = {value: match[variable]};
       }
     }
 
     creatingObjectProperties = properties;
-    const object = new Class();
+    const object = new mount.Class();
     creatingObjectProperties = null;
 
-    if (computedProperties) {
-      _.each(computedProperties, prop => {
+    if (mount.computedProperties) {
+      _.each(mount.computedProperties, prop => {
         properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop);
       });
     }
@@ -253,10 +281,12 @@ export default class Modeler {
       object.$$finalizers.push(
         vue.$watch(computeValue.bind(object, prop, stats), newValue => {
           if (_.isEqual(value, newValue, isTrussValueEqual)) return;
+          // console.log('updating', prop.fullName, 'from', value, 'to', newValue);
           stats.numUpdates += 1;
           writeAllowed = true;
           object[prop.name] = newValue;
           writeAllowed = false;
+          if (newValue instanceof ErrorWrapper) throw newValue.error;
         }, {immediate: true})  // use immediate:true since watcher will run computeValue anyway
       );
     });
@@ -281,15 +311,22 @@ export default class Modeler {
   }
 
   isPlaceholder(path) {
-    // TODO: optimize by precomputing a single all-placeholder-paths regex
-    return _.some(this._mounts, mount => mount.placeholder && mount.matcher.test(path));
+    const mount = this._getMount(path);
+    return mount && mount.placeholder;
+  }
+
+  isLocal(path) {
+    const mount = this._getMount(path, false, mount => mount.local);
+    if (!mount) return false;
+    if (mount.local) return true;
+    if (mount.localDescendants) throw new Error(`Subtree mixes local and remote data: ${path}`);
+    return false;
   }
 
   forEachPlaceholderChild(path, iteratee) {
-    _.each(this._mounts, mount => {
-      if (mount.placeholder && mount.matcher.testParent(path)) {
-        iteratee(mount.escapedKey, mount.placeholder);
-      }
+    const mount = this._getMount(path);
+    _.each(mount && mount.children, child => {
+      if (child.placeholder) iteratee(child.escapedKey, child.placeholder);
     });
   }
 
@@ -299,9 +336,9 @@ export default class Modeler {
     for (const key of Object.getOwnPropertyNames(object)) {
       if (RESERVED_VALUE_PROPERTY_NAMES[key]) continue;
       // jshint loopfunc:true
-      const mount = _.find(this._mounts, mount => mount.Class === object.constructor);
+      const mount = this._findMount(mount => mount.Class === object.constructor);
       // jshint loopfunc:false
-      if (mount && _.includes(mount.matcher.variables, key)) continue;
+      if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) continue;
       if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
         const descriptor = Object.getOwnPropertyDescriptor(object, key);
         if ('value' in descriptor || !descriptor.get) {
