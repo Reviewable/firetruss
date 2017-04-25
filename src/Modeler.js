@@ -37,8 +37,10 @@ class Value {
       this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
     return this.$key;
   }
-  get $keys() {return _.keys(this);}
-  get $values() {return _.values(this);}
+  get $data() {return this;}
+  get $empty() {return _.isEmpty(this.$data);}
+  get $keys() {return _.keys(this.$data);}
+  get $values() {return _.values(this.$data);}
   get $meta() {return this.$truss.meta;}
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
   get $now() {return this.$truss.now;}
@@ -252,6 +254,7 @@ export default class Modeler {
     const object = new mount.Class();
     creatingObjectProperties = null;
 
+    if (mount.keysUnsafe) properties.$data = {value: Object.create(null)};
     if (mount.computedProperties) {
       _.each(mount.computedProperties, prop => {
         properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop);

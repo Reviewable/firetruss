@@ -1918,7 +1918,7 @@
 
 	var Value = function Value () {};
 
-	var prototypeAccessors$8 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$finalizers: {} };
+	var prototypeAccessors$8 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$empty: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$finalizers: {} };
 
 	prototypeAccessors$8.$parent.get = function () {return creatingObjectProperties.$parent.value;};
 	prototypeAccessors$8.$path.get = function () {return creatingObjectProperties.$path.value;};
@@ -1936,8 +1936,10 @@
 	    this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
 	  return this.$key;
 	};
-	prototypeAccessors$8.$keys.get = function () {return _.keys(this);};
-	prototypeAccessors$8.$values.get = function () {return _.values(this);};
+	prototypeAccessors$8.$data.get = function () {return this;};
+	prototypeAccessors$8.$empty.get = function () {return _.isEmpty(this.$data);};
+	prototypeAccessors$8.$keys.get = function () {return _.keys(this.$data);};
+	prototypeAccessors$8.$values.get = function () {return _.values(this.$data);};
 	prototypeAccessors$8.$meta.get = function () {return this.$truss.meta;};
 	prototypeAccessors$8.$root.get = function () {return this.$truss.root;};// access indirectly to leave dependency trace
 	prototypeAccessors$8.$now.get = function () {return this.$truss.now;};
@@ -2179,6 +2181,7 @@
 	  var object = new mount.Class();
 	  creatingObjectProperties = null;
 
+	  if (mount.keysUnsafe) { properties.$data = {value: Object.create(null)}; }
 	  if (mount.computedProperties) {
 	    _.each(mount.computedProperties, function (prop) {
 	      properties[prop.name] = this$1._buildComputedPropertyDescriptor(object, prop);
@@ -2895,11 +2898,15 @@
 	    if (!descriptor.get || !descriptor.set) {
 	      throw new Error(("Unbound property at " + (object.$path) + ": " + key));
 	    }
+	  } else if (key in object) {
+	    throw new Error(
+	      ("Key conflict between Firebase and inherited property at " + (object.$path) + ": " + key));
 	  }
 	  return descriptor;
 	};
 
 	Tree.prototype._setFirebaseProperty = function _setFirebaseProperty (object, key, value) {
+	  if (object.hasOwnProperty('$data')) { object = object.$data; }
 	  var descriptor = this._getFirebasePropertyDescriptor(object, key);
 	  if (descriptor) {
 	    this._firebasePropertyEditAllowed = true;
@@ -2925,6 +2932,7 @@
 	};
 
 	Tree.prototype._deleteFirebaseProperty = function _deleteFirebaseProperty (object, key) {
+	  if (object.hasOwnProperty('$data')) { object = object.$data; }
 	  // Make sure it's actually a Firebase property.
 	  this._getFirebasePropertyDescriptor(object, key);
 	  this._destroyObject(object[key]);
@@ -3165,6 +3173,7 @@
 	  });
 	  promise = promiseFinally(promise, cleanup);
 	  makePromiseCancelable(promise, cleanup);
+	  if (options.scope) { options.scope.$on('$destroy', function () {promise.cancel();}); }
 	  return promise;
 	};
 

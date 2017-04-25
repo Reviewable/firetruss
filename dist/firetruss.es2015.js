@@ -1716,8 +1716,10 @@ class Value {
       this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
     return this.$key;
   }
-  get $keys() {return _.keys(this);}
-  get $values() {return _.values(this);}
+  get $data() {return this;}
+  get $empty() {return _.isEmpty(this.$data);}
+  get $keys() {return _.keys(this.$data);}
+  get $values() {return _.values(this.$data);}
   get $meta() {return this.$truss.meta;}
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
   get $now() {return this.$truss.now;}
@@ -1931,6 +1933,7 @@ class Modeler {
     const object = new mount.Class();
     creatingObjectProperties = null;
 
+    if (mount.keysUnsafe) properties.$data = {value: Object.create(null)};
     if (mount.computedProperties) {
       _.each(mount.computedProperties, prop => {
         properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop);
@@ -2584,11 +2587,15 @@ class Tree {
       if (!descriptor.get || !descriptor.set) {
         throw new Error(`Unbound property at ${object.$path}: ${key}`);
       }
+    } else if (key in object) {
+      throw new Error(
+        `Key conflict between Firebase and inherited property at ${object.$path}: ${key}`);
     }
     return descriptor;
   }
 
   _setFirebaseProperty(object, key, value) {
+    if (object.hasOwnProperty('$data')) object = object.$data;
     let descriptor = this._getFirebasePropertyDescriptor(object, key);
     if (descriptor) {
       this._firebasePropertyEditAllowed = true;
@@ -2614,6 +2621,7 @@ class Tree {
   }
 
   _deleteFirebaseProperty(object, key) {
+    if (object.hasOwnProperty('$data')) object = object.$data;
     // Make sure it's actually a Firebase property.
     this._getFirebasePropertyDescriptor(object, key);
     this._destroyObject(object[key]);
@@ -2851,6 +2859,7 @@ class Truss {
     });
     promise = promiseFinally(promise, cleanup);
     makePromiseCancelable(promise, cleanup);
+    if (options.scope) options.scope.$on('$destroy', () => {promise.cancel();});
     return promise;
   }
 

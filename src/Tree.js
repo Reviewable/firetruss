@@ -516,11 +516,15 @@ export default class Tree {
       if (!descriptor.get || !descriptor.set) {
         throw new Error(`Unbound property at ${object.$path}: ${key}`);
       }
+    } else if (key in object) {
+      throw new Error(
+        `Key conflict between Firebase and inherited property at ${object.$path}: ${key}`);
     }
     return descriptor;
   }
 
   _setFirebaseProperty(object, key, value) {
+    if (object.hasOwnProperty('$data')) object = object.$data;
     let descriptor = this._getFirebasePropertyDescriptor(object, key);
     if (descriptor) {
       this._firebasePropertyEditAllowed = true;
@@ -546,6 +550,7 @@ export default class Tree {
   }
 
   _deleteFirebaseProperty(object, key) {
+    if (object.hasOwnProperty('$data')) object = object.$data;
     // Make sure it's actually a Firebase property.
     this._getFirebasePropertyDescriptor(object, key);
     this._destroyObject(object[key]);

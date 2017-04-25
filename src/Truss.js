@@ -181,6 +181,7 @@ export default class Truss {
     });
     promise = promiseFinally(promise, cleanup);
     makePromiseCancelable(promise, cleanup);
+    if (options.scope) options.scope.$on('$destroy', () => {promise.cancel();});
     return promise;
   }
 
