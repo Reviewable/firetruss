@@ -883,6 +883,7 @@
 	  this._disconnects = {};
 	  this._angularUnwatches = undefined;
 	  this._vue = new Vue({data: _.mapValues(connections, _.constant(undefined))});
+	  this.destroy = this.destroy;
 	  Object.seal(this);
 
 	  this._linkScopeProperties();
@@ -1956,6 +1957,20 @@
 	  };
 	  this.$$finalizers.push(uninterceptAndRemoveFinalizer);
 	  return uninterceptAndRemoveFinalizer;
+	};
+
+	Value.prototype.$connect = function $connect (scope, connections) {
+	    var this$1 = this;
+
+	  var connector = this.$truss.connect(scope, connections);
+	  var originalDestroy = connector.destroy;
+	  var destroy = function () {
+	    _.pull(this$1.$$finalizers, destroy);
+	    return originalDestroy.call(connector);
+	  };
+	  this.$$finalizers.push(destroy);
+	  connector.destroy = destroy;
+	  return connector;
 	};
 
 	Value.prototype.$peek = function $peek (target, callback) {

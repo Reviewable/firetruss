@@ -18,6 +18,7 @@ export default class Connector {
     this._disconnects = {};
     this._angularUnwatches = undefined;
     this._vue = new Vue({data: _.mapValues(connections, _.constant(undefined))});
+    this.destroy = this.destroy;  // allow instance-level overrides of destroy() method
     Object.seal(this);
 
     this._linkScopeProperties();

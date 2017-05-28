@@ -810,6 +810,7 @@ class Connector {
     this._disconnects = {};
     this._angularUnwatches = undefined;
     this._vue = new Vue({data: _.mapValues(connections, _.constant(undefined))});
+    this.destroy = this.destroy;
     Object.seal(this);
 
     this._linkScopeProperties();
@@ -1734,6 +1735,18 @@ class Value {
     };
     this.$$finalizers.push(uninterceptAndRemoveFinalizer);
     return uninterceptAndRemoveFinalizer;
+  }
+
+  $connect(scope, connections) {
+    const connector = this.$truss.connect(scope, connections);
+    const originalDestroy = connector.destroy;
+    const destroy = () => {
+      _.pull(this.$$finalizers, destroy);
+      return originalDestroy.call(connector);
+    };
+    this.$$finalizers.push(destroy);
+    connector.destroy = destroy;
+    return connector;
   }
 
   $peek(target, callback) {

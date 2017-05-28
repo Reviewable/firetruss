@@ -57,6 +57,18 @@ class Value {
     return uninterceptAndRemoveFinalizer;
   }
 
+  $connect(scope, connections) {
+    const connector = this.$truss.connect(scope, connections);
+    const originalDestroy = connector.destroy;
+    const destroy = () => {
+      _.pull(this.$$finalizers, destroy);
+      return originalDestroy.call(connector);
+    };
+    this.$$finalizers.push(destroy);
+    connector.destroy = destroy;
+    return connector;
+  }
+
   $peek(target, callback) {
     const promise = promiseFinally(
       this.$truss.peek(target, callback), () => {_.pull(this.$$finalizers, promise.cancel);}
