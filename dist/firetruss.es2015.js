@@ -810,7 +810,7 @@ class Connector {
     this._disconnects = {};
     this._angularUnwatches = undefined;
     this._vue = new Vue({data: _.mapValues(connections, _.constant(undefined))});
-    this.destroy = this.destroy;
+    this.destroy = this.destroy;  // allow instance-level overrides of destroy() method
     Object.seal(this);
 
     this._linkScopeProperties();
@@ -1814,11 +1814,29 @@ class ErrorWrapper {
 
 
 class Modeler {
-  constructor(classes) {
+  constructor() {
     this._trie = {Class: Value};
-    _(classes).uniq().each(Class => this._mountClass(Class)).commit();
-    this._decorateTrie(this._trie);
     Object.freeze(this);
+  }
+
+  init(classes, rootAcceptable) {
+    if (_.isPlainObject(classes)) {
+      _.each(classes, (Class, path) => {
+        if (Class.$trussMount) return;
+        Class.$$trussMount = Class.$$trussMount || [];
+        Class.$$trussMount.push(path);
+      });
+      classes = _.values(classes);
+      _.each(classes, Class => {
+        if (!Class.$trussMount && Class.$$trussMount) {
+          Class.$trussMount = Class.$$trussMount;
+          delete Class.$$trussMount;
+        }
+      });
+    }
+    classes = _.uniq(classes);
+    _.each(classes, Class => this._mountClass(Class, rootAcceptable));
+    this._decorateTrie(this._trie);
   }
 
   destroy() {
@@ -1888,13 +1906,16 @@ class Modeler {
     return computedProperties;
   }
 
-  _mountClass(Class) {
+  _mountClass(Class, rootAcceptable) {
     const computedProperties = this._augmentClass(Class);
     let mounts = Class.$trussMount;
     if (!mounts) throw new Error(`Class ${Class.name} lacks a $trussMount static property`);
     if (!_.isArray(mounts)) mounts = [mounts];
     _.each(mounts, mount => {
       if (_.isString(mount)) mount = {path: mount};
+      if (!rootAcceptable && mount.path === '/') {
+        throw new Error('Data root already accessed, too late to mount class');
+      }
       const matcher = makePathMatcher(mount.path);
       for (const variable of matcher.variables) {
         if (variable === '$' || variable.charAt(1) === '$') {
@@ -2139,9 +2160,12 @@ class Tree {
     this._writeSerial = 0;
     this._localWrites = {};
     this._localWriteTimestamp = null;
+    this._initialized = false;
+    this._modeler = new Modeler();
     this._coupler = new Coupler(
       rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
     this._vue = new Vue({data: {$root: undefined}});
+    Object.seal(this);
     if (angularProxy.active) {
       this._vue.$watch('$data', () => {angularProxy.digest();}, {deep: true});
     }
@@ -2151,6 +2175,9 @@ class Tree {
   }
 
   get root() {
+    if (!this._vue.$data.$root) {
+      this._completeCreateObject(this._vue.$data.$root = this._createObject('/', ''));
+    }
     return this._vue.$data.$root;
   }
 
@@ -2159,11 +2186,12 @@ class Tree {
   }
 
   init(classes) {
-    this._modeler = new Modeler(classes);
-    this._vue.$data.$root = this._createObject('/', '');
-    this._completeCreateObject(this.root);
+    if (this._initialized) {
+      throw new Error('Data objects already created, too late to mount classes');
+    }
+    this._initialized = true;
+    this._modeler.init(classes, !this._vue.$data.$root);
     this._plantPlaceholders(this.root, '/');
-    Object.seal(this);
   }
 
   destroy() {
@@ -2380,6 +2408,7 @@ class Tree {
    * before any Firebase properties are added.
    */
   _createObject(path, key, parent) {
+    if (!this._initialized && path !== '/') this.init();
     let properties = {
       // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
       $parent: {value: parent, configurable: true, enumerable: true},
@@ -2718,11 +2747,8 @@ class Truss {
    * exactly one Truss per root datastore URL, so in most code this will be a singleton.
    *
    * @param rootUrl {String} The root URL, https://{project}.firebaseio.com.
-   * @param classes {Array<Function>} A list of the classes to map onto the datastore structure.
-   *    Each class must have a static $trussMount property that is a (wildcarded) datastore path, or
-   *    an options object {path: string, placeholder: object}, or an array of either.
    */
-  constructor(rootUrl, classes) {
+  constructor(rootUrl) {
     // TODO: allow rootUrl to be a test database object for testing
     if (!bridge) {
       throw new Error('Truss worker not connected, please call Truss.connectWorker first');
@@ -2735,13 +2761,26 @@ class Truss {
     bridge.trackServer(this._rootUrl);
     this._metaTree = new MetaTree(this._rootUrl, bridge);
     this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher);
-    this._tree.init(classes);
 
     Object.freeze(this);
   }
 
   get meta() {return this._metaTree.root;}
   get root() {return this._tree.root;}
+
+  /**
+   * Mount a set of classes against the datastore structure.  Must be called at most once, and
+   * cannot be called once any data has been loaded into the tree.
+   * @param classes {Array<Function> | Object<Function>} A list of the classes to map onto the
+   *    datastore structure.  Each class must have a static $trussMount property that is a
+   *    (wildcarded) unescaped datastore path, or an options object
+   *    {path: string, placeholder: object}, or an array of either.  If the list is an object then
+   *    the keys serve as default option-less $trussMount paths for classes that don't define an
+   *    explicit $trussMount.
+   */
+  mount(classes) {
+    this._tree.init(classes);
+  }
 
   destroy() {
     this._vue.$destroy();

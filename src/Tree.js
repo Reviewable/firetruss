@@ -55,9 +55,12 @@ export default class Tree {
     this._writeSerial = 0;
     this._localWrites = {};
     this._localWriteTimestamp = null;
+    this._initialized = false;
+    this._modeler = new Modeler();
     this._coupler = new Coupler(
       rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
     this._vue = new Vue({data: {$root: undefined}});
+    Object.seal(this);
     if (angularCompatibility.active) {
       this._vue.$watch('$data', () => {angularCompatibility.digest();}, {deep: true});
     }
@@ -67,6 +70,9 @@ export default class Tree {
   }
 
   get root() {
+    if (!this._vue.$data.$root) {
+      this._completeCreateObject(this._vue.$data.$root = this._createObject('/', ''));
+    }
     return this._vue.$data.$root;
   }
 
@@ -75,11 +81,12 @@ export default class Tree {
   }
 
   init(classes) {
-    this._modeler = new Modeler(classes);
-    this._vue.$data.$root = this._createObject('/', '');
-    this._completeCreateObject(this.root);
+    if (this._initialized) {
+      throw new Error('Data objects already created, too late to mount classes');
+    }
+    this._initialized = true;
+    this._modeler.init(classes, !this._vue.$data.$root);
     this._plantPlaceholders(this.root, '/');
-    Object.seal(this);
   }
 
   destroy() {
@@ -296,6 +303,7 @@ export default class Tree {
    * before any Firebase properties are added.
    */
   _createObject(path, key, parent) {
+    if (!this._initialized && path !== '/') this.init();
     let properties = {
       // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
       $parent: {value: parent, configurable: true, enumerable: true},

@@ -27,11 +27,8 @@ export default class Truss {
    * exactly one Truss per root datastore URL, so in most code this will be a singleton.
    *
    * @param rootUrl {String} The root URL, https://{project}.firebaseio.com.
-   * @param classes {Array<Function>} A list of the classes to map onto the datastore structure.
-   *    Each class must have a static $trussMount property that is a (wildcarded) datastore path, or
-   *    an options object {path: string, placeholder: object}, or an array of either.
    */
-  constructor(rootUrl, classes) {
+  constructor(rootUrl) {
     // TODO: allow rootUrl to be a test database object for testing
     if (!bridge) {
       throw new Error('Truss worker not connected, please call Truss.connectWorker first');
@@ -44,13 +41,26 @@ export default class Truss {
     bridge.trackServer(this._rootUrl);
     this._metaTree = new MetaTree(this._rootUrl, bridge);
     this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher);
-    this._tree.init(classes);
 
     Object.freeze(this);
   }
 
   get meta() {return this._metaTree.root;}
   get root() {return this._tree.root;}
+
+  /**
+   * Mount a set of classes against the datastore structure.  Must be called at most once, and
+   * cannot be called once any data has been loaded into the tree.
+   * @param classes {Array<Function> | Object<Function>} A list of the classes to map onto the
+   *    datastore structure.  Each class must have a static $trussMount property that is a
+   *    (wildcarded) unescaped datastore path, or an options object
+   *    {path: string, placeholder: object}, or an array of either.  If the list is an object then
+   *    the keys serve as default option-less $trussMount paths for classes that don't define an
+   *    explicit $trussMount.
+   */
+  mount(classes) {
+    this._tree.init(classes);
+  }
 
   destroy() {
     this._vue.$destroy();

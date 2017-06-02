@@ -883,7 +883,7 @@
 	  this._disconnects = {};
 	  this._angularUnwatches = undefined;
 	  this._vue = new Vue({data: _.mapValues(connections, _.constant(undefined))});
-	  this.destroy = this.destroy;
+	  this.destroy = this.destroy;// allow instance-level overrides of destroy() method
 	  Object.seal(this);
 
 	  this._linkScopeProperties();
@@ -2040,16 +2040,34 @@
 	};
 
 
-	var Modeler = function Modeler(classes) {
-	  var this$1 = this;
-
+	var Modeler = function Modeler() {
 	  this._trie = {Class: Value};
-	  _(classes).uniq().each(function (Class) { return this$1._mountClass(Class); }).commit();
-	  this._decorateTrie(this._trie);
 	  Object.freeze(this);
 	};
 
 	var staticAccessors$2 = { computedPropertyStats: {} };
+
+	Modeler.prototype.init = function init (classes, rootAcceptable) {
+	    var this$1 = this;
+
+	  if (_.isPlainObject(classes)) {
+	    _.each(classes, function (Class, path) {
+	      if (Class.$trussMount) { return; }
+	      Class.$$trussMount = Class.$$trussMount || [];
+	      Class.$$trussMount.push(path);
+	    });
+	    classes = _.values(classes);
+	    _.each(classes, function (Class) {
+	      if (!Class.$trussMount && Class.$$trussMount) {
+	        Class.$trussMount = Class.$$trussMount;
+	        delete Class.$$trussMount;
+	      }
+	    });
+	  }
+	  classes = _.uniq(classes);
+	  _.each(classes, function (Class) { return this$1._mountClass(Class, rootAcceptable); });
+	  this._decorateTrie(this._trie);
+	};
 
 	Modeler.prototype.destroy = function destroy () {
 	};
@@ -2132,7 +2150,7 @@
 	  return computedProperties;
 	};
 
-	Modeler.prototype._mountClass = function _mountClass (Class) {
+	Modeler.prototype._mountClass = function _mountClass (Class, rootAcceptable) {
 	    var this$1 = this;
 
 	  var computedProperties = this._augmentClass(Class);
@@ -2141,6 +2159,9 @@
 	  if (!_.isArray(mounts)) { mounts = [mounts]; }
 	  _.each(mounts, function (mount) {
 	    if (_.isString(mount)) { mount = {path: mount}; }
+	    if (!rootAcceptable && mount.path === '/') {
+	      throw new Error('Data root already accessed, too late to mount class');
+	    }
 	    var matcher = makePathMatcher(mount.path);
 	    for (var i = 0, list = matcher.variables; i < list.length; i += 1) {
 	      var variable = list[i];
@@ -2402,9 +2423,12 @@
 	  this._writeSerial = 0;
 	  this._localWrites = {};
 	  this._localWriteTimestamp = null;
+	  this._initialized = false;
+	  this._modeler = new Modeler();
 	  this._coupler = new Coupler(
 	    rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
 	  this._vue = new Vue({data: {$root: undefined}});
+	  Object.seal(this);
 	  if (angularProxy.active) {
 	    this._vue.$watch('$data', function () {angularProxy.digest();}, {deep: true});
 	  }
@@ -2417,6 +2441,9 @@
 	var staticAccessors$1 = { computedPropertyStats: {} };
 
 	prototypeAccessors$1$1.root.get = function () {
+	  if (!this._vue.$data.$root) {
+	    this._completeCreateObject(this._vue.$data.$root = this._createObject('/', ''));
+	  }
 	  return this._vue.$data.$root;
 	};
 
@@ -2425,11 +2452,12 @@
 	};
 
 	Tree.prototype.init = function init (classes) {
-	  this._modeler = new Modeler(classes);
-	  this._vue.$data.$root = this._createObject('/', '');
-	  this._completeCreateObject(this.root);
+	  if (this._initialized) {
+	    throw new Error('Data objects already created, too late to mount classes');
+	  }
+	  this._initialized = true;
+	  this._modeler.init(classes, !this._vue.$data.$root);
 	  this._plantPlaceholders(this.root, '/');
-	  Object.seal(this);
 	};
 
 	Tree.prototype.destroy = function destroy () {
@@ -2663,6 +2691,7 @@
 	 * before any Firebase properties are added.
 	 */
 	Tree.prototype._createObject = function _createObject (path, key, parent) {
+	  if (!this._initialized && path !== '/') { this.init(); }
 	  var properties = {
 	    // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
 	    $parent: {value: parent, configurable: true, enumerable: true},
@@ -3027,7 +3056,7 @@
 	var VERSION = 'dev';
 
 
-	var Truss = function Truss(rootUrl, classes) {
+	var Truss = function Truss(rootUrl) {
 	  // TODO: allow rootUrl to be a test database object for testing
 	  if (!bridge) {
 	    throw new Error('Truss worker not connected, please call Truss.connectWorker first');
@@ -3040,7 +3069,6 @@
 	  bridge.trackServer(this._rootUrl);
 	  this._metaTree = new MetaTree(this._rootUrl, bridge);
 	  this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher);
-	  this._tree.init(classes);
 
 	  Object.freeze(this);
 	};
@@ -3050,6 +3078,20 @@
 
 	prototypeAccessors.meta.get = function () {return this._metaTree.root;};
 	prototypeAccessors.root.get = function () {return this._tree.root;};
+
+	/**
+	 * Mount a set of classes against the datastore structure.Must be called at most once, and
+	 * cannot be called once any data has been loaded into the tree.
+	 * @param classes {Array<Function> | Object<Function>} A list of the classes to map onto the
+	 *  datastore structure.Each class must have a static $trussMount property that is a
+	 *  (wildcarded) unescaped datastore path, or an options object
+	 *  {path: string, placeholder: object}, or an array of either.If the list is an object then
+	 *  the keys serve as default option-less $trussMount paths for classes that don't define an
+	 *  explicit $trussMount.
+	 */
+	Truss.prototype.mount = function mount (classes) {
+	  this._tree.init(classes);
+	};
 
 	Truss.prototype.destroy = function destroy () {
 	  this._vue.$destroy();

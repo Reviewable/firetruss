@@ -134,11 +134,29 @@ class ErrorWrapper {
 
 
 export default class Modeler {
-  constructor(classes) {
+  constructor() {
     this._trie = {Class: Value};
-    _(classes).uniq().each(Class => this._mountClass(Class)).commit();
-    this._decorateTrie(this._trie);
     Object.freeze(this);
+  }
+
+  init(classes, rootAcceptable) {
+    if (_.isPlainObject(classes)) {
+      _.each(classes, (Class, path) => {
+        if (Class.$trussMount) return;
+        Class.$$trussMount = Class.$$trussMount || [];
+        Class.$$trussMount.push(path);
+      });
+      classes = _.values(classes);
+      _.each(classes, Class => {
+        if (!Class.$trussMount && Class.$$trussMount) {
+          Class.$trussMount = Class.$$trussMount;
+          delete Class.$$trussMount;
+        }
+      });
+    }
+    classes = _.uniq(classes);
+    _.each(classes, Class => this._mountClass(Class, rootAcceptable));
+    this._decorateTrie(this._trie);
   }
 
   destroy() {
@@ -208,13 +226,16 @@ export default class Modeler {
     return computedProperties;
   }
 
-  _mountClass(Class) {
+  _mountClass(Class, rootAcceptable) {
     const computedProperties = this._augmentClass(Class);
     let mounts = Class.$trussMount;
     if (!mounts) throw new Error(`Class ${Class.name} lacks a $trussMount static property`);
     if (!_.isArray(mounts)) mounts = [mounts];
     _.each(mounts, mount => {
       if (_.isString(mount)) mount = {path: mount};
+      if (!rootAcceptable && mount.path === '/') {
+        throw new Error('Data root already accessed, too late to mount class');
+      }
       const matcher = makePathMatcher(mount.path);
       for (const variable of matcher.variables) {
         if (variable === '$' || variable.charAt(1) === '$') {
