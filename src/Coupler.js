@@ -18,7 +18,7 @@ class QueryHandler {
   attach(operation, keysCallback) {
     this._listen();
     this._listeners.push({operation, keysCallback});
-    keysCallback(this._keys);
+    if (keysCallback) keysCallback(this._keys);
   }
 
   detach(operation) {
@@ -61,7 +61,9 @@ class QueryHandler {
       }
     }
     if (updatedKeys) {
-      for (const listener of this._listeners) listener.keysCallback(updatedKeys);
+      for (const listener of this._listeners) {
+        if (listener.keysCallback) listener.keysCallback(updatedKeys);
+      }
     }
   }
 

@@ -72,7 +72,7 @@
 	  };
 	}
 
-	function makePromiseCancelable(promise, cancel) {
+	function promiseCancel(promise, cancel) {
 	  promise = promiseFinally(promise, function () {cancel = null;});
 	  promise.cancel = function () {
 	    if (!cancel) { return; }
@@ -89,11 +89,13 @@
 	    var derivedPromise = originalThen.call(promise, onResolved, onRejected);
 	    derivedPromise[propertyName] = promise[propertyName];
 	    propagatePromiseProperty(derivedPromise, propertyName);
+	    return derivedPromise;
 	  };
 	  promise.catch = function (onRejected) {
 	    var derivedPromise = originalCatch.call(promise, onRejected);
 	    derivedPromise[propertyName] = promise[propertyName];
 	    propagatePromiseProperty(derivedPromise, propertyName);
+	    return derivedPromise;
 	  };
 	  return promise;
 	}
@@ -113,6 +115,7 @@
 	  for (var i = 0, list = arguments; i < list.length; i += 1) {
 	    var segment = list[i];
 
+	    if (!_.isString(segment)) { segment = '' + segment; }
 	    if (segment.charAt(0) === '/') { segments.splice(0, segments.length); }
 	    segments.push(segment);
 	  }
@@ -744,6 +747,11 @@
 	  function Query(tree, path, spec, annotations) {
 	    Handle.call(this, tree, path, annotations);
 	    this._spec = this._copyAndValidateSpec(spec);
+	    var queryTerms = _(this._spec)
+	      .map(function (value, key) { return (key + "=" + (encodeURIComponent(JSON.stringify(value)))); })
+	      .sortBy()
+	      .join('&');
+	    this._string = (this._path) + "?" + queryTerms;
 	    Object.freeze(this);
 	  }
 
@@ -805,13 +813,6 @@
 
 
 	  Query.prototype.toString = function toString () {
-	    if (!this._string) {
-	      var queryTerms = _(this._spec)
-	        .map(function (value, key) { return (key + "=" + (encodeURIComponent(JSON.stringify(value)))); })
-	        .sortBy()
-	        .join('&');
-	      this._string = (this._path) + "?" + queryTerms;
-	    }
 	    return this._string;
 	  };
 
@@ -1440,7 +1441,7 @@
 	QueryHandler.prototype.attach = function attach (operation, keysCallback) {
 	  this._listen();
 	  this._listeners.push({operation: operation, keysCallback: keysCallback});
-	  keysCallback(this._keys);
+	  if (keysCallback) { keysCallback(this._keys); }
 	};
 
 	QueryHandler.prototype.detach = function detach (operation) {
@@ -1492,10 +1493,10 @@
 	  }
 	  if (updatedKeys) {
 	    for (var i$1 = 0, list$1 = this._listeners; i$1 < list$1.length; i$1 += 1) {
-	        var listener$1 = list$1[i$1];
+	      var listener$1 = list$1[i$1];
 
-	        listener$1.keysCallback(updatedKeys);
-	      }
+	        if (listener$1.keysCallback) { listener$1.keysCallback(updatedKeys); }
+	    }
 	  }
 	};
 
@@ -1919,7 +1920,7 @@
 
 	var Value = function Value () {};
 
-	var prototypeAccessors$8 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$empty: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$finalizers: {} };
+	var prototypeAccessors$8 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$empty: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$initializers: {},$$finalizers: {} };
 
 	prototypeAccessors$8.$parent.get = function () {return creatingObjectProperties.$parent.value;};
 	prototypeAccessors$8.$path.get = function () {return creatingObjectProperties.$path.value;};
@@ -1962,7 +1963,11 @@
 	Value.prototype.$connect = function $connect (scope, connections) {
 	    var this$1 = this;
 
-	  var connector = this.$truss.connect(scope, connections);
+	  if (!connections) {
+	    connections = scope;
+	    scope = undefined;
+	  }
+	  var connector = this.$truss.connect(scope, wrapConnections(this, connections));
 	  var originalDestroy = connector.destroy;
 	  var destroy = function () {
 	    _.pull(this$1.$$finalizers, destroy);
@@ -2004,10 +2009,11 @@
 	Value.prototype.$when = function $when (expression, options) {
 	    var this$1 = this;
 
-	  var promise = promiseFinally(this.$truss.when(function () {
+	  var promise = this.$truss.when(function () {
 	    this$1.$$touchThis();
 	    return expression.call(this$1);
-	  }, options), function () {_.pull(this$1.$$finalizers, promise.cancel);});
+	  }, options);
+	  promiseFinally(promise, function () {_.pull(this$1.$$finalizers, promise.cancel);});
 	  this.$$finalizers.push(promise.cancel);
 	  return promise;
 	};
@@ -2019,8 +2025,18 @@
 
 	Value.prototype.$$touchThis = function $$touchThis () {
 	  // jshint expr:true
-	  if (this.$parent) { this.$parent[this.$key]; } else { this.$root; }
+	  if (this.$parent) {
+	    (this.$parent.hasOwnProperty('$data') ? this.$parent.$data : this.$parent)[this.$key];
+	  } else {
+	    this.$root;
+	  }
 	  // jshint expr:false
+	};
+
+	prototypeAccessors$8.$$initializers.get = function () {
+	  Object.defineProperty(this, '$$initializers', {
+	    value: [], writable: false, enumerable: false, configurable: true});
+	  return this.$$initializers;
 	};
 
 	prototypeAccessors$8.$$finalizers.get = function () {
@@ -2239,10 +2255,6 @@
 	  var value;
 	  var writeAllowed = false;
 
-	  if (!object.$$initializers) {
-	    Object.defineProperty(object, '$$initializers', {
-	      value: [], writable: false, enumerable: false, configurable: true});
-	  }
 	  object.$$initializers.push(function (vue) {
 	    object.$$finalizers.push(
 	      vue.$watch(computeValue.bind(object, prop, stats), function (newValue) {
@@ -2304,45 +2316,48 @@
 	    var this$1 = this;
 
 	  var top = !checkedObjects;
-	  checkedObjects = checkedObjects || [];
-	  for (var i = 0, list = Object.getOwnPropertyNames(object); i < list.length; i += 1) {
-	    var key = list[i];
+	  if (top) { checkedObjects = []; }
+	  try {
+	    for (var i = 0, list = Object.getOwnPropertyNames(object); i < list.length; i += 1) {
+	      var key = list[i];
 
-	      if (RESERVED_VALUE_PROPERTY_NAMES[key]) { continue; }
-	    // jshint loopfunc:true
-	    var mount = this$1._findMount(function (mount) { return mount.Class === object.constructor; });
-	    // jshint loopfunc:false
-	    if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) { continue; }
-	    if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
-	      var descriptor = Object.getOwnPropertyDescriptor(object, key);
-	      if ('value' in descriptor || !descriptor.get) {
-	        throw new Error(
-	          ("Value at " + path + ", contained in a Firetruss object, has a rogue property: " + key));
-	      }
-	      if (object.$truss && descriptor.enumerable) {
-	        try {
-	          object[key] = object[key];
+	        if (RESERVED_VALUE_PROPERTY_NAMES[key]) { continue; }
+	      // jshint loopfunc:true
+	      var mount = this$1._findMount(function (mount) { return mount.Class === object.constructor; });
+	      // jshint loopfunc:false
+	      if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) { continue; }
+	      if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
+	        var descriptor = Object.getOwnPropertyDescriptor(object, key);
+	        if ('value' in descriptor || !descriptor.get) {
 	          throw new Error(
-	            ("Firetruss object at " + path + " has an enumerable non-Firebase property: " + key));
-	        } catch (e) {
-	          if (e.trussCode !== 'firebase_overwrite') { throw e; }
+	            ("Value at " + path + ", contained in a Firetruss object, has a rogue property: " + key));
+	        }
+	        if (object.$truss && descriptor.enumerable) {
+	          try {
+	            object[key] = object[key];
+	            throw new Error(
+	              ("Firetruss object at " + path + " has an enumerable non-Firebase property: " + key));
+	          } catch (e) {
+	            if (e.trussCode !== 'firebase_overwrite') { throw e; }
+	          }
 	        }
 	      }
-	    }
-	    var value = object[key];
-	    if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
-	        !(value instanceof Function)) {
-	      value.$$$trussCheck = true;
-	      checkedObjects.push(value);
-	      this$1.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
-	    }
-	  }
-	  if (top) {
-	    for (var i$1 = 0, list$1 = checkedObjects; i$1 < list$1.length; i$1 += 1) {
-	        var item = list$1[i$1];
-
-	        delete item.$$$trussCheck;
+	      var value = object[key];
+	      if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
+	          !(value instanceof Function)) {
+	        value.$$$trussCheck = true;
+	        checkedObjects.push(value);
+	        this$1.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
 	      }
+	    }
+	  } finally {
+	    if (top) {
+	      for (var i$1 = 0, list$1 = checkedObjects; i$1 < list$1.length; i$1 += 1) {
+	          var item = list$1[i$1];
+
+	          delete item.$$$trussCheck;
+	        }
+	    }
 	  }
 	};
 
@@ -2368,6 +2383,21 @@
 	    stats.numRecomputes += 1;
 	  }
 	  // jshint validthis: false
+	}
+
+	function wrapConnections(object, connections) {
+	  if (!connections || connections instanceof Handle) { return connections; }
+	  return _.mapValues(connections, function (descriptor) {
+	    if (descriptor instanceof Handle) { return descriptor; }
+	    if (_.isFunction(descriptor)) {
+	      return function() {
+	        object.$$touchThis();
+	        return wrapConnections(object, descriptor.call(this));
+	      };
+	    } else {
+	      return wrapConnections(object, descriptor);
+	    }
+	  });
 	}
 
 	function isTrussValueEqual(a, b) {
@@ -2442,7 +2472,9 @@
 
 	prototypeAccessors$1$1.root.get = function () {
 	  if (!this._vue.$data.$root) {
-	    this._completeCreateObject(this._vue.$data.$root = this._createObject('/', ''));
+	    this._vue.$data.$root = this._createObject('/', '');
+	    this._fixObject(this._vue.$data.$root);
+	    this._completeCreateObject(this._vue.$data.$root);
 	  }
 	  return this._vue.$data.$root;
 	};
@@ -2706,9 +2738,7 @@
 
 	// To be called on the result of _createObject after it's been inserted into the _vue hierarchy
 	// and Vue has had a chance to initialize it.
-	Tree.prototype._completeCreateObject = function _completeCreateObject (object) {
-	    var this$1 = this;
-
+	Tree.prototype._fixObject = function _fixObject (object) {
 	  for (var i = 0, list = Object.getOwnPropertyNames(object); i < list.length; i += 1) {
 	    var name = list[i];
 
@@ -2719,9 +2749,16 @@
 	      Object.defineProperty(object, name, descriptor);
 	    }
 	  }
-	  if (object.$$initializers) {
-	    for (var i$1 = 0, list$1 = object.$$initializers; i$1 < list$1.length; i$1 += 1) {
-	        var fn = list$1[i$1];
+	};
+
+	// To be called on the result of _createObject after _fixObject, and after any additional Firebase
+	// properties have been set, to run initialiers.
+	Tree.prototype._completeCreateObject = function _completeCreateObject (object) {
+	    var this$1 = this;
+
+	  if (object.hasOwnProperty('$$initializers')) {
+	    for (var i = 0, list = object.$$initializers; i < list.length; i += 1) {
+	        var fn = list[i];
 
 	        fn(this$1._vue);
 	      }
@@ -2776,7 +2813,7 @@
 	    var this$1 = this;
 
 	  if (value === null || value === undefined) {
-	    throw new Error('Snapshot includes invalid value: ' + value);
+	    throw new Error(("Snapshot includes invalid value at " + path + ": " + value));
 	  }
 	  if (remoteWrite && this._localWrites[path]) { return; }
 	  if (value === SERVER_TIMESTAMP) { value = this._localWriteTimestamp; }
@@ -2784,11 +2821,17 @@
 	    this._setFirebaseProperty(parent, key, value);
 	    return;
 	  }
+	  var objectCreated = false;
 	  var object = parent[key];
 	  if (!_.isObject(object)) {
+	    // Need to pre-set the property, so that if the child object attempts to watch any of its own
+	    // properties while being created the $$touchThis method has something to add a dependency on
+	    // as the object's own properties won't be made reactive until *after* it's been created.
+	    this._setFirebaseProperty(parent, key, null);
 	    object = this._createObject(path, key, parent);
 	    this._setFirebaseProperty(parent, key, object);
-	    this._completeCreateObject(object);
+	    this._fixObject(object);
+	    objectCreated = true;
 	  }
 	  if (override) {
 	    Object.defineProperty(object, '$overridden', {get: _.constant(true), configurable: true});
@@ -2801,13 +2844,17 @@
 	      override
 	    );
 	  });
-	  _.each(object, function (item, childKey) {
-	    var escapedChildKey = escapeKey(childKey);
-	    if (!value.hasOwnProperty(escapedChildKey)) {
-	      this$1._prune(joinPath(path, escapedChildKey), null, remoteWrite);
-	    }
-	  });
-	  this._plantPlaceholders(object, path);
+	  if (objectCreated) {
+	    this._completeCreateObject(object);
+	    this._plantPlaceholders(object, path);
+	  } else {
+	    _.each(object, function (item, childKey) {
+	      var escapedChildKey = escapeKey(childKey);
+	      if (!value.hasOwnProperty(escapedChildKey)) {
+	        this$1._prune(joinPath(path, escapedChildKey), null, remoteWrite);
+	      }
+	    });
+	  }
 	  return object;
 	};
 
@@ -3129,8 +3176,8 @@
 	  if (!connections) {
 	    connections = scope;
 	    scope = undefined;
-	    if (connections instanceof Handle) { connections = {_: connections}; }
 	  }
+	  if (connections instanceof Handle) { connections = {_: connections}; }
 	  return new Connector(scope, connections, this._tree, 'connect');
 	};
 
@@ -3179,8 +3226,7 @@
 	      cleanup();
 	    };
 	  });
-	  makePromiseCancelable(promise, cancel);
-	  return promise;
+	  return promiseCancel(promise, cancel);
 	};
 
 	Truss.prototype.watch = function watch (subjectFn, callbackFn, options) {
@@ -3210,10 +3256,14 @@
 	  var cleanup, timeoutHandle;
 	  var promise = new Promise(function (resolve, reject) {
 	    var unwatch = this$1.watch(expression, function (value) {
-	      if (value) {
+	      if (!value) { return; }
+	      // Wait for computed properties to settle and double-check.
+	      Vue.nextTick(function () {
+	        value = expression();
+	        if (!value) { return; }
 	        resolve(value);
 	        cleanup();
-	      }
+	      });
 	    });
 	    if (_.has(options, 'timeout')) {
 	      timeoutHandle = setTimeout(function () {
@@ -3228,9 +3278,8 @@
 	      reject(new Error('Canceled'));
 	    };
 	  });
-	  promise = promiseFinally(promise, cleanup);
-	  makePromiseCancelable(promise, cleanup);
-	  if (options.scope) { options.scope.$on('$destroy', function () {promise.cancel();}); }
+	  promise = promiseCancel(promiseFinally(promise, cleanup));
+	  if (options && options.scope) { options.scope.$on('$destroy', function () {promise.cancel();}); }
 	  return promise;
 	};
 

@@ -71,7 +71,9 @@ export default class Tree {
 
   get root() {
     if (!this._vue.$data.$root) {
-      this._completeCreateObject(this._vue.$data.$root = this._createObject('/', ''));
+      this._vue.$data.$root = this._createObject('/', '');
+      this._fixObject(this._vue.$data.$root);
+      this._completeCreateObject(this._vue.$data.$root);
     }
     return this._vue.$data.$root;
   }
@@ -318,7 +320,7 @@ export default class Tree {
 
   // To be called on the result of _createObject after it's been inserted into the _vue hierarchy
   // and Vue has had a chance to initialize it.
-  _completeCreateObject(object) {
+  _fixObject(object) {
     for (const name of Object.getOwnPropertyNames(object)) {
       const descriptor = Object.getOwnPropertyDescriptor(object, name);
       if (descriptor.configurable && descriptor.enumerable) {
@@ -327,7 +329,12 @@ export default class Tree {
         Object.defineProperty(object, name, descriptor);
       }
     }
-    if (object.$$initializers) {
+  }
+
+  // To be called on the result of _createObject after _fixObject, and after any additional Firebase
+  // properties have been set, to run initialiers.
+  _completeCreateObject(object) {
+    if (object.hasOwnProperty('$$initializers')) {
       for (const fn of object.$$initializers) fn(this._vue);
       delete object.$$initializers;
     }
@@ -372,7 +379,7 @@ export default class Tree {
 
   _plantValue(path, key, value, parent, remoteWrite, override) {
     if (value === null || value === undefined) {
-      throw new Error('Snapshot includes invalid value: ' + value);
+      throw new Error(`Snapshot includes invalid value at ${path}: ${value}`);
     }
     if (remoteWrite && this._localWrites[path]) return;
     if (value === SERVER_TIMESTAMP) value = this._localWriteTimestamp;
@@ -380,11 +387,17 @@ export default class Tree {
       this._setFirebaseProperty(parent, key, value);
       return;
     }
+    let objectCreated = false;
     let object = parent[key];
     if (!_.isObject(object)) {
+      // Need to pre-set the property, so that if the child object attempts to watch any of its own
+      // properties while being created the $$touchThis method has something to add a dependency on
+      // as the object's own properties won't be made reactive until *after* it's been created.
+      this._setFirebaseProperty(parent, key, null);
       object = this._createObject(path, key, parent);
       this._setFirebaseProperty(parent, key, object);
-      this._completeCreateObject(object);
+      this._fixObject(object);
+      objectCreated = true;
     }
     if (override) {
       Object.defineProperty(object, '$overridden', {get: _.constant(true), configurable: true});
@@ -397,13 +410,17 @@ export default class Tree {
         override
       );
     });
-    _.each(object, (item, childKey) => {
-      const escapedChildKey = escapeKey(childKey);
-      if (!value.hasOwnProperty(escapedChildKey)) {
-        this._prune(joinPath(path, escapedChildKey), null, remoteWrite);
-      }
-    });
-    this._plantPlaceholders(object, path);
+    if (objectCreated) {
+      this._completeCreateObject(object);
+      this._plantPlaceholders(object, path);
+    } else {
+      _.each(object, (item, childKey) => {
+        const escapedChildKey = escapeKey(childKey);
+        if (!value.hasOwnProperty(escapedChildKey)) {
+          this._prune(joinPath(path, escapedChildKey), null, remoteWrite);
+        }
+      });
+    }
     return object;
   }
 

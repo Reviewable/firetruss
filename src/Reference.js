@@ -94,6 +94,11 @@ export class Query extends Handle {
   constructor(tree, path, spec, annotations) {
     super(tree, path, annotations);
     this._spec = this._copyAndValidateSpec(spec);
+    const queryTerms = _(this._spec)
+      .map((value, key) => `${key}=${encodeURIComponent(JSON.stringify(value))}`)
+      .sortBy()
+      .join('&');
+    this._string = `${this._path}?${queryTerms}`;
     Object.freeze(this);
   }
 
@@ -149,13 +154,6 @@ export class Query extends Handle {
 
 
   toString() {
-    if (!this._string) {
-      const queryTerms = _(this._spec)
-        .map((value, key) => `${key}=${encodeURIComponent(JSON.stringify(value))}`)
-        .sortBy()
-        .join('&');
-      this._string = `${this._path}?${queryTerms}`;
-    }
     return this._string;
   }
 }

@@ -9,7 +9,7 @@ import MetaTree from './MetaTree.js';
 import {Handle, Reference} from './Reference.js';
 import Tree from './Tree.js';
 import {
-  escapeKey, unescapeKey, wrapPromiseCallback, makePromiseCancelable, promiseFinally,
+  escapeKey, unescapeKey, wrapPromiseCallback, promiseCancel, promiseFinally,
   SERVER_TIMESTAMP
 } from './utils.js';
 
@@ -94,8 +94,8 @@ export default class Truss {
     if (!connections) {
       connections = scope;
       scope = undefined;
-      if (connections instanceof Handle) connections = {_: connections};
     }
+    if (connections instanceof Handle) connections = {_: connections};
     return new Connector(scope, connections, this._tree, 'connect');
   }
 
@@ -142,8 +142,7 @@ export default class Truss {
         cleanup();
       };
     });
-    makePromiseCancelable(promise, cancel);
-    return promise;
+    return promiseCancel(promise, cancel);
   }
 
   watch(subjectFn, callbackFn, options) {
@@ -171,10 +170,14 @@ export default class Truss {
     let cleanup, timeoutHandle;
     let promise = new Promise((resolve, reject) => {
       let unwatch = this.watch(expression, value => {
-        if (value) {
+        if (!value) return;
+        // Wait for computed properties to settle and double-check.
+        Vue.nextTick(() => {
+          value = expression();
+          if (!value) return;
           resolve(value);
           cleanup();
-        }
+        });
       });
       if (_.has(options, 'timeout')) {
         timeoutHandle = setTimeout(() => {
@@ -189,9 +192,8 @@ export default class Truss {
         reject(new Error('Canceled'));
       };
     });
-    promise = promiseFinally(promise, cleanup);
-    makePromiseCancelable(promise, cleanup);
-    if (options.scope) options.scope.$on('$destroy', () => {promise.cancel();});
+    promise = promiseCancel(promiseFinally(promise, cleanup));
+    if (options && options.scope) options.scope.$on('$destroy', () => {promise.cancel();});
     return promise;
   }
 

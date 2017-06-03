@@ -67,7 +67,7 @@ function wrapPromiseCallback(callback) {
   };
 }
 
-function makePromiseCancelable(promise, cancel) {
+function promiseCancel(promise, cancel) {
   promise = promiseFinally(promise, () => {cancel = null;});
   promise.cancel = () => {
     if (!cancel) return;
@@ -84,11 +84,13 @@ function propagatePromiseProperty(promise, propertyName) {
     const derivedPromise = originalThen.call(promise, onResolved, onRejected);
     derivedPromise[propertyName] = promise[propertyName];
     propagatePromiseProperty(derivedPromise, propertyName);
+    return derivedPromise;
   };
   promise.catch = onRejected => {
     const derivedPromise = originalCatch.call(promise, onRejected);
     derivedPromise[propertyName] = promise[propertyName];
     propagatePromiseProperty(derivedPromise, propertyName);
+    return derivedPromise;
   };
   return promise;
 }
@@ -105,7 +107,8 @@ function promiseFinally(promise, onFinally) {
 
 function joinPath() {
   const segments = [];
-  for (const segment of arguments) {
+  for (let segment of arguments) {
+    if (!_.isString(segment)) segment = '' + segment;
     if (segment.charAt(0) === '/') segments.splice(0, segments.length);
     segments.push(segment);
   }
@@ -692,6 +695,11 @@ class Query extends Handle {
   constructor(tree, path, spec, annotations) {
     super(tree, path, annotations);
     this._spec = this._copyAndValidateSpec(spec);
+    const queryTerms = _(this._spec)
+      .map((value, key) => `${key}=${encodeURIComponent(JSON.stringify(value))}`)
+      .sortBy()
+      .join('&');
+    this._string = `${this._path}?${queryTerms}`;
     Object.freeze(this);
   }
 
@@ -747,13 +755,6 @@ class Query extends Handle {
 
 
   toString() {
-    if (!this._string) {
-      const queryTerms = _(this._spec)
-        .map((value, key) => `${key}=${encodeURIComponent(JSON.stringify(value))}`)
-        .sortBy()
-        .join('&');
-      this._string = `${this._path}?${queryTerms}`;
-    }
     return this._string;
   }
 }
@@ -1332,7 +1333,7 @@ class QueryHandler {
   attach(operation, keysCallback) {
     this._listen();
     this._listeners.push({operation, keysCallback});
-    keysCallback(this._keys);
+    if (keysCallback) keysCallback(this._keys);
   }
 
   detach(operation) {
@@ -1375,7 +1376,9 @@ class QueryHandler {
       }
     }
     if (updatedKeys) {
-      for (const listener of this._listeners) listener.keysCallback(updatedKeys);
+      for (const listener of this._listeners) {
+        if (listener.keysCallback) listener.keysCallback(updatedKeys);
+      }
     }
   }
 
@@ -1738,7 +1741,11 @@ class Value {
   }
 
   $connect(scope, connections) {
-    const connector = this.$truss.connect(scope, connections);
+    if (!connections) {
+      connections = scope;
+      scope = undefined;
+    }
+    const connector = this.$truss.connect(scope, wrapConnections(this, connections));
     const originalDestroy = connector.destroy;
     const destroy = () => {
       _.pull(this.$$finalizers, destroy);
@@ -1774,10 +1781,11 @@ class Value {
   }
 
   $when(expression, options) {
-    const promise = promiseFinally(this.$truss.when(() => {
+    const promise = this.$truss.when(() => {
       this.$$touchThis();
       return expression.call(this);
-    }, options), () => {_.pull(this.$$finalizers, promise.cancel);});
+    }, options);
+    promiseFinally(promise, () => {_.pull(this.$$finalizers, promise.cancel);});
     this.$$finalizers.push(promise.cancel);
     return promise;
   }
@@ -1789,8 +1797,18 @@ class Value {
 
   $$touchThis() {
     // jshint expr:true
-    if (this.$parent) this.$parent[this.$key]; else this.$root;
+    if (this.$parent) {
+      (this.$parent.hasOwnProperty('$data') ? this.$parent.$data : this.$parent)[this.$key];
+    } else {
+      this.$root;
+    }
     // jshint expr:false
+  }
+
+  get $$initializers() {
+    Object.defineProperty(this, '$$initializers', {
+      value: [], writable: false, enumerable: false, configurable: true});
+    return this.$$initializers;
   }
 
   get $$finalizers() {
@@ -1989,10 +2007,6 @@ class Modeler {
     let value;
     let writeAllowed = false;
 
-    if (!object.$$initializers) {
-      Object.defineProperty(object, '$$initializers', {
-        value: [], writable: false, enumerable: false, configurable: true});
-    }
     object.$$initializers.push(vue => {
       object.$$finalizers.push(
         vue.$watch(computeValue.bind(object, prop, stats), newValue => {
@@ -2048,39 +2062,42 @@ class Modeler {
 
   checkVueObject(object, path, checkedObjects) {
     const top = !checkedObjects;
-    checkedObjects = checkedObjects || [];
-    for (const key of Object.getOwnPropertyNames(object)) {
-      if (RESERVED_VALUE_PROPERTY_NAMES[key]) continue;
-      // jshint loopfunc:true
-      const mount = this._findMount(mount => mount.Class === object.constructor);
-      // jshint loopfunc:false
-      if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) continue;
-      if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
-        const descriptor = Object.getOwnPropertyDescriptor(object, key);
-        if ('value' in descriptor || !descriptor.get) {
-          throw new Error(
-            `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
-        }
-        if (object.$truss && descriptor.enumerable) {
-          try {
-            object[key] = object[key];
+    if (top) checkedObjects = [];
+    try {
+      for (const key of Object.getOwnPropertyNames(object)) {
+        if (RESERVED_VALUE_PROPERTY_NAMES[key]) continue;
+        // jshint loopfunc:true
+        const mount = this._findMount(mount => mount.Class === object.constructor);
+        // jshint loopfunc:false
+        if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) continue;
+        if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
+          const descriptor = Object.getOwnPropertyDescriptor(object, key);
+          if ('value' in descriptor || !descriptor.get) {
             throw new Error(
-              `Firetruss object at ${path} has an enumerable non-Firebase property: ${key}`);
-          } catch (e) {
-            if (e.trussCode !== 'firebase_overwrite') throw e;
+              `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
+          }
+          if (object.$truss && descriptor.enumerable) {
+            try {
+              object[key] = object[key];
+              throw new Error(
+                `Firetruss object at ${path} has an enumerable non-Firebase property: ${key}`);
+            } catch (e) {
+              if (e.trussCode !== 'firebase_overwrite') throw e;
+            }
           }
         }
+        const value = object[key];
+        if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
+            !(value instanceof Function)) {
+          value.$$$trussCheck = true;
+          checkedObjects.push(value);
+          this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
+        }
       }
-      const value = object[key];
-      if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
-          !(value instanceof Function)) {
-        value.$$$trussCheck = true;
-        checkedObjects.push(value);
-        this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
+    } finally {
+      if (top) {
+        for (const item of checkedObjects) delete item.$$$trussCheck;
       }
-    }
-    if (top) {
-      for (const item of checkedObjects) delete item.$$$trussCheck;
     }
   }
 
@@ -2106,6 +2123,21 @@ function computeValue(prop, stats) {
     stats.numRecomputes += 1;
   }
   // jshint validthis: false
+}
+
+function wrapConnections(object, connections) {
+  if (!connections || connections instanceof Handle) return connections;
+  return _.mapValues(connections, descriptor => {
+    if (descriptor instanceof Handle) return descriptor;
+    if (_.isFunction(descriptor)) {
+      return function() {
+        object.$$touchThis();
+        return wrapConnections(object, descriptor.call(this));
+      };
+    } else {
+      return wrapConnections(object, descriptor);
+    }
+  });
 }
 
 function isTrussValueEqual(a, b) {
@@ -2176,7 +2208,9 @@ class Tree {
 
   get root() {
     if (!this._vue.$data.$root) {
-      this._completeCreateObject(this._vue.$data.$root = this._createObject('/', ''));
+      this._vue.$data.$root = this._createObject('/', '');
+      this._fixObject(this._vue.$data.$root);
+      this._completeCreateObject(this._vue.$data.$root);
     }
     return this._vue.$data.$root;
   }
@@ -2423,7 +2457,7 @@ class Tree {
 
   // To be called on the result of _createObject after it's been inserted into the _vue hierarchy
   // and Vue has had a chance to initialize it.
-  _completeCreateObject(object) {
+  _fixObject(object) {
     for (const name of Object.getOwnPropertyNames(object)) {
       const descriptor = Object.getOwnPropertyDescriptor(object, name);
       if (descriptor.configurable && descriptor.enumerable) {
@@ -2432,7 +2466,12 @@ class Tree {
         Object.defineProperty(object, name, descriptor);
       }
     }
-    if (object.$$initializers) {
+  }
+
+  // To be called on the result of _createObject after _fixObject, and after any additional Firebase
+  // properties have been set, to run initialiers.
+  _completeCreateObject(object) {
+    if (object.hasOwnProperty('$$initializers')) {
       for (const fn of object.$$initializers) fn(this._vue);
       delete object.$$initializers;
     }
@@ -2477,7 +2516,7 @@ class Tree {
 
   _plantValue(path, key, value, parent, remoteWrite, override) {
     if (value === null || value === undefined) {
-      throw new Error('Snapshot includes invalid value: ' + value);
+      throw new Error(`Snapshot includes invalid value at ${path}: ${value}`);
     }
     if (remoteWrite && this._localWrites[path]) return;
     if (value === SERVER_TIMESTAMP) value = this._localWriteTimestamp;
@@ -2485,11 +2524,17 @@ class Tree {
       this._setFirebaseProperty(parent, key, value);
       return;
     }
+    let objectCreated = false;
     let object = parent[key];
     if (!_.isObject(object)) {
+      // Need to pre-set the property, so that if the child object attempts to watch any of its own
+      // properties while being created the $$touchThis method has something to add a dependency on
+      // as the object's own properties won't be made reactive until *after* it's been created.
+      this._setFirebaseProperty(parent, key, null);
       object = this._createObject(path, key, parent);
       this._setFirebaseProperty(parent, key, object);
-      this._completeCreateObject(object);
+      this._fixObject(object);
+      objectCreated = true;
     }
     if (override) {
       Object.defineProperty(object, '$overridden', {get: _.constant(true), configurable: true});
@@ -2502,13 +2547,17 @@ class Tree {
         override
       );
     });
-    _.each(object, (item, childKey) => {
-      const escapedChildKey = escapeKey(childKey);
-      if (!value.hasOwnProperty(escapedChildKey)) {
-        this._prune(joinPath(path, escapedChildKey), null, remoteWrite);
-      }
-    });
-    this._plantPlaceholders(object, path);
+    if (objectCreated) {
+      this._completeCreateObject(object);
+      this._plantPlaceholders(object, path);
+    } else {
+      _.each(object, (item, childKey) => {
+        const escapedChildKey = escapeKey(childKey);
+        if (!value.hasOwnProperty(escapedChildKey)) {
+          this._prune(joinPath(path, escapedChildKey), null, remoteWrite);
+        }
+      });
+    }
     return object;
   }
 
@@ -2814,8 +2863,8 @@ class Truss {
     if (!connections) {
       connections = scope;
       scope = undefined;
-      if (connections instanceof Handle) connections = {_: connections};
     }
+    if (connections instanceof Handle) connections = {_: connections};
     return new Connector(scope, connections, this._tree, 'connect');
   }
 
@@ -2862,8 +2911,7 @@ class Truss {
         cleanup();
       };
     });
-    makePromiseCancelable(promise, cancel);
-    return promise;
+    return promiseCancel(promise, cancel);
   }
 
   watch(subjectFn, callbackFn, options) {
@@ -2891,10 +2939,14 @@ class Truss {
     let cleanup, timeoutHandle;
     let promise = new Promise((resolve, reject) => {
       let unwatch = this.watch(expression, value => {
-        if (value) {
+        if (!value) return;
+        // Wait for computed properties to settle and double-check.
+        Vue.nextTick(() => {
+          value = expression();
+          if (!value) return;
           resolve(value);
           cleanup();
-        }
+        });
       });
       if (_.has(options, 'timeout')) {
         timeoutHandle = setTimeout(() => {
@@ -2909,9 +2961,8 @@ class Truss {
         reject(new Error('Canceled'));
       };
     });
-    promise = promiseFinally(promise, cleanup);
-    makePromiseCancelable(promise, cleanup);
-    if (options.scope) options.scope.$on('$destroy', () => {promise.cancel();});
+    promise = promiseCancel(promiseFinally(promise, cleanup));
+    if (options && options.scope) options.scope.$on('$destroy', () => {promise.cancel();});
     return promise;
   }
 

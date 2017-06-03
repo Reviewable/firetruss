@@ -1,4 +1,4 @@
-import Reference from './Reference.js';
+import {Reference, Handle} from './Reference.js';
 import {makePathMatcher, joinPath, escapeKey, unescapeKey, promiseFinally} from './utils.js';
 
 import _ from 'lodash';
@@ -58,7 +58,11 @@ class Value {
   }
 
   $connect(scope, connections) {
-    const connector = this.$truss.connect(scope, connections);
+    if (!connections) {
+      connections = scope;
+      scope = undefined;
+    }
+    const connector = this.$truss.connect(scope, wrapConnections(this, connections));
     const originalDestroy = connector.destroy;
     const destroy = () => {
       _.pull(this.$$finalizers, destroy);
@@ -94,10 +98,11 @@ class Value {
   }
 
   $when(expression, options) {
-    const promise = promiseFinally(this.$truss.when(() => {
+    const promise = this.$truss.when(() => {
       this.$$touchThis();
       return expression.call(this);
-    }, options), () => {_.pull(this.$$finalizers, promise.cancel);});
+    }, options);
+    promiseFinally(promise, () => {_.pull(this.$$finalizers, promise.cancel);});
     this.$$finalizers.push(promise.cancel);
     return promise;
   }
@@ -109,8 +114,18 @@ class Value {
 
   $$touchThis() {
     // jshint expr:true
-    if (this.$parent) this.$parent[this.$key]; else this.$root;
+    if (this.$parent) {
+      (this.$parent.hasOwnProperty('$data') ? this.$parent.$data : this.$parent)[this.$key];
+    } else {
+      this.$root;
+    }
     // jshint expr:false
+  }
+
+  get $$initializers() {
+    Object.defineProperty(this, '$$initializers', {
+      value: [], writable: false, enumerable: false, configurable: true});
+    return this.$$initializers;
   }
 
   get $$finalizers() {
@@ -309,10 +324,6 @@ export default class Modeler {
     let value;
     let writeAllowed = false;
 
-    if (!object.$$initializers) {
-      Object.defineProperty(object, '$$initializers', {
-        value: [], writable: false, enumerable: false, configurable: true});
-    }
     object.$$initializers.push(vue => {
       object.$$finalizers.push(
         vue.$watch(computeValue.bind(object, prop, stats), newValue => {
@@ -368,39 +379,42 @@ export default class Modeler {
 
   checkVueObject(object, path, checkedObjects) {
     const top = !checkedObjects;
-    checkedObjects = checkedObjects || [];
-    for (const key of Object.getOwnPropertyNames(object)) {
-      if (RESERVED_VALUE_PROPERTY_NAMES[key]) continue;
-      // jshint loopfunc:true
-      const mount = this._findMount(mount => mount.Class === object.constructor);
-      // jshint loopfunc:false
-      if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) continue;
-      if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
-        const descriptor = Object.getOwnPropertyDescriptor(object, key);
-        if ('value' in descriptor || !descriptor.get) {
-          throw new Error(
-            `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
-        }
-        if (object.$truss && descriptor.enumerable) {
-          try {
-            object[key] = object[key];
+    if (top) checkedObjects = [];
+    try {
+      for (const key of Object.getOwnPropertyNames(object)) {
+        if (RESERVED_VALUE_PROPERTY_NAMES[key]) continue;
+        // jshint loopfunc:true
+        const mount = this._findMount(mount => mount.Class === object.constructor);
+        // jshint loopfunc:false
+        if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) continue;
+        if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
+          const descriptor = Object.getOwnPropertyDescriptor(object, key);
+          if ('value' in descriptor || !descriptor.get) {
             throw new Error(
-              `Firetruss object at ${path} has an enumerable non-Firebase property: ${key}`);
-          } catch (e) {
-            if (e.trussCode !== 'firebase_overwrite') throw e;
+              `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
+          }
+          if (object.$truss && descriptor.enumerable) {
+            try {
+              object[key] = object[key];
+              throw new Error(
+                `Firetruss object at ${path} has an enumerable non-Firebase property: ${key}`);
+            } catch (e) {
+              if (e.trussCode !== 'firebase_overwrite') throw e;
+            }
           }
         }
+        const value = object[key];
+        if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
+            !(value instanceof Function)) {
+          value.$$$trussCheck = true;
+          checkedObjects.push(value);
+          this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
+        }
       }
-      const value = object[key];
-      if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
-          !(value instanceof Function)) {
-        value.$$$trussCheck = true;
-        checkedObjects.push(value);
-        this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
+    } finally {
+      if (top) {
+        for (const item of checkedObjects) delete item.$$$trussCheck;
       }
-    }
-    if (top) {
-      for (const item of checkedObjects) delete item.$$$trussCheck;
     }
   }
 
@@ -426,6 +440,21 @@ function computeValue(prop, stats) {
     stats.numRecomputes += 1;
   }
   // jshint validthis: false
+}
+
+function wrapConnections(object, connections) {
+  if (!connections || connections instanceof Handle) return connections;
+  return _.mapValues(connections, descriptor => {
+    if (descriptor instanceof Handle) return descriptor;
+    if (_.isFunction(descriptor)) {
+      return function() {
+        object.$$touchThis();
+        return wrapConnections(object, descriptor.call(this));
+      };
+    } else {
+      return wrapConnections(object, descriptor);
+    }
+  });
 }
 
 function isTrussValueEqual(a, b) {
