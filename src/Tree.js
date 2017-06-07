@@ -258,7 +258,7 @@ export default class Tree {
           }
         }
         if (subValue === undefined || subValue === null) {
-          this._prune(subPath);
+          this._prune(descendantPath);
         } else {
           const key = unescapeKey(_.last(descendantPath.split('/')));
           this._plantValue(
@@ -378,7 +378,7 @@ export default class Tree {
   }
 
   _plantValue(path, key, value, parent, remoteWrite, override) {
-    if (value === null || value === undefined) {
+    if (remoteWrite && (value === null || value === undefined)) {
       throw new Error(`Snapshot includes invalid value at ${path}: ${value}`);
     }
     if (remoteWrite && this._localWrites[path]) return;

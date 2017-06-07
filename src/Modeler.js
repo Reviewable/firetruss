@@ -7,7 +7,7 @@ import performanceNow from 'performance-now';
 // These are defined separately for each object so they're not included in Value below.
 const RESERVED_VALUE_PROPERTY_NAMES = {
   $truss: true, $parent: true, $key: true, $path: true, $ref: true,
-  $$touchThis: true, $$initializers: true, $$finalizers: true,
+  $$touchThis: true, $$initializers: true, $$finalizers: true, $$watchers: true,
   $$$trussCheck: true,
   __ob__: true
 };
@@ -133,11 +133,21 @@ class Value {
       value: [], writable: false, enumerable: false, configurable: false});
     return this.$$finalizers;
   }
+
+  get $$watchers() {
+    Object.defineProperty(this, '$$watchers', {
+      value: {}, writable: false, enumerable: false, configurable: false});
+    return this.$$watchers;
+  }
 }
 
 class ComputedPropertyStats {
   constructor(name) {
     _.extend(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
+  }
+
+  get runtimePerRecompute() {
+    return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
   }
 }
 
@@ -328,7 +338,7 @@ export default class Modeler {
       object.$$finalizers.push(
         vue.$watch(computeValue.bind(object, prop, stats), newValue => {
           if (_.isEqual(value, newValue, isTrussValueEqual)) return;
-          // console.log('updating', prop.fullName, 'from', value, 'to', newValue);
+          // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
           stats.numUpdates += 1;
           writeAllowed = true;
           object[prop.name] = newValue;
@@ -336,6 +346,7 @@ export default class Modeler {
           if (newValue instanceof ErrorWrapper) throw newValue.error;
         }, {immediate: true})  // use immediate:true since watcher will run computeValue anyway
       );
+      object.$$watchers[prop.name] = _.last(vue._watchers);
     });
     return {
       enumerable: true, configurable: true,
@@ -419,7 +430,7 @@ export default class Modeler {
   }
 
   static get computedPropertyStats() {
-    return computedPropertyStats;
+    return _(computedPropertyStats).values().sortBy(stat => -stat.runtime).value();
   }
 }
 

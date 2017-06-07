@@ -12,12 +12,15 @@ export default class Connector {
     this._connections = connections;
     this._tree = tree;
     this._method = method;
-    this._refs = refs || {};
     this._subConnectors = {};
-    this._currentDescriptors = {};
+
     this._disconnects = {};
     this._angularUnwatches = undefined;
-    this._vue = new Vue({data: _.mapValues(connections, _.constant(undefined))});
+    this._vue = new Vue({data: {
+      values: _.mapValues(connections, _.constant(undefined)),
+      descriptors: {},
+      refs: refs || {}
+    }});
     this.destroy = this.destroy;  // allow instance-level overrides of destroy() method
     Object.seal(this);
 
@@ -37,7 +40,8 @@ export default class Connector {
   }
 
   get ready() {
-    return _.every(this._currentDescriptors, (descriptor, key) => {
+    return _.every(this._connections, (ignored, key) => {
+      const descriptor = this._vue.descriptors[key];
       if (!descriptor) return false;
       if (descriptor instanceof Handle) return descriptor.ready;
       return this._subConnectors[key].ready;
@@ -45,7 +49,7 @@ export default class Connector {
   }
 
   get at() {
-    return this._refs;
+    return this._vue.refs;
   }
 
   destroy() {
@@ -62,9 +66,11 @@ export default class Connector {
         throw new Error(`Property already defined on connection target: ${key}`);
       }
     }
-    Object.defineProperties(this._scope, _.mapValues(this._connections, (descriptor, key) => ({
-      configurable: true, enumerable: true, get: () => this._vue[key]
-    })));
+    if (!this._scope.__ob__) {
+      Object.defineProperties(this._scope, _.mapValues(this._connections, (descriptor, key) => ({
+        configurable: true, enumerable: true, get: () => this._vue.values[key]
+      })));
+    }
   }
 
   _unlinkScopeProperties() {
@@ -92,7 +98,7 @@ export default class Connector {
 
   _updateComputedConnection(key, value) {
     const newDescriptor = _.isFunction(value) ? value(this._scope) : value;
-    const oldDescriptor = this._currentDescriptors[key];
+    const oldDescriptor = this._vue.descriptors[key];
     if (oldDescriptor === newDescriptor ||
         newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) return;
     if (!newDescriptor) {
@@ -105,7 +111,7 @@ export default class Connector {
     } else {
       this._subConnectors[key]._updateConnections(newDescriptor);
     }
-    this._currentDescriptors[key] = newDescriptor;
+    Vue.set(this._vue.descriptors, key, newDescriptor);
   }
 
   _updateConnections(connections) {
@@ -119,19 +125,19 @@ export default class Connector {
   }
 
   _connect(key, descriptor) {
-    this._currentDescriptors[key] = descriptor;
+    Vue.set(this._vue.descriptors, key, descriptor);
     if (!descriptor) return;
     if (descriptor instanceof Reference) {
-      this._refs[key] = descriptor;
+      Vue.set(this._vue.refs, key, descriptor);
       const updateFn = this._scope ? this._updateScopeRef.bind(this, key) : null;
       this._disconnects[key] = this._tree.connectReference(descriptor, updateFn, this._method);
     } else if (descriptor instanceof Query) {
-      this._refs[key] = descriptor;
+      Vue.set(this._vue.refs, key, descriptor);
       const updateFn = this._scope ? this._updateScopeQuery.bind(this, key) : null;
       this._disconnects[key] = this._tree.connectQuery(descriptor, updateFn, this._method);
     } else {
       const subScope = {}, subRefs = {};
-      this._refs[key] = subRefs;
+      Vue.set(this._vue.refs, key, subRefs);
       const subConnector = this._subConnectors[key] =
         new Connector(subScope, descriptor, this._tree, this._method, subRefs);
       if (this._scope) {
@@ -144,7 +150,8 @@ export default class Connector {
             if (!subReady) return;
             unwatch();
             delete this._disconnects[key];
-            Vue.set(this._vue.$data, key, subScope);
+            Vue.set(this._vue.values, key, subScope);
+            if (this._scope.__ob__) Vue.set(this._scope, key, subScope);
             angular.digest();
           }
         );
@@ -153,7 +160,7 @@ export default class Connector {
   }
 
   _disconnect(key) {
-    delete this._refs[key];
+    Vue.delete(this._vue.refs, key);
     if (this._scope) this._updateScopeRef(key, undefined);
     if (_.has(this._subConnectors, key)) {
       this._subConnectors[key].destroy();
@@ -161,23 +168,25 @@ export default class Connector {
     }
     if (this._disconnects[key]) this._disconnects[key]();
     delete this._disconnects[key];
-    delete this._currentDescriptors[key];
+    Vue.delete(this._vue.descriptors, key);
   }
 
   _updateScopeRef(key, value) {
-    if (this._vue[key] !== value) {
-      Vue.set(this._vue.$data, key, value);
+    if (this._vue.values[key] !== value) {
+      Vue.set(this._vue.values, key, value);
+      if (this._scope && this._scope.__ob__) Vue.set(this._scope, key, value);
       angular.digest();
     }
   }
 
   _updateScopeQuery(key, childKeys) {
     let changed = false;
-    if (!this._vue[key]) {
-      Vue.set(this._vue.$data, key, {});
+    if (!this._vue.values[key]) {
+      Vue.set(this._vue.values, key, {});
+      if (this._scope && this._scope.__ob__) Vue.set(this._scope, key, this._vue.values[key]);
       changed = true;
     }
-    const subScope = this._vue[key];
+    const subScope = this._vue.values[key];
     for (const childKey in subScope) {
       if (!subScope.hasOwnProperty(childKey)) continue;
       if (!_.contains(childKeys, childKey)) {
@@ -186,7 +195,7 @@ export default class Connector {
       }
     }
     let object;
-    for (const segment of this._currentDescriptors[key].path.split('/')) {
+    for (const segment of this._vue.descriptors[key].path.split('/')) {
       object = segment ? object[segment] : this._tree.root;
     }
     for (const childKey of childKeys) {

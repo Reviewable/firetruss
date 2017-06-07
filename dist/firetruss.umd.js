@@ -13,25 +13,27 @@
 	var bareDigest = function() {
 	  digestRequested = true;
 	};
-
+	function indirectBareDigest() {
+	  bareDigest();
+	}
 
 	var angularProxy = {
 	  active: typeof window !== 'undefined' && window.angular,
 	  debounceDigest: function debounceDigest(wait) {
+	    // Bind indirectly, so we always pick up the latest definition of bareDigest.
 	    if (wait) {
-	      angularProxy.digest = _.debounce(bareDigest, wait);
+	      angularProxy.digest = _.debounce(indirectBareDigest, wait);
 	    } else {
-	      angularProxy.digest = bareDigest;
+	      angularProxy.digest = indirectBareDigest;
 	    }
 	  }
 	};
-	['digest', 'watch', 'defineModule'].forEach(function (method) {angularProxy[method] = noop;});
 
 	if (angularProxy.active) {
-	  angularProxy.digest = bareDigest;
+	  angularProxy.digest = indirectBareDigest;
 	  angularProxy.watch = function() {throw new Error('Angular watch proxy not yet initialized');};
 	  window.angular.module('firetruss', []).run(['$rootScope', function($rootScope) {
-	    angularProxy.digest = function () {
+	    bareDigest = function() {
 	      if (digestRequested) { return; }
 	      digestRequested = true;
 	      $rootScope.$evalAsync(function() {digestRequested = false;});
@@ -42,6 +44,8 @@
 	  angularProxy.defineModule = function(Truss) {
 	    window.angular.module('firetruss').constant('Truss', Truss);
 	  };
+	} else {
+	  ['digest', 'watch', 'defineModule'].forEach(function (method) {angularProxy[method] = noop;});
 	}
 
 	function noop() {}
@@ -702,7 +706,7 @@
 	    var arg = arguments$1[i];
 	    if (_.isArray(arg)) {
 	      var mapping = {};
-	      var subPath = (this$1._pathPrefix) + "/" + (escapedKeys.join('/'));
+	      var subPath = this$1._pathPrefix + (escapedKeys.length ? ("/" + (escapedKeys.join('/'))) : '');
 	      var rest = _.slice(arguments$1, i + 1);
 	      for (var i$1 = 0, list = arg; i$1 < list.length; i$1 += 1) {
 	        var key = list[i$1];
@@ -878,12 +882,15 @@
 	  this._connections = connections;
 	  this._tree = tree;
 	  this._method = method;
-	  this._refs = refs || {};
 	  this._subConnectors = {};
-	  this._currentDescriptors = {};
+
 	  this._disconnects = {};
 	  this._angularUnwatches = undefined;
-	  this._vue = new Vue({data: _.mapValues(connections, _.constant(undefined))});
+	  this._vue = new Vue({data: {
+	    values: _.mapValues(connections, _.constant(undefined)),
+	    descriptors: {},
+	    refs: refs || {}
+	  }});
 	  this.destroy = this.destroy;// allow instance-level overrides of destroy() method
 	  Object.seal(this);
 
@@ -907,7 +914,8 @@
 	prototypeAccessors$2.ready.get = function () {
 	    var this$1 = this;
 
-	  return _.every(this._currentDescriptors, function (descriptor, key) {
+	  return _.every(this._connections, function (ignored, key) {
+	    var descriptor = this$1._vue.descriptors[key];
 	    if (!descriptor) { return false; }
 	    if (descriptor instanceof Handle) { return descriptor.ready; }
 	    return this$1._subConnectors[key].ready;
@@ -915,7 +923,7 @@
 	};
 
 	prototypeAccessors$2.at.get = function () {
-	  return this._refs;
+	  return this._vue.refs;
 	};
 
 	Connector.prototype.destroy = function destroy () {
@@ -936,9 +944,11 @@
 	      throw new Error(("Property already defined on connection target: " + key));
 	    }
 	  }
-	  Object.defineProperties(this._scope, _.mapValues(this._connections, function (descriptor, key) { return ({
-	    configurable: true, enumerable: true, get: function () { return this$1._vue[key]; }
-	  }); }));
+	  if (!this._scope.__ob__) {
+	    Object.defineProperties(this._scope, _.mapValues(this._connections, function (descriptor, key) { return ({
+	      configurable: true, enumerable: true, get: function () { return this$1._vue.values[key]; }
+	    }); }));
+	  }
 	};
 
 	Connector.prototype._unlinkScopeProperties = function _unlinkScopeProperties () {
@@ -968,7 +978,7 @@
 
 	Connector.prototype._updateComputedConnection = function _updateComputedConnection (key, value) {
 	  var newDescriptor = _.isFunction(value) ? value(this._scope) : value;
-	  var oldDescriptor = this._currentDescriptors[key];
+	  var oldDescriptor = this._vue.descriptors[key];
 	  if (oldDescriptor === newDescriptor ||
 	      newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) { return; }
 	  if (!newDescriptor) {
@@ -981,7 +991,7 @@
 	  } else {
 	    this._subConnectors[key]._updateConnections(newDescriptor);
 	  }
-	  this._currentDescriptors[key] = newDescriptor;
+	  Vue.set(this._vue.descriptors, key, newDescriptor);
 	};
 
 	Connector.prototype._updateConnections = function _updateConnections (connections) {
@@ -999,19 +1009,19 @@
 	Connector.prototype._connect = function _connect (key, descriptor) {
 	    var this$1 = this;
 
-	  this._currentDescriptors[key] = descriptor;
+	  Vue.set(this._vue.descriptors, key, descriptor);
 	  if (!descriptor) { return; }
 	  if (descriptor instanceof Reference) {
-	    this._refs[key] = descriptor;
+	    Vue.set(this._vue.refs, key, descriptor);
 	    var updateFn = this._scope ? this._updateScopeRef.bind(this, key) : null;
 	    this._disconnects[key] = this._tree.connectReference(descriptor, updateFn, this._method);
 	  } else if (descriptor instanceof Query) {
-	    this._refs[key] = descriptor;
+	    Vue.set(this._vue.refs, key, descriptor);
 	    var updateFn$1 = this._scope ? this._updateScopeQuery.bind(this, key) : null;
 	    this._disconnects[key] = this._tree.connectQuery(descriptor, updateFn$1, this._method);
 	  } else {
 	    var subScope = {}, subRefs = {};
-	    this._refs[key] = subRefs;
+	    Vue.set(this._vue.refs, key, subRefs);
 	    var subConnector = this._subConnectors[key] =
 	      new Connector(subScope, descriptor, this._tree, this._method, subRefs);
 	    if (this._scope) {
@@ -1024,7 +1034,8 @@
 	          if (!subReady) { return; }
 	          unwatch();
 	          delete this$1._disconnects[key];
-	          Vue.set(this$1._vue.$data, key, subScope);
+	          Vue.set(this$1._vue.values, key, subScope);
+	          if (this$1._scope.__ob__) { Vue.set(this$1._scope, key, subScope); }
 	          angularProxy.digest();
 	        }
 	      );
@@ -1033,7 +1044,7 @@
 	};
 
 	Connector.prototype._disconnect = function _disconnect (key) {
-	  delete this._refs[key];
+	  Vue.delete(this._vue.refs, key);
 	  if (this._scope) { this._updateScopeRef(key, undefined); }
 	  if (_.has(this._subConnectors, key)) {
 	    this._subConnectors[key].destroy();
@@ -1041,12 +1052,13 @@
 	  }
 	  if (this._disconnects[key]) { this._disconnects[key](); }
 	  delete this._disconnects[key];
-	  delete this._currentDescriptors[key];
+	  Vue.delete(this._vue.descriptors, key);
 	};
 
 	Connector.prototype._updateScopeRef = function _updateScopeRef (key, value) {
-	  if (this._vue[key] !== value) {
-	    Vue.set(this._vue.$data, key, value);
+	  if (this._vue.values[key] !== value) {
+	    Vue.set(this._vue.values, key, value);
+	    if (this._scope && this._scope.__ob__) { Vue.set(this._scope, key, value); }
 	    angularProxy.digest();
 	  }
 	};
@@ -1055,11 +1067,12 @@
 	    var this$1 = this;
 
 	  var changed = false;
-	  if (!this._vue[key]) {
-	    Vue.set(this._vue.$data, key, {});
+	  if (!this._vue.values[key]) {
+	    Vue.set(this._vue.values, key, {});
+	    if (this._scope && this._scope.__ob__) { Vue.set(this._scope, key, this._vue.values[key]); }
 	    changed = true;
 	  }
-	  var subScope = this._vue[key];
+	  var subScope = this._vue.values[key];
 	  for (var childKey in subScope) {
 	    if (!subScope.hasOwnProperty(childKey)) { continue; }
 	    if (!_.contains(childKeys, childKey)) {
@@ -1068,7 +1081,7 @@
 	    }
 	  }
 	  var object;
-	  for (var i = 0, list = this._currentDescriptors[key].path.split('/'); i < list.length; i += 1) {
+	  for (var i = 0, list = this._vue.descriptors[key].path.split('/'); i < list.length; i += 1) {
 	    var segment = list[i];
 
 	      object = segment ? object[segment] : this$1._tree.root;
@@ -1905,7 +1918,7 @@
 	// These are defined separately for each object so they're not included in Value below.
 	var RESERVED_VALUE_PROPERTY_NAMES = {
 	  $truss: true, $parent: true, $key: true, $path: true, $ref: true,
-	  $$touchThis: true, $$initializers: true, $$finalizers: true,
+	  $$touchThis: true, $$initializers: true, $$finalizers: true, $$watchers: true,
 	  $$$trussCheck: true,
 	  __ob__: true
 	};
@@ -1920,7 +1933,7 @@
 
 	var Value = function Value () {};
 
-	var prototypeAccessors$8 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$empty: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$initializers: {},$$finalizers: {} };
+	var prototypeAccessors$8 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$empty: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$initializers: {},$$finalizers: {},$$watchers: {} };
 
 	prototypeAccessors$8.$parent.get = function () {return creatingObjectProperties.$parent.value;};
 	prototypeAccessors$8.$path.get = function () {return creatingObjectProperties.$path.value;};
@@ -2045,11 +2058,25 @@
 	  return this.$$finalizers;
 	};
 
+	prototypeAccessors$8.$$watchers.get = function () {
+	  Object.defineProperty(this, '$$watchers', {
+	    value: {}, writable: false, enumerable: false, configurable: false});
+	  return this.$$watchers;
+	};
+
 	Object.defineProperties( Value.prototype, prototypeAccessors$8 );
 
 	var ComputedPropertyStats = function ComputedPropertyStats(name) {
 	  _.extend(this, {name: name, numRecomputes: 0, numUpdates: 0, runtime: 0});
 	};
+
+	var prototypeAccessors$1$3 = { runtimePerRecompute: {} };
+
+	prototypeAccessors$1$3.runtimePerRecompute.get = function () {
+	  return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
+	};
+
+	Object.defineProperties( ComputedPropertyStats.prototype, prototypeAccessors$1$3 );
 
 	var ErrorWrapper = function ErrorWrapper(error) {
 	  this.error = error;
@@ -2259,7 +2286,7 @@
 	    object.$$finalizers.push(
 	      vue.$watch(computeValue.bind(object, prop, stats), function (newValue) {
 	        if (_.isEqual(value, newValue, isTrussValueEqual)) { return; }
-	        // console.log('updating', prop.fullName, 'from', value, 'to', newValue);
+	        // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
 	        stats.numUpdates += 1;
 	        writeAllowed = true;
 	        object[prop.name] = newValue;
@@ -2267,6 +2294,7 @@
 	        if (newValue instanceof ErrorWrapper) { throw newValue.error; }
 	      }, {immediate: true})// use immediate:true since watcher will run computeValue anyway
 	    );
+	    object.$$watchers[prop.name] = _.last(vue._watchers);
 	  });
 	  return {
 	    enumerable: true, configurable: true,
@@ -2362,7 +2390,7 @@
 	};
 
 	staticAccessors$2.computedPropertyStats.get = function () {
-	  return computedPropertyStats;
+	  return _(computedPropertyStats).values().sortBy(function (stat) { return -stat.runtime; }).value();
 	};
 
 	Object.defineProperties( Modeler, staticAccessors$2 );
@@ -2676,7 +2704,7 @@
 	        }
 	      }
 	      if (subValue === undefined || subValue === null) {
-	        this$1._prune(subPath);
+	        this$1._prune(descendantPath);
 	      } else {
 	        var key = unescapeKey(_.last(descendantPath.split('/')));
 	        this$1._plantValue(
@@ -2812,7 +2840,7 @@
 	Tree.prototype._plantValue = function _plantValue (path, key, value, parent, remoteWrite, override) {
 	    var this$1 = this;
 
-	  if (value === null || value === undefined) {
+	  if (remoteWrite && (value === null || value === undefined)) {
 	    throw new Error(("Snapshot includes invalid value at " + path + ": " + value));
 	  }
 	  if (remoteWrite && this._localWrites[path]) { return; }
@@ -3287,7 +3315,37 @@
 	  this._tree.checkVueObject(this._tree.root, '/');
 	};
 
-	staticAccessors.computedPropertyStats.get = function () {return this._tree.computedPropertyStats;};
+	staticAccessors.computedPropertyStats.get = function () {return Tree.computedPropertyStats;};
+
+	Truss.logComputedPropertyStats = function logComputedPropertyStats (n) {
+	    if ( n === void 0 ) n = 10;
+
+	  var stats = _.take(Truss.computedPropertyStats, n);
+	  if (!stats.length) { return; }
+	  var totals = {runtime: 0, numUpdates: 0, numRecomputes: 0};
+	  _.each(stats, function (stat) {
+	    totals.runtime += stat.runtime;
+	    totals.numUpdates += stat.numUpdates;
+	    totals.numRecomputes += stat.numRecomputes;
+	  });
+	  var lines = _.map(stats, function (stat) { return [
+	    ((stat.name) + ":"), (" " + ((stat.runtime / 1000).toFixed(2)) + "s"),
+	    ("(" + ((stat.runtime / totals.runtime * 100).toFixed(1)) + "%)"),
+	    (" " + (stat.numUpdates) + " upd /"), ((stat.numRecomputes) + " runs"),
+	    ("(" + ((stat.numUpdates / stat.numRecomputes * 100).toFixed(1)) + "%)"),
+	    (" " + (stat.runtimePerRecompute.toFixed(2)) + "ms / run")
+	  ]; });
+	  lines.unshift([
+	    '--- Total:', (" " + ((totals.runtime / 1000).toFixed(2)) + "s"), '(100.0%)',
+	    (" " + (totals.numUpdates) + " upd /"), ((totals.numRecomputes) + " runs"),
+	    ("(" + ((totals.numUpdates / totals.numRecomputes * 100).toFixed(1)) + "%)"),
+	    (" " + ((totals.runtime / totals.numRecomputes).toFixed(2)) + "ms / run")
+	  ]);
+	  var widths = _.map(_.range(lines[0].length), function (i) { return _(lines).map(function (line) { return line[i].length; }).max(); });
+	  _.each(lines, function (line) {
+	    console.log(_.map(line, function (column, i) { return _.padLeft(column, widths[i]); }).join(' '));
+	  });
+	};
 
 	Truss.connectWorker = function connectWorker (webWorker) {
 	  if (bridge) { throw new Error('Worker already connected'); }

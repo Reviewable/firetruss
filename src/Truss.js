@@ -201,7 +201,35 @@ export default class Truss {
     this._tree.checkVueObject(this._tree.root, '/');
   }
 
-  static get computedPropertyStats() {return this._tree.computedPropertyStats;}
+  static get computedPropertyStats() {return Tree.computedPropertyStats;}
+
+  static logComputedPropertyStats(n = 10) {
+    const stats = _.take(Truss.computedPropertyStats, n);
+    if (!stats.length) return;
+    const totals = {runtime: 0, numUpdates: 0, numRecomputes: 0};
+    _.each(stats, stat => {
+      totals.runtime += stat.runtime;
+      totals.numUpdates += stat.numUpdates;
+      totals.numRecomputes += stat.numRecomputes;
+    });
+    const lines = _.map(stats, stat => [
+      `${stat.name}:`, ` ${(stat.runtime / 1000).toFixed(2)}s`,
+      `(${(stat.runtime / totals.runtime * 100).toFixed(1)}%)`,
+      ` ${stat.numUpdates} upd /`, `${stat.numRecomputes} runs`,
+      `(${(stat.numUpdates / stat.numRecomputes * 100).toFixed(1)}%)`,
+      ` ${stat.runtimePerRecompute.toFixed(2)}ms / run`
+    ]);
+    lines.unshift([
+      '--- Total:', ` ${(totals.runtime / 1000).toFixed(2)}s`, '(100.0%)',
+      ` ${totals.numUpdates} upd /`, `${totals.numRecomputes} runs`,
+      `(${(totals.numUpdates / totals.numRecomputes * 100).toFixed(1)}%)`,
+      ` ${(totals.runtime / totals.numRecomputes).toFixed(2)}ms / run`
+    ]);
+    const widths = _.map(_.range(lines[0].length), i => _(lines).map(line => line[i].length).max());
+    _.each(lines, line => {
+      console.log(_.map(line, (column, i) => _.padLeft(column, widths[i])).join(' '));
+    });
+  }
 
   static connectWorker(webWorker) {
     if (bridge) throw new Error('Worker already connected');

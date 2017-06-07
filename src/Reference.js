@@ -52,7 +52,7 @@ export class Handle {
       const arg = arguments[i];
       if (_.isArray(arg)) {
         const mapping = {};
-        const subPath = `${this._pathPrefix}/${escapedKeys.join('/')}`;
+        const subPath = this._pathPrefix + (escapedKeys.length ? `/${escapedKeys.join('/')}` : '');
         const rest = _.slice(arguments, i + 1);
         for (const key of arg) {
           const subRef =

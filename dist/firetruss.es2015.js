@@ -8,25 +8,27 @@ let digestRequested;
 let bareDigest = function() {
   digestRequested = true;
 };
-
+function indirectBareDigest() {
+  bareDigest();
+}
 
 const angularProxy = {
   active: typeof window !== 'undefined' && window.angular,
   debounceDigest(wait) {
+    // Bind indirectly, so we always pick up the latest definition of bareDigest.
     if (wait) {
-      angularProxy.digest = _.debounce(bareDigest, wait);
+      angularProxy.digest = _.debounce(indirectBareDigest, wait);
     } else {
-      angularProxy.digest = bareDigest;
+      angularProxy.digest = indirectBareDigest;
     }
   }
 };
-['digest', 'watch', 'defineModule'].forEach(method => {angularProxy[method] = noop;});
 
 if (angularProxy.active) {
-  angularProxy.digest = bareDigest;
+  angularProxy.digest = indirectBareDigest;
   angularProxy.watch = function() {throw new Error('Angular watch proxy not yet initialized');};
   window.angular.module('firetruss', []).run(['$rootScope', function($rootScope) {
-    angularProxy.digest = function () {
+    bareDigest = function() {
       if (digestRequested) return;
       digestRequested = true;
       $rootScope.$evalAsync(function() {digestRequested = false;});
@@ -37,6 +39,8 @@ if (angularProxy.active) {
   angularProxy.defineModule = function(Truss) {
     window.angular.module('firetruss').constant('Truss', Truss);
   };
+} else {
+  ['digest', 'watch', 'defineModule'].forEach(method => {angularProxy[method] = noop;});
 }
 
 function noop() {}
@@ -653,7 +657,7 @@ class Handle {
       const arg = arguments[i];
       if (_.isArray(arg)) {
         const mapping = {};
-        const subPath = `${this._pathPrefix}/${escapedKeys.join('/')}`;
+        const subPath = this._pathPrefix + (escapedKeys.length ? `/${escapedKeys.join('/')}` : '');
         const rest = _.slice(arguments, i + 1);
         for (const key of arg) {
           const subRef =
@@ -805,12 +809,15 @@ class Connector {
     this._connections = connections;
     this._tree = tree;
     this._method = method;
-    this._refs = refs || {};
     this._subConnectors = {};
-    this._currentDescriptors = {};
+
     this._disconnects = {};
     this._angularUnwatches = undefined;
-    this._vue = new Vue({data: _.mapValues(connections, _.constant(undefined))});
+    this._vue = new Vue({data: {
+      values: _.mapValues(connections, _.constant(undefined)),
+      descriptors: {},
+      refs: refs || {}
+    }});
     this.destroy = this.destroy;  // allow instance-level overrides of destroy() method
     Object.seal(this);
 
@@ -830,7 +837,8 @@ class Connector {
   }
 
   get ready() {
-    return _.every(this._currentDescriptors, (descriptor, key) => {
+    return _.every(this._connections, (ignored, key) => {
+      const descriptor = this._vue.descriptors[key];
       if (!descriptor) return false;
       if (descriptor instanceof Handle) return descriptor.ready;
       return this._subConnectors[key].ready;
@@ -838,7 +846,7 @@ class Connector {
   }
 
   get at() {
-    return this._refs;
+    return this._vue.refs;
   }
 
   destroy() {
@@ -855,9 +863,11 @@ class Connector {
         throw new Error(`Property already defined on connection target: ${key}`);
       }
     }
-    Object.defineProperties(this._scope, _.mapValues(this._connections, (descriptor, key) => ({
-      configurable: true, enumerable: true, get: () => this._vue[key]
-    })));
+    if (!this._scope.__ob__) {
+      Object.defineProperties(this._scope, _.mapValues(this._connections, (descriptor, key) => ({
+        configurable: true, enumerable: true, get: () => this._vue.values[key]
+      })));
+    }
   }
 
   _unlinkScopeProperties() {
@@ -885,7 +895,7 @@ class Connector {
 
   _updateComputedConnection(key, value) {
     const newDescriptor = _.isFunction(value) ? value(this._scope) : value;
-    const oldDescriptor = this._currentDescriptors[key];
+    const oldDescriptor = this._vue.descriptors[key];
     if (oldDescriptor === newDescriptor ||
         newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) return;
     if (!newDescriptor) {
@@ -898,7 +908,7 @@ class Connector {
     } else {
       this._subConnectors[key]._updateConnections(newDescriptor);
     }
-    this._currentDescriptors[key] = newDescriptor;
+    Vue.set(this._vue.descriptors, key, newDescriptor);
   }
 
   _updateConnections(connections) {
@@ -912,19 +922,19 @@ class Connector {
   }
 
   _connect(key, descriptor) {
-    this._currentDescriptors[key] = descriptor;
+    Vue.set(this._vue.descriptors, key, descriptor);
     if (!descriptor) return;
     if (descriptor instanceof Reference) {
-      this._refs[key] = descriptor;
+      Vue.set(this._vue.refs, key, descriptor);
       const updateFn = this._scope ? this._updateScopeRef.bind(this, key) : null;
       this._disconnects[key] = this._tree.connectReference(descriptor, updateFn, this._method);
     } else if (descriptor instanceof Query) {
-      this._refs[key] = descriptor;
+      Vue.set(this._vue.refs, key, descriptor);
       const updateFn = this._scope ? this._updateScopeQuery.bind(this, key) : null;
       this._disconnects[key] = this._tree.connectQuery(descriptor, updateFn, this._method);
     } else {
       const subScope = {}, subRefs = {};
-      this._refs[key] = subRefs;
+      Vue.set(this._vue.refs, key, subRefs);
       const subConnector = this._subConnectors[key] =
         new Connector(subScope, descriptor, this._tree, this._method, subRefs);
       if (this._scope) {
@@ -937,7 +947,8 @@ class Connector {
             if (!subReady) return;
             unwatch();
             delete this._disconnects[key];
-            Vue.set(this._vue.$data, key, subScope);
+            Vue.set(this._vue.values, key, subScope);
+            if (this._scope.__ob__) Vue.set(this._scope, key, subScope);
             angularProxy.digest();
           }
         );
@@ -946,7 +957,7 @@ class Connector {
   }
 
   _disconnect(key) {
-    delete this._refs[key];
+    Vue.delete(this._vue.refs, key);
     if (this._scope) this._updateScopeRef(key, undefined);
     if (_.has(this._subConnectors, key)) {
       this._subConnectors[key].destroy();
@@ -954,23 +965,25 @@ class Connector {
     }
     if (this._disconnects[key]) this._disconnects[key]();
     delete this._disconnects[key];
-    delete this._currentDescriptors[key];
+    Vue.delete(this._vue.descriptors, key);
   }
 
   _updateScopeRef(key, value) {
-    if (this._vue[key] !== value) {
-      Vue.set(this._vue.$data, key, value);
+    if (this._vue.values[key] !== value) {
+      Vue.set(this._vue.values, key, value);
+      if (this._scope && this._scope.__ob__) Vue.set(this._scope, key, value);
       angularProxy.digest();
     }
   }
 
   _updateScopeQuery(key, childKeys) {
     let changed = false;
-    if (!this._vue[key]) {
-      Vue.set(this._vue.$data, key, {});
+    if (!this._vue.values[key]) {
+      Vue.set(this._vue.values, key, {});
+      if (this._scope && this._scope.__ob__) Vue.set(this._scope, key, this._vue.values[key]);
       changed = true;
     }
-    const subScope = this._vue[key];
+    const subScope = this._vue.values[key];
     for (const childKey in subScope) {
       if (!subScope.hasOwnProperty(childKey)) continue;
       if (!_.contains(childKeys, childKey)) {
@@ -979,7 +992,7 @@ class Connector {
       }
     }
     let object;
-    for (const segment of this._currentDescriptors[key].path.split('/')) {
+    for (const segment of this._vue.descriptors[key].path.split('/')) {
       object = segment ? object[segment] : this._tree.root;
     }
     for (const childKey of childKeys) {
@@ -1690,7 +1703,7 @@ class Coupler {
 // These are defined separately for each object so they're not included in Value below.
 const RESERVED_VALUE_PROPERTY_NAMES = {
   $truss: true, $parent: true, $key: true, $path: true, $ref: true,
-  $$touchThis: true, $$initializers: true, $$finalizers: true,
+  $$touchThis: true, $$initializers: true, $$finalizers: true, $$watchers: true,
   $$$trussCheck: true,
   __ob__: true
 };
@@ -1816,11 +1829,21 @@ class Value {
       value: [], writable: false, enumerable: false, configurable: false});
     return this.$$finalizers;
   }
+
+  get $$watchers() {
+    Object.defineProperty(this, '$$watchers', {
+      value: {}, writable: false, enumerable: false, configurable: false});
+    return this.$$watchers;
+  }
 }
 
 class ComputedPropertyStats {
   constructor(name) {
     _.extend(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
+  }
+
+  get runtimePerRecompute() {
+    return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
   }
 }
 
@@ -2011,7 +2034,7 @@ class Modeler {
       object.$$finalizers.push(
         vue.$watch(computeValue.bind(object, prop, stats), newValue => {
           if (_.isEqual(value, newValue, isTrussValueEqual)) return;
-          // console.log('updating', prop.fullName, 'from', value, 'to', newValue);
+          // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
           stats.numUpdates += 1;
           writeAllowed = true;
           object[prop.name] = newValue;
@@ -2019,6 +2042,7 @@ class Modeler {
           if (newValue instanceof ErrorWrapper) throw newValue.error;
         }, {immediate: true})  // use immediate:true since watcher will run computeValue anyway
       );
+      object.$$watchers[prop.name] = _.last(vue._watchers);
     });
     return {
       enumerable: true, configurable: true,
@@ -2102,7 +2126,7 @@ class Modeler {
   }
 
   static get computedPropertyStats() {
-    return computedPropertyStats;
+    return _(computedPropertyStats).values().sortBy(stat => -stat.runtime).value();
   }
 }
 
@@ -2395,7 +2419,7 @@ class Tree {
           }
         }
         if (subValue === undefined || subValue === null) {
-          this._prune(subPath);
+          this._prune(descendantPath);
         } else {
           const key = unescapeKey(_.last(descendantPath.split('/')));
           this._plantValue(
@@ -2515,7 +2539,7 @@ class Tree {
   }
 
   _plantValue(path, key, value, parent, remoteWrite, override) {
-    if (value === null || value === undefined) {
+    if (remoteWrite && (value === null || value === undefined)) {
       throw new Error(`Snapshot includes invalid value at ${path}: ${value}`);
     }
     if (remoteWrite && this._localWrites[path]) return;
@@ -2970,7 +2994,35 @@ class Truss {
     this._tree.checkVueObject(this._tree.root, '/');
   }
 
-  static get computedPropertyStats() {return this._tree.computedPropertyStats;}
+  static get computedPropertyStats() {return Tree.computedPropertyStats;}
+
+  static logComputedPropertyStats(n = 10) {
+    const stats = _.take(Truss.computedPropertyStats, n);
+    if (!stats.length) return;
+    const totals = {runtime: 0, numUpdates: 0, numRecomputes: 0};
+    _.each(stats, stat => {
+      totals.runtime += stat.runtime;
+      totals.numUpdates += stat.numUpdates;
+      totals.numRecomputes += stat.numRecomputes;
+    });
+    const lines = _.map(stats, stat => [
+      `${stat.name}:`, ` ${(stat.runtime / 1000).toFixed(2)}s`,
+      `(${(stat.runtime / totals.runtime * 100).toFixed(1)}%)`,
+      ` ${stat.numUpdates} upd /`, `${stat.numRecomputes} runs`,
+      `(${(stat.numUpdates / stat.numRecomputes * 100).toFixed(1)}%)`,
+      ` ${stat.runtimePerRecompute.toFixed(2)}ms / run`
+    ]);
+    lines.unshift([
+      '--- Total:', ` ${(totals.runtime / 1000).toFixed(2)}s`, '(100.0%)',
+      ` ${totals.numUpdates} upd /`, `${totals.numRecomputes} runs`,
+      `(${(totals.numUpdates / totals.numRecomputes * 100).toFixed(1)}%)`,
+      ` ${(totals.runtime / totals.numRecomputes).toFixed(2)}ms / run`
+    ]);
+    const widths = _.map(_.range(lines[0].length), i => _(lines).map(line => line[i].length).max());
+    _.each(lines, line => {
+      console.log(_.map(line, (column, i) => _.padLeft(column, widths[i])).join(' '));
+    });
+  }
 
   static connectWorker(webWorker) {
     if (bridge) throw new Error('Worker already connected');
