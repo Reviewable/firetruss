@@ -1,4 +1,4 @@
-import angularCompatibility from './angularCompatibility.js';
+import angular from './angularCompatibility.js';
 import Coupler from './Coupler.js';
 import Modeler from './Modeler.js';
 import {escapeKey, unescapeKey, joinPath, SERVER_TIMESTAMP} from './utils.js';
@@ -61,9 +61,6 @@ export default class Tree {
       rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
     this._vue = new Vue({data: {$root: undefined}});
     Object.seal(this);
-    if (angularCompatibility.active) {
-      this._vue.$watch('$data', () => {angularCompatibility.digest();}, {deep: true});
-    }
     // Call this.init(classes) to complete initialization; we need two phases so that truss can bind
     // the tree into its own accessors prior to defining computed functions, which may try to
     // access the tree root via truss.
@@ -74,6 +71,7 @@ export default class Tree {
       this._vue.$data.$root = this._createObject('/', '');
       this._fixObject(this._vue.$data.$root);
       this._completeCreateObject(this._vue.$data.$root);
+      angular.digest();
     }
     return this._vue.$data.$root;
   }
@@ -377,7 +375,9 @@ export default class Tree {
     return object;
   }
 
-  _plantValue(path, key, value, parent, remoteWrite, override) {
+  _plantValue(path, key, value, parent, remoteWrite, override, createdObjects) {
+    const top = !createdObjects;
+    createdObjects = createdObjects || [];
     if (remoteWrite && (value === null || value === undefined)) {
       throw new Error(`Snapshot includes invalid value at ${path}: ${value}`);
     }
@@ -397,6 +397,7 @@ export default class Tree {
       object = this._createObject(path, key, parent);
       this._setFirebaseProperty(parent, key, object);
       this._fixObject(object);
+      createdObjects.push(object);
       objectCreated = true;
     }
     if (override) {
@@ -411,7 +412,6 @@ export default class Tree {
       );
     });
     if (objectCreated) {
-      this._completeCreateObject(object);
       this._plantPlaceholders(object, path);
     } else {
       _.each(object, (item, childKey) => {
@@ -420,6 +420,9 @@ export default class Tree {
           this._prune(joinPath(path, escapedChildKey), null, remoteWrite);
         }
       });
+    }
+    if (top) {
+      for (const object of createdObjects) this._completeCreateObject(object);
     }
     return object;
   }
@@ -563,6 +566,7 @@ export default class Tree {
         configurable: true, enumerable: true
       });
     }
+    angular.digest();
   }
 
   _overwriteFirebaseProperty(descriptor, key, newValue) {
@@ -580,14 +584,11 @@ export default class Tree {
     this._getFirebasePropertyDescriptor(object, key);
     this._destroyObject(object[key]);
     Vue.delete(object, key);
+    angular.digest();
   }
 
   checkVueObject(object, path) {
     this._modeler.checkVueObject(object, path);
-  }
-
-  static get computedPropertyStats() {
-    return Modeler.computedPropertyStats;
   }
 }
 

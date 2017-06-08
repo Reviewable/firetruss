@@ -802,6 +802,61 @@ class Reference extends Handle {
   }
 }
 
+class StatItem {
+  constructor(name) {
+    _.extend(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
+  }
+
+  get runtimePerRecompute() {
+    return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
+  }
+
+  toLogParts(totals) {
+    return [
+      `${this.name}:`, ` ${(this.runtime / 1000).toFixed(2)}s`,
+      `(${(this.runtime / totals.runtime * 100).toFixed(1)}%)`,
+      ` ${this.numUpdates} upd /`, `${this.numRecomputes} runs`,
+      `(${(this.numUpdates / this.numRecomputes * 100).toFixed(1)}%)`,
+      ` ${this.runtimePerRecompute.toFixed(2)}ms / run`
+    ];
+  }
+}
+
+class Stats {
+  constructor() {
+    this._items = {};
+  }
+
+  for(name) {
+    if (!this._items[name]) this._items[name] = new StatItem(name);
+    return this._items[name];
+  }
+
+  get list() {
+    return _(this._items).values().sortBy(item => -item.runtime).value();
+  }
+
+  log(n = 10) {
+    let stats = this.list;
+    if (!stats.length) return;
+    const totals = new StatItem('--- Total');
+    _.each(stats, stat => {
+      totals.runtime += stat.runtime;
+      totals.numUpdates += stat.numUpdates;
+      totals.numRecomputes += stat.numRecomputes;
+    });
+    stats = _.take(stats, n);
+    const lines = _.map(stats, item => item.toLogParts(totals));
+    lines.unshift(totals.toLogParts(totals));
+    const widths = _.map(_.range(lines[0].length), i => _(lines).map(line => line[i].length).max());
+    _.each(lines, line => {
+      console.log(_.map(line, (column, i) => _.padLeft(column, widths[i])).join(' '));
+    });
+  }
+}
+
+var stats = new Stats();
+
 class Connector {
   constructor(scope, connections, tree, method, refs) {
     Object.freeze(connections);
@@ -809,12 +864,13 @@ class Connector {
     this._connections = connections;
     this._tree = tree;
     this._method = method;
-    this._subConnectors = {};
 
+    this._subConnectors = {};
     this._disconnects = {};
     this._angularUnwatches = undefined;
+    this._data = {};
+    this._values = new Vue({data: _.mapValues(connections, _.constant(undefined))});
     this._vue = new Vue({data: {
-      values: _.mapValues(connections, _.constant(undefined)),
       descriptors: {},
       refs: refs || {}
     }});
@@ -849,24 +905,30 @@ class Connector {
     return this._vue.refs;
   }
 
+  get data() {
+    return this._data;
+  }
+
   destroy() {
     this._unlinkScopeProperties();
     _.each(this._angularUnwatches, unwatch => {unwatch();});
     _.each(this._connections, (descriptor, key) => {this._disconnect(key);});
+    this._values.$destroy();
     this._vue.$destroy();
   }
 
   _linkScopeProperties() {
-    if (!this._scope) return;
-    for (const key in this._connections) {
-      if (key in this._scope) {
-        throw new Error(`Property already defined on connection target: ${key}`);
+    const dataProperties = _.mapValues(this._connections, (descriptor, key) => ({
+      configurable: true, enumerable: true, get: () => this._values.$data[key]
+    }));
+    Object.defineProperties(this._data, dataProperties);
+    if (this._scope) {
+      for (const key in this._connections) {
+        if (key in this._scope) {
+          throw new Error(`Property already defined on connection target: ${key}`);
+        }
       }
-    }
-    if (!this._scope.__ob__) {
-      Object.defineProperties(this._scope, _.mapValues(this._connections, (descriptor, key) => ({
-        configurable: true, enumerable: true, get: () => this._vue.values[key]
-      })));
+      if (!this._scope.__ob__) Object.defineProperties(this._scope, dataProperties);
     }
   }
 
@@ -878,24 +940,34 @@ class Connector {
   }
 
   _bindComputedConnection(key, fn) {
-    const getter = this._computeConnection.bind(this, fn);
-    const update = this._updateComputedConnection.bind(this, key, fn);
+    const connectionStats = stats.for(`connection.at.${key}`);
+    const getter = this._computeConnection.bind(this, fn, connectionStats);
+    const update = this._updateComputedConnection.bind(this, key, fn, connectionStats);
     // Use this._vue.$watch instead of truss.watch here so that we can disable the immediate
     // callback if we'll get one from Angular anyway.
-    this._vue.$watch(getter, update, {immediate: !angularProxy.active, deep: true});
+    this._vue.$watch(getter, update, {immediate: !angularProxy.active});
     if (angularProxy.active) {
       if (!this._angularUnwatches) this._angularUnwatches = [];
       this._angularUnwatches.push(angularProxy.watch(getter, update, true));
     }
   }
 
-  _computeConnection(fn) {
-    return flattenRefs(fn.call(this._scope));
+  _computeConnection(fn, connectionStats) {
+    const startTime = performanceNow();
+    try {
+      return flattenRefs(fn.call(this._scope));
+    } finally {
+      connectionStats.runtime += performanceNow() - startTime;
+      connectionStats.numRecomputes += 1;
+    }
   }
 
-  _updateComputedConnection(key, value) {
+  _updateComputedConnection(key, value, connectionStats) {
     const newDescriptor = _.isFunction(value) ? value(this._scope) : value;
     const oldDescriptor = this._vue.descriptors[key];
+    if (connectionStats && !_.isEqual(oldDescriptor, newDescriptor)) {
+      connectionStats.numUpdates += 1;
+    }
     if (oldDescriptor === newDescriptor ||
         newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) return;
     if (!newDescriptor) {
@@ -909,6 +981,7 @@ class Connector {
       this._subConnectors[key]._updateConnections(newDescriptor);
     }
     Vue.set(this._vue.descriptors, key, newDescriptor);
+    angularProxy.digest();
   }
 
   _updateConnections(connections) {
@@ -923,42 +996,41 @@ class Connector {
 
   _connect(key, descriptor) {
     Vue.set(this._vue.descriptors, key, descriptor);
+    angularProxy.digest();
     if (!descriptor) return;
     if (descriptor instanceof Reference) {
       Vue.set(this._vue.refs, key, descriptor);
-      const updateFn = this._scope ? this._updateScopeRef.bind(this, key) : null;
+      const updateFn = this._updateRefValue.bind(this, key);
       this._disconnects[key] = this._tree.connectReference(descriptor, updateFn, this._method);
     } else if (descriptor instanceof Query) {
       Vue.set(this._vue.refs, key, descriptor);
-      const updateFn = this._scope ? this._updateScopeQuery.bind(this, key) : null;
+      const updateFn = this._updateQueryValue.bind(this, key);
       this._disconnects[key] = this._tree.connectQuery(descriptor, updateFn, this._method);
     } else {
       const subScope = {}, subRefs = {};
       Vue.set(this._vue.refs, key, subRefs);
       const subConnector = this._subConnectors[key] =
         new Connector(subScope, descriptor, this._tree, this._method, subRefs);
-      if (this._scope) {
-        // Use a truss.watch here instead of this._vue.$watch so that the "immediate" execution
-        // actually takes place after we've captured the unwatch function, in case the subConnector
-        // is ready immediately.
-        const unwatch = this._disconnects[key] = this._tree.truss.watch(
-          () => subConnector.ready,
-          subReady => {
-            if (!subReady) return;
-            unwatch();
-            delete this._disconnects[key];
-            Vue.set(this._vue.values, key, subScope);
-            if (this._scope.__ob__) Vue.set(this._scope, key, subScope);
-            angularProxy.digest();
-          }
-        );
-      }
+      // Use a truss.watch here instead of this._vue.$watch so that the "immediate" execution
+      // actually takes place after we've captured the unwatch function, in case the subConnector
+      // is ready immediately.
+      const unwatch = this._disconnects[key] = this._tree.truss.watch(
+        () => subConnector.ready,
+        subReady => {
+          if (!subReady) return;
+          unwatch();
+          delete this._disconnects[key];
+          Vue.set(this._values.$data, key, subScope);
+          if (this._scope.__ob__) Vue.set(this._scope, key, subScope);
+          angularProxy.digest();
+        }
+      );
     }
   }
 
   _disconnect(key) {
     Vue.delete(this._vue.refs, key);
-    if (this._scope) this._updateScopeRef(key, undefined);
+    this._updateRefValue(key, undefined);
     if (_.has(this._subConnectors, key)) {
       this._subConnectors[key].destroy();
       delete this._subConnectors[key];
@@ -966,29 +1038,29 @@ class Connector {
     if (this._disconnects[key]) this._disconnects[key]();
     delete this._disconnects[key];
     Vue.delete(this._vue.descriptors, key);
+    angularProxy.digest();
   }
 
-  _updateScopeRef(key, value) {
-    if (this._vue.values[key] !== value) {
-      Vue.set(this._vue.values, key, value);
+  _updateRefValue(key, value) {
+    if (this._values.$data[key] !== value) {
+      Vue.set(this._values.$data, key, value);
       if (this._scope && this._scope.__ob__) Vue.set(this._scope, key, value);
       angularProxy.digest();
     }
   }
 
-  _updateScopeQuery(key, childKeys) {
-    let changed = false;
-    if (!this._vue.values[key]) {
-      Vue.set(this._vue.values, key, {});
-      if (this._scope && this._scope.__ob__) Vue.set(this._scope, key, this._vue.values[key]);
-      changed = true;
+  _updateQueryValue(key, childKeys) {
+    if (!this._values.$data[key]) {
+      Vue.set(this._values.$data, key, {});
+      if (this._scope && this._scope.__ob__) Vue.set(this._scope, key, this._values.$data[key]);
+      angularProxy.digest();
     }
-    const subScope = this._vue.values[key];
+    const subScope = this._values.$data[key];
     for (const childKey in subScope) {
       if (!subScope.hasOwnProperty(childKey)) continue;
       if (!_.contains(childKeys, childKey)) {
         Vue.delete(subScope, childKey);
-        changed = true;
+        angularProxy.digest();
       }
     }
     let object;
@@ -998,9 +1070,8 @@ class Connector {
     for (const childKey of childKeys) {
       if (subScope.hasOwnProperty(childKey)) continue;
       Vue.set(subScope, childKey, object[childKey]);
-      changed = true;
+      angularProxy.digest();
     }
-    if (changed) angularProxy.digest();
   }
 
 }
@@ -1298,10 +1369,6 @@ class MetaTree {
       }
     }}});
 
-    if (angularProxy.active) {
-      this._vue.$watch('$data', angularProxy.digest, {deep: true});
-    }
-
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
     this._connectInfoProperty('serverTimeOffset', 'timeOffset');
@@ -1321,12 +1388,14 @@ class MetaTree {
   _handleAuthChange(user) {
     this.root.user = user;
     this.root.userid = user && user.uid;
+    angularProxy.digest();
   }
 
   _connectInfoProperty(property, attribute) {
     const propertyUrl = `${this._rootUrl}/.info/${property}`;
     this._bridge.on(propertyUrl, propertyUrl, null, 'value', snap => {
       this.root[attribute] = snap.value;
+      angularProxy.digest();
     });
   }
 }
@@ -1703,17 +1772,18 @@ class Coupler {
 // These are defined separately for each object so they're not included in Value below.
 const RESERVED_VALUE_PROPERTY_NAMES = {
   $truss: true, $parent: true, $key: true, $path: true, $ref: true,
-  $$touchThis: true, $$initializers: true, $$finalizers: true, $$watchers: true,
+  $$touchThis: true, $$initializers: true, $$finalizers: true,
   $$$trussCheck: true,
   __ob__: true
 };
 
-const computedPropertyStats = {};
 
 // Holds properties that we're going to set on a model object that's being created right now as soon
 // as it's been created, but that we'd like to be accessible in the constructor.  The object
 // prototype's getters will pick those up until they get overridden in the instance.
 let creatingObjectProperties;
+
+let currentPropertyFrozen;
 
 
 class Value {
@@ -1803,6 +1873,13 @@ class Value {
     return promise;
   }
 
+  $freezeComputedProperty() {
+    if (!_.isBoolean(currentPropertyFrozen)) {
+      throw new Error('Cannot freeze a computed property outside of its getter function');
+    }
+    currentPropertyFrozen = true;
+  }
+
   $set(value) {return this.$ref.set(value);}
   $update(values) {return this.$ref.update(values);}
   $override(values) {return this.$ref.override(values);}
@@ -1829,27 +1906,19 @@ class Value {
       value: [], writable: false, enumerable: false, configurable: false});
     return this.$$finalizers;
   }
-
-  get $$watchers() {
-    Object.defineProperty(this, '$$watchers', {
-      value: {}, writable: false, enumerable: false, configurable: false});
-    return this.$$watchers;
-  }
 }
 
-class ComputedPropertyStats {
-  constructor(name) {
-    _.extend(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
-  }
-
-  get runtimePerRecompute() {
-    return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
-  }
-}
 
 class ErrorWrapper {
   constructor(error) {
     this.error = error;
+  }
+}
+
+
+class FrozenWrapper {
+  constructor(value) {
+    this.value = value;
   }
 }
 
@@ -2019,30 +2088,29 @@ class Modeler {
   }
 
   _buildComputedPropertyDescriptor(object, prop) {
-    if (!computedPropertyStats[prop.fullName]) {
-      Object.defineProperty(computedPropertyStats, prop.fullName, {
-        value: new ComputedPropertyStats(prop.fullName), writable: false, enumerable: true,
-        configurable: false
-      });
-    }
-    const stats = computedPropertyStats[prop.fullName];
+    const propertyStats = stats.for(prop.fullName);
 
     let value;
     let writeAllowed = false;
 
     object.$$initializers.push(vue => {
-      object.$$finalizers.push(
-        vue.$watch(computeValue.bind(object, prop, stats), newValue => {
-          if (_.isEqual(value, newValue, isTrussValueEqual)) return;
-          // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
-          stats.numUpdates += 1;
-          writeAllowed = true;
-          object[prop.name] = newValue;
-          writeAllowed = false;
-          if (newValue instanceof ErrorWrapper) throw newValue.error;
-        }, {immediate: true})  // use immediate:true since watcher will run computeValue anyway
-      );
-      object.$$watchers[prop.name] = _.last(vue._watchers);
+      const unwatch = vue.$watch(computeValue.bind(object, prop, propertyStats), newValue => {
+        if (newValue instanceof FrozenWrapper) {
+          newValue = newValue.value;
+          unwatch();
+          _.pull(object.$$finalizers, unwatch);
+        }
+        if (_.isEqual(value, newValue, isTrussValueEqual)) return;
+        // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
+        propertyStats.numUpdates += 1;
+        writeAllowed = true;
+        object[prop.name] = newValue;
+        writeAllowed = false;
+        angularProxy.digest();
+        if (newValue instanceof ErrorWrapper) throw newValue.error;
+      }, {immediate: true});  // use immediate:true since watcher will run computeValue anyway
+      object.$$finalizers.push(unwatch);
+      // object.$$watchers[prop.name] = _.last(vue._watchers);
     });
     return {
       enumerable: true, configurable: true,
@@ -2124,27 +2192,31 @@ class Modeler {
       }
     }
   }
-
-  static get computedPropertyStats() {
-    return _(computedPropertyStats).values().sortBy(stat => -stat.runtime).value();
-  }
 }
 
 
-function computeValue(prop, stats) {
+function computeValue(prop, propertyStats) {
   // jshint validthis: true
   // Touch this object, since a failed access to a missing property doesn't get captured as a
   // dependency.
   this.$$touchThis();
 
+  currentPropertyFrozen = false;
   const startTime = performanceNow();
+  let value;
   try {
-    return prop.get.call(this);
-  } catch (e) {
-    return new ErrorWrapper(e);
+    try {
+      value = prop.get.call(this);
+    } catch (e) {
+      value = new ErrorWrapper(e);
+    } finally {
+      propertyStats.runtime += performanceNow() - startTime;
+      propertyStats.numRecomputes += 1;
+    }
+    if (currentPropertyFrozen) value = new FrozenWrapper(value);
+    return value;
   } finally {
-    stats.runtime += performanceNow() - startTime;
-    stats.numRecomputes += 1;
+    currentPropertyFrozen = undefined;
   }
   // jshint validthis: false
 }
@@ -2222,9 +2294,6 @@ class Tree {
       rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
     this._vue = new Vue({data: {$root: undefined}});
     Object.seal(this);
-    if (angularProxy.active) {
-      this._vue.$watch('$data', () => {angularProxy.digest();}, {deep: true});
-    }
     // Call this.init(classes) to complete initialization; we need two phases so that truss can bind
     // the tree into its own accessors prior to defining computed functions, which may try to
     // access the tree root via truss.
@@ -2235,6 +2304,7 @@ class Tree {
       this._vue.$data.$root = this._createObject('/', '');
       this._fixObject(this._vue.$data.$root);
       this._completeCreateObject(this._vue.$data.$root);
+      angularProxy.digest();
     }
     return this._vue.$data.$root;
   }
@@ -2538,7 +2608,9 @@ class Tree {
     return object;
   }
 
-  _plantValue(path, key, value, parent, remoteWrite, override) {
+  _plantValue(path, key, value, parent, remoteWrite, override, createdObjects) {
+    const top = !createdObjects;
+    createdObjects = createdObjects || [];
     if (remoteWrite && (value === null || value === undefined)) {
       throw new Error(`Snapshot includes invalid value at ${path}: ${value}`);
     }
@@ -2558,6 +2630,7 @@ class Tree {
       object = this._createObject(path, key, parent);
       this._setFirebaseProperty(parent, key, object);
       this._fixObject(object);
+      createdObjects.push(object);
       objectCreated = true;
     }
     if (override) {
@@ -2572,7 +2645,6 @@ class Tree {
       );
     });
     if (objectCreated) {
-      this._completeCreateObject(object);
       this._plantPlaceholders(object, path);
     } else {
       _.each(object, (item, childKey) => {
@@ -2581,6 +2653,9 @@ class Tree {
           this._prune(joinPath(path, escapedChildKey), null, remoteWrite);
         }
       });
+    }
+    if (top) {
+      for (const object of createdObjects) this._completeCreateObject(object);
     }
     return object;
   }
@@ -2724,6 +2799,7 @@ class Tree {
         configurable: true, enumerable: true
       });
     }
+    angularProxy.digest();
   }
 
   _overwriteFirebaseProperty(descriptor, key, newValue) {
@@ -2741,14 +2817,11 @@ class Tree {
     this._getFirebasePropertyDescriptor(object, key);
     this._destroyObject(object[key]);
     Vue.delete(object, key);
+    angularProxy.digest();
   }
 
   checkVueObject(object, path) {
     this._modeler.checkVueObject(object, path);
-  }
-
-  static get computedPropertyStats() {
-    return Modeler.computedPropertyStats;
   }
 }
 
@@ -2919,7 +2992,7 @@ class Truss {
         unwatch();
         unwatch = null;
         callbackPromise = promiseFinally(
-          callback(scope.result), () => {callbackPromise = null; cleanup();}
+          callback(scope.result), () => {angularProxy.digest(); callbackPromise = null; cleanup();}
         ).then(result => {resolve(result);}, error => {reject(error);});
       });
 
@@ -2994,34 +3067,12 @@ class Truss {
     this._tree.checkVueObject(this._tree.root, '/');
   }
 
-  static get computedPropertyStats() {return Tree.computedPropertyStats;}
+  static get computedPropertyStats() {
+    return stats.list;
+  }
 
   static logComputedPropertyStats(n = 10) {
-    const stats = _.take(Truss.computedPropertyStats, n);
-    if (!stats.length) return;
-    const totals = {runtime: 0, numUpdates: 0, numRecomputes: 0};
-    _.each(stats, stat => {
-      totals.runtime += stat.runtime;
-      totals.numUpdates += stat.numUpdates;
-      totals.numRecomputes += stat.numRecomputes;
-    });
-    const lines = _.map(stats, stat => [
-      `${stat.name}:`, ` ${(stat.runtime / 1000).toFixed(2)}s`,
-      `(${(stat.runtime / totals.runtime * 100).toFixed(1)}%)`,
-      ` ${stat.numUpdates} upd /`, `${stat.numRecomputes} runs`,
-      `(${(stat.numUpdates / stat.numRecomputes * 100).toFixed(1)}%)`,
-      ` ${stat.runtimePerRecompute.toFixed(2)}ms / run`
-    ]);
-    lines.unshift([
-      '--- Total:', ` ${(totals.runtime / 1000).toFixed(2)}s`, '(100.0%)',
-      ` ${totals.numUpdates} upd /`, `${totals.numRecomputes} runs`,
-      `(${(totals.numUpdates / totals.numRecomputes * 100).toFixed(1)}%)`,
-      ` ${(totals.runtime / totals.numRecomputes).toFixed(2)}ms / run`
-    ]);
-    const widths = _.map(_.range(lines[0].length), i => _(lines).map(line => line[i].length).max());
-    _.each(lines, line => {
-      console.log(_.map(line, (column, i) => _.padLeft(column, widths[i])).join(' '));
-    });
+    return stats.log(n);
   }
 
   static connectWorker(webWorker) {

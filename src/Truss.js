@@ -1,6 +1,6 @@
 import _ from 'lodash';
 import Vue from 'vue';
-import angularCompatibility from './angularCompatibility.js';
+import angular from './angularCompatibility.js';
 import Bridge from './Bridge.js';
 import Connector from './Connector.js';
 import Dispatcher from './Dispatcher.js';
@@ -8,6 +8,7 @@ import KeyGenerator from './KeyGenerator.js';
 import MetaTree from './MetaTree.js';
 import {Handle, Reference} from './Reference.js';
 import Tree from './Tree.js';
+import stats from './stats.js';
 import {
   escapeKey, unescapeKey, wrapPromiseCallback, promiseCancel, promiseFinally,
   SERVER_TIMESTAMP
@@ -126,7 +127,7 @@ export default class Truss {
         unwatch();
         unwatch = null;
         callbackPromise = promiseFinally(
-          callback(scope.result), () => {callbackPromise = null; cleanup();}
+          callback(scope.result), () => {angular.digest(); callbackPromise = null; cleanup();}
         ).then(result => {resolve(result);}, error => {reject(error);});
       });
 
@@ -155,11 +156,11 @@ export default class Truss {
         Promise.resolve().then(() => {
           if (numCallbacks > 1 || subjectFn() !== newValue) return;
           callbackFn(newValue, oldValue);
-          angularCompatibility.digest();
+          angular.digest();
         });
       } else {
         callbackFn(newValue, oldValue);
-        angularCompatibility.digest();
+        angular.digest();
       }
     }, {immediate: true, deep: options && options.deep});
 
@@ -201,34 +202,12 @@ export default class Truss {
     this._tree.checkVueObject(this._tree.root, '/');
   }
 
-  static get computedPropertyStats() {return Tree.computedPropertyStats;}
+  static get computedPropertyStats() {
+    return stats.list;
+  }
 
   static logComputedPropertyStats(n = 10) {
-    const stats = _.take(Truss.computedPropertyStats, n);
-    if (!stats.length) return;
-    const totals = {runtime: 0, numUpdates: 0, numRecomputes: 0};
-    _.each(stats, stat => {
-      totals.runtime += stat.runtime;
-      totals.numUpdates += stat.numUpdates;
-      totals.numRecomputes += stat.numRecomputes;
-    });
-    const lines = _.map(stats, stat => [
-      `${stat.name}:`, ` ${(stat.runtime / 1000).toFixed(2)}s`,
-      `(${(stat.runtime / totals.runtime * 100).toFixed(1)}%)`,
-      ` ${stat.numUpdates} upd /`, `${stat.numRecomputes} runs`,
-      `(${(stat.numUpdates / stat.numRecomputes * 100).toFixed(1)}%)`,
-      ` ${stat.runtimePerRecompute.toFixed(2)}ms / run`
-    ]);
-    lines.unshift([
-      '--- Total:', ` ${(totals.runtime / 1000).toFixed(2)}s`, '(100.0%)',
-      ` ${totals.numUpdates} upd /`, `${totals.numRecomputes} runs`,
-      `(${(totals.numUpdates / totals.numRecomputes * 100).toFixed(1)}%)`,
-      ` ${(totals.runtime / totals.numRecomputes).toFixed(2)}ms / run`
-    ]);
-    const widths = _.map(_.range(lines[0].length), i => _(lines).map(line => line[i].length).max());
-    _.each(lines, line => {
-      console.log(_.map(line, (column, i) => _.padLeft(column, widths[i])).join(' '));
-    });
+    return stats.log(n);
   }
 
   static connectWorker(webWorker) {
@@ -263,7 +242,7 @@ export default class Truss {
   }
 
   static debounceAngularDigest(wait) {
-    angularCompatibility.debounceDigest(wait);
+    angular.debounceDigest(wait);
   }
 
   static escapeKey(key) {return escapeKey(key);}
@@ -285,4 +264,4 @@ Object.defineProperties(Truss, {
   VERSION: {value: VERSION}
 });
 
-angularCompatibility.defineModule(Truss);
+angular.defineModule(Truss);

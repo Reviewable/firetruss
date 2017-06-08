@@ -1,6 +1,6 @@
 import _ from 'lodash';
 import Vue from 'vue';
-import angularCompatibility from './angularCompatibility.js';
+import angular from './angularCompatibility.js';
 
 
 class QueryHandler {
@@ -41,7 +41,7 @@ class QueryHandler {
       this);
     this._listening = false;
     this.ready = false;
-    angularCompatibility.digest();
+    angular.digest();
     for (const key of this._keys) {
       this._coupler._decoupleSegments(this._segments.concat(key));
     }
@@ -55,7 +55,7 @@ class QueryHandler {
     this._coupler._applySnapshot(snap);
     if (!this.ready) {
       this.ready = true;
-      angularCompatibility.digest();
+      angular.digest();
       for (const listener of this._listeners) {
         this._coupler._dispatcher.markReady(listener.operation);
       }
@@ -164,7 +164,7 @@ class Node {
       this._forAllDescendants(node => {
         if (node.ready) {
           node.ready = false;
-          angularCompatibility.digest();
+          angular.digest();
         }
       });
     } else {
@@ -177,7 +177,7 @@ class Node {
     this._coupler._applySnapshot(snap);
     if (!this.ready && snap.path === this.path) {
       this.ready = true;
-      angularCompatibility.digest();
+      angular.digest();
       this.unlisten(true);
       this._forAllDescendants(node => {
         for (const op of this.operations) this._coupler._dispatcher.markReady(op);
@@ -191,7 +191,7 @@ class Node {
     this._forAllDescendants(node => {
       if (node.ready) {
         node.ready = false;
-        angularCompatibility.digest();
+        angular.digest();
       }
       for (const op of this.operations) this._coupler._dispatcher.clearReady(op);
     });

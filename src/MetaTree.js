@@ -1,4 +1,4 @@
-import angularCompatibility from './angularCompatibility.js';
+import angular from './angularCompatibility.js';
 import Vue from 'vue';
 
 export default class MetaTree {
@@ -12,7 +12,7 @@ export default class MetaTree {
         if (!this.hasOwnProperty(key)) {
           const update = () => {
             this[key] = Date.now() + this.timeOffset;
-            angularCompatibility.digest();
+            angular.digest();
           };
           update();
           setInterval(() => update, intervalMillis);
@@ -20,10 +20,6 @@ export default class MetaTree {
         return this[key];
       }
     }}});
-
-    if (angularCompatibility.active) {
-      this._vue.$watch('$data', angularCompatibility.digest, {deep: true});
-    }
 
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
@@ -44,12 +40,14 @@ export default class MetaTree {
   _handleAuthChange(user) {
     this.root.user = user;
     this.root.userid = user && user.uid;
+    angular.digest();
   }
 
   _connectInfoProperty(property, attribute) {
     const propertyUrl = `${this._rootUrl}/.info/${property}`;
     this._bridge.on(propertyUrl, propertyUrl, null, 'value', snap => {
       this.root[attribute] = snap.value;
+      angular.digest();
     });
   }
 }

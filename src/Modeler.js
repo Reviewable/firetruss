@@ -1,4 +1,6 @@
 import {Reference, Handle} from './Reference.js';
+import angular from './angularCompatibility.js';
+import stats from './stats.js';
 import {makePathMatcher, joinPath, escapeKey, unescapeKey, promiseFinally} from './utils.js';
 
 import _ from 'lodash';
@@ -7,17 +9,18 @@ import performanceNow from 'performance-now';
 // These are defined separately for each object so they're not included in Value below.
 const RESERVED_VALUE_PROPERTY_NAMES = {
   $truss: true, $parent: true, $key: true, $path: true, $ref: true,
-  $$touchThis: true, $$initializers: true, $$finalizers: true, $$watchers: true,
+  $$touchThis: true, $$initializers: true, $$finalizers: true,
   $$$trussCheck: true,
   __ob__: true
 };
 
-const computedPropertyStats = {};
 
 // Holds properties that we're going to set on a model object that's being created right now as soon
 // as it's been created, but that we'd like to be accessible in the constructor.  The object
 // prototype's getters will pick those up until they get overridden in the instance.
 let creatingObjectProperties;
+
+let currentPropertyFrozen;
 
 
 class Value {
@@ -107,6 +110,13 @@ class Value {
     return promise;
   }
 
+  $freezeComputedProperty() {
+    if (!_.isBoolean(currentPropertyFrozen)) {
+      throw new Error('Cannot freeze a computed property outside of its getter function');
+    }
+    currentPropertyFrozen = true;
+  }
+
   $set(value) {return this.$ref.set(value);}
   $update(values) {return this.$ref.update(values);}
   $override(values) {return this.$ref.override(values);}
@@ -133,27 +143,19 @@ class Value {
       value: [], writable: false, enumerable: false, configurable: false});
     return this.$$finalizers;
   }
-
-  get $$watchers() {
-    Object.defineProperty(this, '$$watchers', {
-      value: {}, writable: false, enumerable: false, configurable: false});
-    return this.$$watchers;
-  }
 }
 
-class ComputedPropertyStats {
-  constructor(name) {
-    _.extend(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
-  }
-
-  get runtimePerRecompute() {
-    return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
-  }
-}
 
 class ErrorWrapper {
   constructor(error) {
     this.error = error;
+  }
+}
+
+
+class FrozenWrapper {
+  constructor(value) {
+    this.value = value;
   }
 }
 
@@ -323,30 +325,29 @@ export default class Modeler {
   }
 
   _buildComputedPropertyDescriptor(object, prop) {
-    if (!computedPropertyStats[prop.fullName]) {
-      Object.defineProperty(computedPropertyStats, prop.fullName, {
-        value: new ComputedPropertyStats(prop.fullName), writable: false, enumerable: true,
-        configurable: false
-      });
-    }
-    const stats = computedPropertyStats[prop.fullName];
+    const propertyStats = stats.for(prop.fullName);
 
     let value;
     let writeAllowed = false;
 
     object.$$initializers.push(vue => {
-      object.$$finalizers.push(
-        vue.$watch(computeValue.bind(object, prop, stats), newValue => {
-          if (_.isEqual(value, newValue, isTrussValueEqual)) return;
-          // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
-          stats.numUpdates += 1;
-          writeAllowed = true;
-          object[prop.name] = newValue;
-          writeAllowed = false;
-          if (newValue instanceof ErrorWrapper) throw newValue.error;
-        }, {immediate: true})  // use immediate:true since watcher will run computeValue anyway
-      );
-      object.$$watchers[prop.name] = _.last(vue._watchers);
+      const unwatch = vue.$watch(computeValue.bind(object, prop, propertyStats), newValue => {
+        if (newValue instanceof FrozenWrapper) {
+          newValue = newValue.value;
+          unwatch();
+          _.pull(object.$$finalizers, unwatch);
+        }
+        if (_.isEqual(value, newValue, isTrussValueEqual)) return;
+        // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
+        propertyStats.numUpdates += 1;
+        writeAllowed = true;
+        object[prop.name] = newValue;
+        writeAllowed = false;
+        angular.digest();
+        if (newValue instanceof ErrorWrapper) throw newValue.error;
+      }, {immediate: true});  // use immediate:true since watcher will run computeValue anyway
+      object.$$finalizers.push(unwatch);
+      // object.$$watchers[prop.name] = _.last(vue._watchers);
     });
     return {
       enumerable: true, configurable: true,
@@ -428,27 +429,31 @@ export default class Modeler {
       }
     }
   }
-
-  static get computedPropertyStats() {
-    return _(computedPropertyStats).values().sortBy(stat => -stat.runtime).value();
-  }
 }
 
 
-function computeValue(prop, stats) {
+function computeValue(prop, propertyStats) {
   // jshint validthis: true
   // Touch this object, since a failed access to a missing property doesn't get captured as a
   // dependency.
   this.$$touchThis();
 
+  currentPropertyFrozen = false;
   const startTime = performanceNow();
+  let value;
   try {
-    return prop.get.call(this);
-  } catch (e) {
-    return new ErrorWrapper(e);
+    try {
+      value = prop.get.call(this);
+    } catch (e) {
+      value = new ErrorWrapper(e);
+    } finally {
+      propertyStats.runtime += performanceNow() - startTime;
+      propertyStats.numRecomputes += 1;
+    }
+    if (currentPropertyFrozen) value = new FrozenWrapper(value);
+    return value;
   } finally {
-    stats.runtime += performanceNow() - startTime;
-    stats.numRecomputes += 1;
+    currentPropertyFrozen = undefined;
   }
   // jshint validthis: false
 }
