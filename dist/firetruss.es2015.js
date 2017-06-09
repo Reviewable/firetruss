@@ -4,43 +4,68 @@ import performanceNow from 'performance-now';
 
 /* globals window */
 
-let digestRequested;
-let bareDigest = function() {
-  digestRequested = true;
+const vue = new Vue({data: {digestRequest: 0}});
+let lastDigestRequest = 0;
+let digestInProgress = false;
+const bareDigest = function() {
+  if (vue.digestRequest > lastDigestRequest) return;
+  vue.digestRequest = lastDigestRequest + 1;
 };
-function indirectBareDigest() {
-  bareDigest();
-}
 
 const angularProxy = {
-  active: typeof window !== 'undefined' && window.angular,
-  debounceDigest(wait) {
-    // Bind indirectly, so we always pick up the latest definition of bareDigest.
-    if (wait) {
-      angularProxy.digest = _.debounce(indirectBareDigest, wait);
-    } else {
-      angularProxy.digest = indirectBareDigest;
-    }
-  }
+  active: typeof window !== 'undefined' && window.angular
 };
 
 if (angularProxy.active) {
-  angularProxy.digest = indirectBareDigest;
-  angularProxy.watch = function() {throw new Error('Angular watch proxy not yet initialized');};
-  window.angular.module('firetruss', []).run(['$rootScope', function($rootScope) {
-    bareDigest = function() {
-      if (digestRequested) return;
-      digestRequested = true;
-      $rootScope.$evalAsync(function() {digestRequested = false;});
-    };
-    if (digestRequested) angularProxy.digest();
-    angularProxy.watch = $rootScope.$watch.bind($rootScope);
-  }]);
-  angularProxy.defineModule = function(Truss) {
-    window.angular.module('firetruss').constant('Truss', Truss);
-  };
+  initAngular();
 } else {
-  ['digest', 'watch', 'defineModule'].forEach(method => {angularProxy[method] = noop;});
+  ['digest', 'watch', 'defineModule', 'debounceDigest'].forEach(method => {
+    angularProxy[method] = noop;
+  });
+}
+
+function initAngular() {
+  const module = window.angular.module('firetruss', []);
+  angularProxy.digest = bareDigest;
+  angularProxy.watch = function() {throw new Error('Angular watch proxy not yet initialized');};
+  angularProxy.defineModule = function(Truss) {
+    module.constant('Truss', Truss);
+  };
+  angularProxy.debounceDigest = function(wait) {
+    if (wait) {
+      const debouncedDigest = _.debounce(bareDigest, wait);
+      angularProxy.digest = function() {
+        if (vue.digestRequest > lastDigestRequest) return;
+        if (digestInProgress) bareDigest(); else debouncedDigest();
+      };
+    } else {
+      angularProxy.digest = bareDigest;
+    }
+  };
+
+  module.config(function($provide) {
+    $provide.decorator('$rootScope', ['$delegate', '$exceptionHandler',
+      function($delegate, $exceptionHandler) {
+        const rootScope = $delegate;
+        angularProxy.watch = rootScope.$watch.bind(rootScope);
+        const proto = Object.getPrototypeOf(rootScope);
+        const angularDigest = proto.$digest;
+        proto.$digest = bareDigest;
+        proto.$digest.original = angularDigest;
+        vue.$watch(() => vue.digestRequest, () => {
+          if (vue.digestRequest > lastDigestRequest) {
+            digestInProgress = true;
+            rootScope.$digest.original.call(rootScope);
+            lastDigestRequest = vue.digestRequest = vue.digestRequest + 1;
+          } else {
+            digestInProgress = false;
+          }
+        });
+        _.last(vue._watchers).id = Infinity;  // make sure watcher is scheduled last
+        return rootScope;
+      }
+    ]);
+  });
 }
 
 function noop() {}
@@ -2110,7 +2135,6 @@ class Modeler {
         if (newValue instanceof ErrorWrapper) throw newValue.error;
       }, {immediate: true});  // use immediate:true since watcher will run computeValue anyway
       object.$$finalizers.push(unwatch);
-      // object.$$watchers[prop.name] = _.last(vue._watchers);
     });
     return {
       enumerable: true, configurable: true,

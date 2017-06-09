@@ -347,7 +347,6 @@ export default class Modeler {
         if (newValue instanceof ErrorWrapper) throw newValue.error;
       }, {immediate: true});  // use immediate:true since watcher will run computeValue anyway
       object.$$finalizers.push(unwatch);
-      // object.$$watchers[prop.name] = _.last(vue._watchers);
     });
     return {
       enumerable: true, configurable: true,
