@@ -152,6 +152,16 @@
 	  return segments.join('/');
 	}
 
+	function isTrussEqual(a, b) {
+	  return _.isEqual(a, b, isTrussValueEqual);
+	}
+
+	function isTrussValueEqual(a, b) {
+	  if (a === b || a === undefined || a === null || b === undefined || b === null ||
+	      a.$truss || b.$truss) { return a === b; }
+	  if (a.isEqual) { return a.isEqual(b); }
+	}
+
 
 	var pathMatchers = {};
 	var maxNumPathMatchers = 1000;
@@ -762,7 +772,8 @@
 
 	Handle.prototype.isEqual = function isEqual (that) {
 	  if (!(that instanceof Handle)) { return false; }
-	  return this._tree === that._tree && this.toString() === that.toString();
+	  return this._tree === that._tree && this.toString() === that.toString() &&
+	    _.isEqual(this._annotations, that._annotations);
 	};
 
 	Handle.prototype.belongsTo = function belongsTo (truss) {
@@ -905,6 +916,12 @@
 
 	var prototypeAccessors$4 = { runtimePerRecompute: {} };
 
+	StatItem.prototype.add = function add (item) {
+	  this.runtime += item.runtime;
+	  this.numUpdates += item.numUpdates;
+	  this.numRecomputes += item.numRecomputes;
+	};
+
 	prototypeAccessors$4.runtimePerRecompute.get = function () {
 	  return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
 	};
@@ -941,15 +958,14 @@
 
 	  var stats = this.list;
 	  if (!stats.length) { return; }
-	  var totals = new StatItem('--- Total');
-	  _.each(stats, function (stat) {
-	    totals.runtime += stat.runtime;
-	    totals.numUpdates += stat.numUpdates;
-	    totals.numRecomputes += stat.numRecomputes;
-	  });
+	  var totals = new StatItem('=== Total');
+	  _.each(stats, function (stat) {totals.add(stat);});
 	  stats = _.take(stats, n);
+	  var above = new StatItem('--- Above');
+	  _.each(stats, function (stat) {above.add(stat);});
 	  var lines = _.map(stats, function (item) { return item.toLogParts(totals); });
-	  lines.unshift(totals.toLogParts(totals));
+	  lines.push(above.toLogParts(totals));
+	  lines.push(totals.toLogParts(totals));
 	  var widths = _.map(_.range(lines[0].length), function (i) { return _(lines).map(function (line) { return line[i].length; }).max(); });
 	  _.each(lines, function (line) {
 	    console.log(_.map(line, function (column, i) { return _.padLeft(column, widths[i]); }).join(' '));
@@ -1102,10 +1118,11 @@
 	  var connectionStats = stats.for(("connection.at." + key));
 	  var getter = this._computeConnection.bind(this, fn, connectionStats);
 	  var update = this._updateComputedConnection.bind(this, key, fn, connectionStats);
+	  var angularWatch = angularProxy.active && !fn.angularWatchSuppressed;
 	  // Use this._vue.$watch instead of truss.watch here so that we can disable the immediate
 	  // callback if we'll get one from Angular anyway.
-	  this._vue.$watch(getter, update, {immediate: !angularProxy.active});
-	  if (angularProxy.active) {
+	  this._vue.$watch(getter, update, {immediate: !angularWatch});
+	  if (angularWatch) {
 	    if (!this._angularUnwatches) { this._angularUnwatches = []; }
 	    this._angularUnwatches.push(angularProxy.watch(getter, update, true));
 	  }
@@ -1124,11 +1141,9 @@
 	Connector.prototype._updateComputedConnection = function _updateComputedConnection (key, value, connectionStats) {
 	  var newDescriptor = _.isFunction(value) ? value(this._scope) : value;
 	  var oldDescriptor = this._vue.descriptors[key];
-	  if (connectionStats && !_.isEqual(oldDescriptor, newDescriptor)) {
-	    connectionStats.numUpdates += 1;
-	  }
-	  if (oldDescriptor === newDescriptor ||
-	      newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) { return; }
+	  var descriptorChanged = !isTrussEqual(oldDescriptor, newDescriptor);
+	  if (!descriptorChanged) { return; }
+	  if (connectionStats && descriptorChanged) { connectionStats.numUpdates += 1; }
 	  if (!newDescriptor) {
 	    this._disconnect(key);
 	    return;
@@ -2146,7 +2161,9 @@
 
 	Value.prototype.$$touchThis = function $$touchThis () {
 	  // jshint expr:true
-	  if (this.$parent) {
+	  if (this.__ob__) {
+	    this.__ob__.dep.depend();
+	  } else if (this.$parent) {
 	    (this.$parent.hasOwnProperty('$data') ? this.$parent.$data : this.$parent)[this.$key];
 	  } else {
 	    this.$root;
@@ -2377,7 +2394,7 @@
 	        unwatch();
 	        _.pull(object.$$finalizers, unwatch);
 	      }
-	      if (_.isEqual(value, newValue, isTrussValueEqual)) { return; }
+	      if (isTrussEqual(value, newValue)) { return; }
 	      // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
 	      propertyStats.numUpdates += 1;
 	      writeAllowed = true;
@@ -2512,18 +2529,16 @@
 	  return _.mapValues(connections, function (descriptor) {
 	    if (descriptor instanceof Handle) { return descriptor; }
 	    if (_.isFunction(descriptor)) {
-	      return function() {
+	      var fn = function() {
 	        object.$$touchThis();
 	        return wrapConnections(object, descriptor.call(this));
 	      };
+	      fn.angularWatchSuppressed = true;
+	      return fn;
 	    } else {
 	      return wrapConnections(object, descriptor);
 	    }
 	  });
-	}
-
-	function isTrussValueEqual(a, b) {
-	  if (a && a.$truss || b && b.$truss) { return a === b; }
 	}
 
 	var Transaction = function Transaction(path, tree) {

@@ -81,7 +81,8 @@ export class Handle {
 
   isEqual(that) {
     if (!(that instanceof Handle)) return false;
-    return this._tree === that._tree && this.toString() === that.toString();
+    return this._tree === that._tree && this.toString() === that.toString() &&
+      _.isEqual(this._annotations, that._annotations);
   }
 
   belongsTo(truss) {

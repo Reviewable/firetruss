@@ -6,6 +6,12 @@ class StatItem {
     _.extend(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
   }
 
+  add(item) {
+    this.runtime += item.runtime;
+    this.numUpdates += item.numUpdates;
+    this.numRecomputes += item.numRecomputes;
+  }
+
   get runtimePerRecompute() {
     return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
   }
@@ -38,15 +44,14 @@ class Stats {
   log(n = 10) {
     let stats = this.list;
     if (!stats.length) return;
-    const totals = new StatItem('--- Total');
-    _.each(stats, stat => {
-      totals.runtime += stat.runtime;
-      totals.numUpdates += stat.numUpdates;
-      totals.numRecomputes += stat.numRecomputes;
-    });
+    const totals = new StatItem('=== Total');
+    _.each(stats, stat => {totals.add(stat);});
     stats = _.take(stats, n);
+    const above = new StatItem('--- Above');
+    _.each(stats, stat => {above.add(stat);});
     const lines = _.map(stats, item => item.toLogParts(totals));
-    lines.unshift(totals.toLogParts(totals));
+    lines.push(above.toLogParts(totals));
+    lines.push(totals.toLogParts(totals));
     const widths = _.map(_.range(lines[0].length), i => _(lines).map(line => line[i].length).max());
     _.each(lines, line => {
       console.log(_.map(line, (column, i) => _.padLeft(column, widths[i])).join(' '));

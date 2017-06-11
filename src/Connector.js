@@ -1,6 +1,7 @@
 import {Handle, Query, Reference} from './Reference.js';
 import angular from './angularCompatibility.js';
 import stats from './stats.js';
+import {isTrussEqual} from './utils.js';
 
 import _ from 'lodash';
 import performanceNow from 'performance-now';
@@ -93,10 +94,11 @@ export default class Connector {
     const connectionStats = stats.for(`connection.at.${key}`);
     const getter = this._computeConnection.bind(this, fn, connectionStats);
     const update = this._updateComputedConnection.bind(this, key, fn, connectionStats);
+    const angularWatch = angular.active && !fn.angularWatchSuppressed;
     // Use this._vue.$watch instead of truss.watch here so that we can disable the immediate
     // callback if we'll get one from Angular anyway.
-    this._vue.$watch(getter, update, {immediate: !angular.active});
-    if (angular.active) {
+    this._vue.$watch(getter, update, {immediate: !angularWatch});
+    if (angularWatch) {
       if (!this._angularUnwatches) this._angularUnwatches = [];
       this._angularUnwatches.push(angular.watch(getter, update, true));
     }
@@ -115,11 +117,9 @@ export default class Connector {
   _updateComputedConnection(key, value, connectionStats) {
     const newDescriptor = _.isFunction(value) ? value(this._scope) : value;
     const oldDescriptor = this._vue.descriptors[key];
-    if (connectionStats && !_.isEqual(oldDescriptor, newDescriptor)) {
-      connectionStats.numUpdates += 1;
-    }
-    if (oldDescriptor === newDescriptor ||
-        newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) return;
+    const descriptorChanged = !isTrussEqual(oldDescriptor, newDescriptor);
+    if (!descriptorChanged) return;
+    if (connectionStats && descriptorChanged) connectionStats.numUpdates += 1;
     if (!newDescriptor) {
       this._disconnect(key);
       return;

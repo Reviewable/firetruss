@@ -1,7 +1,9 @@
 import {Reference, Handle} from './Reference.js';
 import angular from './angularCompatibility.js';
 import stats from './stats.js';
-import {makePathMatcher, joinPath, escapeKey, unescapeKey, promiseFinally} from './utils.js';
+import {
+  makePathMatcher, joinPath, isTrussEqual, escapeKey, unescapeKey, promiseFinally
+} from './utils.js';
 
 import _ from 'lodash';
 import performanceNow from 'performance-now';
@@ -124,7 +126,9 @@ class Value {
 
   $$touchThis() {
     // jshint expr:true
-    if (this.$parent) {
+    if (this.__ob__) {
+      this.__ob__.dep.depend();
+    } else if (this.$parent) {
       (this.$parent.hasOwnProperty('$data') ? this.$parent.$data : this.$parent)[this.$key];
     } else {
       this.$root;
@@ -337,7 +341,7 @@ export default class Modeler {
           unwatch();
           _.pull(object.$$finalizers, unwatch);
         }
-        if (_.isEqual(value, newValue, isTrussValueEqual)) return;
+        if (isTrussEqual(value, newValue)) return;
         // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
         propertyStats.numUpdates += 1;
         writeAllowed = true;
@@ -462,16 +466,14 @@ function wrapConnections(object, connections) {
   return _.mapValues(connections, descriptor => {
     if (descriptor instanceof Handle) return descriptor;
     if (_.isFunction(descriptor)) {
-      return function() {
+      const fn = function() {
         object.$$touchThis();
         return wrapConnections(object, descriptor.call(this));
       };
+      fn.angularWatchSuppressed = true;
+      return fn;
     } else {
       return wrapConnections(object, descriptor);
     }
   });
-}
-
-function isTrussValueEqual(a, b) {
-  if (a && a.$truss || b && b.$truss) return a === b;
 }

@@ -76,6 +76,16 @@ export function joinPath() {
   return segments.join('/');
 }
 
+export function isTrussEqual(a, b) {
+  return _.isEqual(a, b, isTrussValueEqual);
+}
+
+function isTrussValueEqual(a, b) {
+  if (a === b || a === undefined || a === null || b === undefined || b === null ||
+      a.$truss || b.$truss) return a === b;
+  if (a.isEqual) return a.isEqual(b);
+}
+
 
 const pathMatchers = {};
 const maxNumPathMatchers = 1000;

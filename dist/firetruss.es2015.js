@@ -145,6 +145,16 @@ function joinPath() {
   return segments.join('/');
 }
 
+function isTrussEqual(a, b) {
+  return _.isEqual(a, b, isTrussValueEqual);
+}
+
+function isTrussValueEqual(a, b) {
+  if (a === b || a === undefined || a === null || b === undefined || b === null ||
+      a.$truss || b.$truss) return a === b;
+  if (a.isEqual) return a.isEqual(b);
+}
+
 
 const pathMatchers = {};
 const maxNumPathMatchers = 1000;
@@ -711,7 +721,8 @@ class Handle {
 
   isEqual(that) {
     if (!(that instanceof Handle)) return false;
-    return this._tree === that._tree && this.toString() === that.toString();
+    return this._tree === that._tree && this.toString() === that.toString() &&
+      _.isEqual(this._annotations, that._annotations);
   }
 
   belongsTo(truss) {
@@ -832,6 +843,12 @@ class StatItem {
     _.extend(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
   }
 
+  add(item) {
+    this.runtime += item.runtime;
+    this.numUpdates += item.numUpdates;
+    this.numRecomputes += item.numRecomputes;
+  }
+
   get runtimePerRecompute() {
     return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
   }
@@ -864,15 +881,14 @@ class Stats {
   log(n = 10) {
     let stats = this.list;
     if (!stats.length) return;
-    const totals = new StatItem('--- Total');
-    _.each(stats, stat => {
-      totals.runtime += stat.runtime;
-      totals.numUpdates += stat.numUpdates;
-      totals.numRecomputes += stat.numRecomputes;
-    });
+    const totals = new StatItem('=== Total');
+    _.each(stats, stat => {totals.add(stat);});
     stats = _.take(stats, n);
+    const above = new StatItem('--- Above');
+    _.each(stats, stat => {above.add(stat);});
     const lines = _.map(stats, item => item.toLogParts(totals));
-    lines.unshift(totals.toLogParts(totals));
+    lines.push(above.toLogParts(totals));
+    lines.push(totals.toLogParts(totals));
     const widths = _.map(_.range(lines[0].length), i => _(lines).map(line => line[i].length).max());
     _.each(lines, line => {
       console.log(_.map(line, (column, i) => _.padLeft(column, widths[i])).join(' '));
@@ -968,10 +984,11 @@ class Connector {
     const connectionStats = stats.for(`connection.at.${key}`);
     const getter = this._computeConnection.bind(this, fn, connectionStats);
     const update = this._updateComputedConnection.bind(this, key, fn, connectionStats);
+    const angularWatch = angularProxy.active && !fn.angularWatchSuppressed;
     // Use this._vue.$watch instead of truss.watch here so that we can disable the immediate
     // callback if we'll get one from Angular anyway.
-    this._vue.$watch(getter, update, {immediate: !angularProxy.active});
-    if (angularProxy.active) {
+    this._vue.$watch(getter, update, {immediate: !angularWatch});
+    if (angularWatch) {
       if (!this._angularUnwatches) this._angularUnwatches = [];
       this._angularUnwatches.push(angularProxy.watch(getter, update, true));
     }
@@ -990,11 +1007,9 @@ class Connector {
   _updateComputedConnection(key, value, connectionStats) {
     const newDescriptor = _.isFunction(value) ? value(this._scope) : value;
     const oldDescriptor = this._vue.descriptors[key];
-    if (connectionStats && !_.isEqual(oldDescriptor, newDescriptor)) {
-      connectionStats.numUpdates += 1;
-    }
-    if (oldDescriptor === newDescriptor ||
-        newDescriptor instanceof Handle && newDescriptor.isEqual(oldDescriptor)) return;
+    const descriptorChanged = !isTrussEqual(oldDescriptor, newDescriptor);
+    if (!descriptorChanged) return;
+    if (connectionStats && descriptorChanged) connectionStats.numUpdates += 1;
     if (!newDescriptor) {
       this._disconnect(key);
       return;
@@ -1912,7 +1927,9 @@ class Value {
 
   $$touchThis() {
     // jshint expr:true
-    if (this.$parent) {
+    if (this.__ob__) {
+      this.__ob__.dep.depend();
+    } else if (this.$parent) {
       (this.$parent.hasOwnProperty('$data') ? this.$parent.$data : this.$parent)[this.$key];
     } else {
       this.$root;
@@ -2125,7 +2142,7 @@ class Modeler {
           unwatch();
           _.pull(object.$$finalizers, unwatch);
         }
-        if (_.isEqual(value, newValue, isTrussValueEqual)) return;
+        if (isTrussEqual(value, newValue)) return;
         // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
         propertyStats.numUpdates += 1;
         writeAllowed = true;
@@ -2250,18 +2267,16 @@ function wrapConnections(object, connections) {
   return _.mapValues(connections, descriptor => {
     if (descriptor instanceof Handle) return descriptor;
     if (_.isFunction(descriptor)) {
-      return function() {
+      const fn = function() {
         object.$$touchThis();
         return wrapConnections(object, descriptor.call(this));
       };
+      fn.angularWatchSuppressed = true;
+      return fn;
     } else {
       return wrapConnections(object, descriptor);
     }
   });
-}
-
-function isTrussValueEqual(a, b) {
-  if (a && a.$truss || b && b.$truss) return a === b;
 }
 
 class Transaction {
