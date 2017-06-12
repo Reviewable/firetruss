@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import Vue from 'vue';
 import angular from './angularCompatibility.js';
+import {splitPath} from './utils.js';
 
 
 class QueryHandler {
@@ -10,7 +11,7 @@ class QueryHandler {
     this._listeners = [];
     this._keys = [];
     this._url = this._coupler._rootUrl + query.path;
-    this._segments = query.path.split('/');
+    this._segments = splitPath(query.path, true);
     this._listening = false;
     this.ready = false;
   }
@@ -255,7 +256,7 @@ export default class Coupler {
   }
 
   couple(path, operation) {
-    return this._coupleSegments(path.split('/'), operation);
+    return this._coupleSegments(splitPath(path, true), operation);
   }
 
   _coupleSegments(segments, operation) {
@@ -286,7 +287,7 @@ export default class Coupler {
   }
 
   decouple(path, operation) {
-    return this._decoupleSegments(path.split('/'), operation);
+    return this._decoupleSegments(splitPath(path, true), operation);
   }
 
   _decoupleSegments(segments, operation) {
@@ -322,7 +323,8 @@ export default class Coupler {
         node.ready = undefined;
         delete this._nodeIndex[node.path];
       }
-      this._prunePath(segments.join('/'), this.findCoupledDescendantPaths(segments));
+      const path = segments.join('/');
+      this._prunePath(path, this.findCoupledDescendantPaths(path));
     }
   }
 
@@ -345,7 +347,7 @@ export default class Coupler {
 
   // Return whether the node at path or any ancestors are coupled.
   isTrunkCoupled(path) {
-    const segments = path.split('/');
+    const segments = splitPath(path, true);
     let node;
     for (const segment of segments) {
       node = segment ? node.children && node.children[segment] : this._root;
@@ -355,10 +357,9 @@ export default class Coupler {
     return false;
   }
 
-  findCoupledDescendantPaths(pathOrSegments) {
-    const segments = _.isString(pathOrSegments) ? pathOrSegments.split('/') : pathOrSegments;
+  findCoupledDescendantPaths(path) {
     let node;
-    for (const segment of segments) {
+    for (const segment of splitPath(path, true)) {
       node = segment ? node.children && node.children[segment] : this._root;
       if (!node) break;
     }

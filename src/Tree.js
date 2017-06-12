@@ -1,7 +1,7 @@
 import angular from './angularCompatibility.js';
 import Coupler from './Coupler.js';
 import Modeler from './Modeler.js';
-import {escapeKey, unescapeKey, joinPath, SERVER_TIMESTAMP} from './utils.js';
+import {escapeKey, unescapeKey, joinPath, splitPath, SERVER_TIMESTAMP} from './utils.js';
 
 import _ from 'lodash';
 import Vue from 'vue';
@@ -100,9 +100,8 @@ export default class Tree {
     const operation = this._dispatcher.createOperation('read', method, ref);
     let unwatch;
     if (valueCallback) {
-      const segments = _(ref.path).split('/').map(segment => unescapeKey(segment)).value();
       unwatch = this._vue.$watch(
-        this.getObject.bind(this, segments), valueCallback, {immediate: true});
+        this.getObject.bind(this, ref.path), valueCallback, {immediate: true});
     }
     operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
     this._dispatcher.begin(operation).then(() => {
@@ -249,16 +248,15 @@ export default class Tree {
         const subPath = descendantPath.slice(offset);
         let subValue = value;
         if (subPath) {
-          const segments = subPath.split('/');
-          for (const segment of segments) {
-            subValue = subValue[unescapeKey(segment)];
+          for (const segment of splitPath(subPath)) {
+            subValue = subValue[segment];
             if (subValue === undefined) break;
           }
         }
         if (subValue === undefined || subValue === null) {
           this._prune(descendantPath);
         } else {
-          const key = unescapeKey(_.last(descendantPath.split('/')));
+          const key = _.last(splitPath(descendantPath));
           this._plantValue(
             descendantPath, key, subValue, this._scaffoldAncestors(descendantPath), false,
             override
@@ -274,7 +272,7 @@ export default class Tree {
   _extractCommonPathPrefix(values) {
     let prefixSegments;
     _.each(values, (value, path) => {
-      const segments = path === '/' ? [''] : path.split('/');
+      const segments = path === '/' ? [''] : splitPath(path, true);
       if (prefixSegments) {
         let firstMismatchIndex = 0;
         const maxIndex = Math.min(prefixSegments.length, segments.length);
@@ -361,14 +359,13 @@ export default class Tree {
 
   _scaffoldAncestors(path, remoteWrite) {
     let object;
-    const segments = _(path).split('/').dropRight().value();
+    const segments = _.dropRight(splitPath(path));
     _.each(segments, (segment, i) => {
-      const childKey = unescapeKey(segment);
-      let child = childKey ? object[childKey] : this.root;
+      let child = segment ? object[segment] : this.root;
       if (!child) {
         const ancestorPath = segments.slice(0, i + 1).join('/');
         if (remoteWrite && this._localWrites[ancestorPath || '/']) return;
-        child = this._plantValue(ancestorPath, childKey, {}, object);
+        child = this._plantValue(ancestorPath, segment, {}, object);
       }
       object = child;
     });
@@ -455,7 +452,7 @@ export default class Tree {
       if (path === localWritePath || localWritePath === '/' ||
           _.startsWith(path, localWritePath + '/')) return true;
       if (path === '/' || _.startsWith(localWritePath, path + '/')) {
-        const segments = localWritePath.split('/');
+        const segments = splitPath(localWritePath, true);
         for (let i = segments.length; i > 0; i--) {
           const subPath = segments.slice(0, i).join('/');
           const active = i === segments.length;
@@ -476,7 +473,7 @@ export default class Tree {
     // properties.  In that case, use the target path to figure those out instead.  Note that all
     // ancestors of the target object will necessarily not be primitives and will have those
     // properties.
-    const targetSegments = _(targetPath).split('/').map(unescapeKey).value();
+    const targetSegments = splitPath(targetPath);
     while (object && object !== this.root) {
       const parent =
         object.$parent || object === targetObject && this.getObject(targetSegments.slice(0, -1));
@@ -522,10 +519,9 @@ export default class Tree {
     return coupledDescendantFound;
   }
 
-  getObject(pathOrSegments) {
+  getObject(path) {
+    const segments = splitPath(path);
     let object;
-    const segments = _.isString(pathOrSegments) ?
-      _(pathOrSegments).split('/').map(unescapeKey).value() : pathOrSegments;
     for (const segment of segments) {
       object = segment ? object[segment] : this.root;
       if (object === undefined) return;

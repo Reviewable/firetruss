@@ -1,7 +1,7 @@
 import {Handle, Query, Reference} from './Reference.js';
 import angular from './angularCompatibility.js';
 import stats from './stats.js';
-import {isTrussEqual} from './utils.js';
+import {isTrussEqual, splitPath} from './utils.js';
 
 import _ from 'lodash';
 import performanceNow from 'performance-now';
@@ -214,7 +214,7 @@ export default class Connector {
       }
     }
     let object;
-    for (const segment of this._vue.descriptors[key].path.split('/')) {
+    for (const segment of splitPath(this._vue.descriptors[key].path)) {
       object = segment ? object[segment] : this._tree.root;
     }
     for (const childKey of childKeys) {

@@ -139,6 +139,69 @@
 	  });
 	}
 
+
+	var LruCacheItem = function LruCacheItem(key, value) {
+	  this.key = key;
+	  this.value = value;
+	  this.touch();
+	};
+
+	LruCacheItem.prototype.touch = function touch () {
+	  this.timestamp = Date.now();
+	};
+
+
+	var LruCache = function LruCache(maxSize, pruningSize) {
+	  this._items = Object.create(null);
+	  this._size = 0;
+	  this._maxSize = maxSize;
+	  this._pruningSize = pruningSize || Math.ceil(maxSize * 0.10);
+	};
+
+	LruCache.prototype.has = function has (key) {
+	  return Boolean(this._items[key]);
+	};
+
+	LruCache.prototype.get = function get (key) {
+	  var item = this._items[key];
+	  if (!item) { return; }
+	  item.touch();
+	  return item.value;
+	};
+
+	LruCache.prototype.set = function set (key, value) {
+	  var item = this._items[key];
+	  if (item) {
+	    item.value = value;
+	  } else {
+	    if (this._size >= this._maxSize) { this._prune(); }
+	    this._items[key] = new LruCacheItem(key, value);
+	    this._size += 1;
+	  }
+	};
+
+	LruCache.prototype.delete = function delete$1 (key) {
+	  var item = this._items[key];
+	  if (!item) { return; }
+	  delete this._items[key];
+	  this._size -= 1;
+	};
+
+	LruCache.prototype._prune = function _prune () {
+	    var this$1 = this;
+
+	  var itemsToPrune =
+	    _(this._items).toArray().sortBy('timestamp').take(this._pruningSize).value();
+	  for (var i = 0, list = itemsToPrune; i < list.length; i += 1) {
+	      var item = list[i];
+
+	      this$1.delete(item.key);
+	    }
+	};
+
+
+	var pathSegments = new LruCache(1000);
+
 	function joinPath() {
 	  var segments = [];
 	  for (var i = 0, list = arguments; i < list.length; i += 1) {
@@ -150,6 +213,17 @@
 	  }
 	  if (segments[0] === '/') { segments[0] = ''; }
 	  return segments.join('/');
+	}
+
+	function splitPath(path, leaveSegmentsEscaped) {
+	  var key = (leaveSegmentsEscaped ? 'esc:' : '') + path;
+	  var segments = pathSegments.get(key);
+	  if (!segments) {
+	    segments = path.split('/');
+	    if (!leaveSegmentsEscaped) { segments = _.map(segments, unescapeKey); }
+	    pathSegments.set(key, segments);
+	  }
+	  return segments;
 	}
 
 	function isTrussEqual(a, b) {
@@ -1244,7 +1318,7 @@
 	    }
 	  }
 	  var object;
-	  for (var i = 0, list = this._vue.descriptors[key].path.split('/'); i < list.length; i += 1) {
+	  for (var i = 0, list = splitPath(this._vue.descriptors[key].path); i < list.length; i += 1) {
 	    var segment = list[i];
 
 	      object = segment ? object[segment] : this$1._tree.root;
@@ -1606,7 +1680,7 @@
 	  this._listeners = [];
 	  this._keys = [];
 	  this._url = this._coupler._rootUrl + query.path;
-	  this._segments = query.path.split('/');
+	  this._segments = splitPath(query.path, true);
 	  this._listening = false;
 	  this.ready = false;
 	};
@@ -1741,9 +1815,10 @@
 	};
 
 
-	var Node = function Node(coupler, path) {
+	var Node = function Node(coupler, path, parent) {
 	  this._coupler = coupler;
 	  this.path = path;
+	  this.parent = parent;
 	  this.url = this._coupler._rootUrl + path;
 	  this.operations = [];
 	  this.queryCount = 0;
@@ -1870,13 +1945,20 @@
 	  this._applySnapshot = applySnapshot;
 	  this._prunePath = prunePath;
 	  this._vue = new Vue({data: {root: new Node(this, '/'), queryHandlers: {}}});
+	  this._nodeIndex = Object.create(null);
+	  this._nodeIndex['/'] = this._root;
 	  Object.freeze(this);
 	};
 
 	var prototypeAccessors$1$3 = { _root: {},_queryHandlers: {} };
 
-	prototypeAccessors$1$3._root.get = function () {return this._vue.root;};
-	prototypeAccessors$1$3._queryHandlers.get = function () {return this._vue.queryHandlers;};
+	prototypeAccessors$1$3._root.get = function () {
+	  return this._vue.$data.root;
+	};
+
+	prototypeAccessors$1$3._queryHandlers.get = function () {
+	  return this._vue.$data.queryHandlers;
+	};
 
 	Coupler.prototype.destroy = function destroy () {
 	  _.each(this._queryHandlers, function (queryHandler) {queryHandler.destroy();});
@@ -1885,7 +1967,7 @@
 	};
 
 	Coupler.prototype.couple = function couple (path, operation) {
-	  return this._coupleSegments(path.split('/'), operation);
+	  return this._coupleSegments(splitPath(path, true), operation);
 	};
 
 	Coupler.prototype._coupleSegments = function _coupleSegments (segments, operation) {
@@ -1899,8 +1981,9 @@
 
 	      var child = segment ? node.children && node.children[segment] : this$1._root;
 	    if (!child) {
-	      child = new Node(this$1, ((node.path === '/' ? '' : node.path) + "/" + segment));
+	      child = new Node(this$1, ((node.path === '/' ? '' : node.path) + "/" + segment), node);
 	      Vue.set(node.children, segment, child);
+	      this$1._nodeIndex[child.path] = child;
 	    }
 	    superseded = superseded || child.listening;
 	    ready = ready || child.ready;
@@ -1919,7 +2002,7 @@
 	};
 
 	Coupler.prototype.decouple = function decouple (path, operation) {
-	  return this._decoupleSegments(path.split('/'), operation);
+	  return this._decoupleSegments(splitPath(path, true), operation);
 	};
 
 	Coupler.prototype._decoupleSegments = function _decoupleSegments (segments, operation) {
@@ -1956,8 +2039,11 @@
 	      node = ancestors[i];
 	      if (node === this$1._root || node.active || !_.isEmpty(node.children)) { break; }
 	      Vue.delete(ancestors[i - 1].children, segments[i]);
+	      node.ready = undefined;
+	      delete this$1._nodeIndex[node.path];
 	    }
-	    this._prunePath(segments.join('/'), this.findCoupledDescendantPaths(segments));
+	    var path = segments.join('/');
+	    this._prunePath(path, this.findCoupledDescendantPaths(path));
 	  }
 	};
 
@@ -1982,7 +2068,7 @@
 	Coupler.prototype.isTrunkCoupled = function isTrunkCoupled (path) {
 	    var this$1 = this;
 
-	  var segments = path.split('/');
+	  var segments = splitPath(path, true);
 	  var node;
 	  for (var i = 0, list = segments; i < list.length; i += 1) {
 	    var segment = list[i];
@@ -1994,12 +2080,11 @@
 	  return false;
 	};
 
-	Coupler.prototype.findCoupledDescendantPaths = function findCoupledDescendantPaths (pathOrSegments) {
+	Coupler.prototype.findCoupledDescendantPaths = function findCoupledDescendantPaths (path) {
 	    var this$1 = this;
 
-	  var segments = _.isString(pathOrSegments) ? pathOrSegments.split('/') : pathOrSegments;
 	  var node;
-	  for (var i = 0, list = segments; i < list.length; i += 1) {
+	  for (var i = 0, list = splitPath(path, true); i < list.length; i += 1) {
 	    var segment = list[i];
 
 	      node = segment ? node.children && node.children[segment] : this$1._root;
@@ -2009,16 +2094,18 @@
 	};
 
 	Coupler.prototype.isSubtreeReady = function isSubtreeReady (path) {
-	    var this$1 = this;
-
-	  var segments = path.split('/');
-	  var node;
-	  for (var i = 0, list = segments; i < list.length; i += 1) {
-	    var segment = list[i];
-
-	      node = segment ? node.children && node.children[segment] : this$1._root;
-	    if (!node) { return false; }
+	  var node, childSegment;
+	  function extractChildSegment(match) {
+	    childSegment = match.slice(1);
+	    return '';
+	  }
+	  while (!(node = this._nodeIndex[path])) {
+	    path = path.replace(/\/[^/]*$/, extractChildSegment) || '/';
+	  }
+	  if (childSegment) { void node.children; }// state an interest in the closest ancestor's children
+	  while (node) {
 	    if (node.ready) { return true; }
+	    node = node.parent;
 	  }
 	  return false;
 	};
@@ -2229,7 +2316,7 @@
 	Modeler.prototype._getMount = function _getMount (path, scaffold, predicate) {
 	    var this$1 = this;
 
-	  var segments = path.split('/');
+	  var segments = splitPath(path, true);
 	  var node;
 	  for (var i = 0, list = segments; i < list.length; i += 1) {
 	    var segment = list[i];
@@ -2639,9 +2726,8 @@
 	  var operation = this._dispatcher.createOperation('read', method, ref);
 	  var unwatch;
 	  if (valueCallback) {
-	    var segments = _(ref.path).split('/').map(function (segment) { return unescapeKey(segment); }).value();
 	    unwatch = this._vue.$watch(
-	      this.getObject.bind(this, segments), valueCallback, {immediate: true});
+	      this.getObject.bind(this, ref.path), valueCallback, {immediate: true});
 	  }
 	  operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
 	  this._dispatcher.begin(operation).then(function () {
@@ -2801,18 +2887,17 @@
 	        var subPath = descendantPath.slice(offset);
 	      var subValue = value;
 	      if (subPath) {
-	        var segments = subPath.split('/');
-	        for (var i$1 = 0, list$1 = segments; i$1 < list$1.length; i$1 += 1) {
+	        for (var i$1 = 0, list$1 = splitPath(subPath); i$1 < list$1.length; i$1 += 1) {
 	          var segment = list$1[i$1];
 
-	            subValue = subValue[unescapeKey(segment)];
+	            subValue = subValue[segment];
 	          if (subValue === undefined) { break; }
 	        }
 	      }
 	      if (subValue === undefined || subValue === null) {
 	        this$1._prune(descendantPath);
 	      } else {
-	        var key = unescapeKey(_.last(descendantPath.split('/')));
+	        var key = _.last(splitPath(descendantPath));
 	        this$1._plantValue(
 	          descendantPath, key, subValue, this$1._scaffoldAncestors(descendantPath), false,
 	          override
@@ -2828,7 +2913,7 @@
 	Tree.prototype._extractCommonPathPrefix = function _extractCommonPathPrefix (values) {
 	  var prefixSegments;
 	  _.each(values, function (value, path) {
-	    var segments = path === '/' ? [''] : path.split('/');
+	    var segments = path === '/' ? [''] : splitPath(path, true);
 	    if (prefixSegments) {
 	      var firstMismatchIndex = 0;
 	      var maxIndex = Math.min(prefixSegments.length, segments.length);
@@ -2929,14 +3014,13 @@
 	    var this$1 = this;
 
 	  var object;
-	  var segments = _(path).split('/').dropRight().value();
+	  var segments = _.dropRight(splitPath(path));
 	  _.each(segments, function (segment, i) {
-	    var childKey = unescapeKey(segment);
-	    var child = childKey ? object[childKey] : this$1.root;
+	    var child = segment ? object[segment] : this$1.root;
 	    if (!child) {
 	      var ancestorPath = segments.slice(0, i + 1).join('/');
 	      if (remoteWrite && this$1._localWrites[ancestorPath || '/']) { return; }
-	      child = this$1._plantValue(ancestorPath, childKey, {}, object);
+	      child = this$1._plantValue(ancestorPath, segment, {}, object);
 	    }
 	    object = child;
 	  });
@@ -3033,7 +3117,7 @@
 	    if (path === localWritePath || localWritePath === '/' ||
 	        _.startsWith(path, localWritePath + '/')) { return true; }
 	    if (path === '/' || _.startsWith(localWritePath, path + '/')) {
-	      var segments = localWritePath.split('/');
+	      var segments = splitPath(localWritePath, true);
 	      for (var i = segments.length; i > 0; i--) {
 	        var subPath = segments.slice(0, i).join('/');
 	        var active = i === segments.length;
@@ -3056,7 +3140,7 @@
 	  // properties.In that case, use the target path to figure those out instead.Note that all
 	  // ancestors of the target object will necessarily not be primitives and will have those
 	  // properties.
-	  var targetSegments = _(targetPath).split('/').map(unescapeKey).value();
+	  var targetSegments = splitPath(targetPath);
 	  while (object && object !== this.root) {
 	    var parent =
 	      object.$parent || object === targetObject && this$1.getObject(targetSegments.slice(0, -1));
@@ -3106,12 +3190,11 @@
 	  return coupledDescendantFound;
 	};
 
-	Tree.prototype.getObject = function getObject (pathOrSegments) {
+	Tree.prototype.getObject = function getObject (path) {
 	    var this$1 = this;
 
+	  var segments = splitPath(path);
 	  var object;
-	  var segments = _.isString(pathOrSegments) ?
-	    _(pathOrSegments).split('/').map(unescapeKey).value() : pathOrSegments;
 	  for (var i = 0, list = segments; i < list.length; i += 1) {
 	    var segment = list[i];
 

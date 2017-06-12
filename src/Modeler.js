@@ -2,7 +2,7 @@ import {Reference, Handle} from './Reference.js';
 import angular from './angularCompatibility.js';
 import stats from './stats.js';
 import {
-  makePathMatcher, joinPath, isTrussEqual, escapeKey, unescapeKey, promiseFinally
+  makePathMatcher, joinPath, splitPath, isTrussEqual, escapeKey, unescapeKey, promiseFinally
 } from './utils.js';
 
 import _ from 'lodash';
@@ -194,7 +194,7 @@ export default class Modeler {
   }
 
   _getMount(path, scaffold, predicate) {
-    const segments = path.split('/');
+    const segments = splitPath(path, true);
     let node;
     for (const segment of segments) {
       let child = segment ?

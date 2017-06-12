@@ -134,6 +134,67 @@ function promiseFinally(promise, onFinally) {
   });
 }
 
+
+class LruCacheItem {
+  constructor(key, value) {
+    this.key = key;
+    this.value = value;
+    this.touch();
+  }
+
+  touch() {
+    this.timestamp = Date.now();
+  }
+}
+
+
+class LruCache {
+  constructor(maxSize, pruningSize) {
+    this._items = Object.create(null);
+    this._size = 0;
+    this._maxSize = maxSize;
+    this._pruningSize = pruningSize || Math.ceil(maxSize * 0.10);
+  }
+
+  has(key) {
+    return Boolean(this._items[key]);
+  }
+
+  get(key) {
+    const item = this._items[key];
+    if (!item) return;
+    item.touch();
+    return item.value;
+  }
+
+  set(key, value) {
+    const item = this._items[key];
+    if (item) {
+      item.value = value;
+    } else {
+      if (this._size >= this._maxSize) this._prune();
+      this._items[key] = new LruCacheItem(key, value);
+      this._size += 1;
+    }
+  }
+
+  delete(key) {
+    const item = this._items[key];
+    if (!item) return;
+    delete this._items[key];
+    this._size -= 1;
+  }
+
+  _prune() {
+    const itemsToPrune =
+      _(this._items).toArray().sortBy('timestamp').take(this._pruningSize).value();
+    for (const item of itemsToPrune) this.delete(item.key);
+  }
+}
+
+
+const pathSegments = new LruCache(1000);
+
 function joinPath() {
   const segments = [];
   for (let segment of arguments) {
@@ -143,6 +204,17 @@ function joinPath() {
   }
   if (segments[0] === '/') segments[0] = '';
   return segments.join('/');
+}
+
+function splitPath(path, leaveSegmentsEscaped) {
+  const key = (leaveSegmentsEscaped ? 'esc:' : '') + path;
+  let segments = pathSegments.get(key);
+  if (!segments) {
+    segments = path.split('/');
+    if (!leaveSegmentsEscaped) segments = _.map(segments, unescapeKey);
+    pathSegments.set(key, segments);
+  }
+  return segments;
 }
 
 function isTrussEqual(a, b) {
@@ -1104,7 +1176,7 @@ class Connector {
       }
     }
     let object;
-    for (const segment of this._vue.descriptors[key].path.split('/')) {
+    for (const segment of splitPath(this._vue.descriptors[key].path)) {
       object = segment ? object[segment] : this._tree.root;
     }
     for (const childKey of childKeys) {
@@ -1447,7 +1519,7 @@ class QueryHandler {
     this._listeners = [];
     this._keys = [];
     this._url = this._coupler._rootUrl + query.path;
-    this._segments = query.path.split('/');
+    this._segments = splitPath(query.path, true);
     this._listening = false;
     this.ready = false;
   }
@@ -1562,9 +1634,10 @@ class QueryHandler {
 
 
 class Node {
-  constructor(coupler, path) {
+  constructor(coupler, path, parent) {
     this._coupler = coupler;
     this.path = path;
+    this.parent = parent;
     this.url = this._coupler._rootUrl + path;
     this.operations = [];
     this.queryCount = 0;
@@ -1671,11 +1744,18 @@ class Coupler {
     this._applySnapshot = applySnapshot;
     this._prunePath = prunePath;
     this._vue = new Vue({data: {root: new Node(this, '/'), queryHandlers: {}}});
+    this._nodeIndex = Object.create(null);
+    this._nodeIndex['/'] = this._root;
     Object.freeze(this);
   }
 
-  get _root() {return this._vue.root;}
-  get _queryHandlers() {return this._vue.queryHandlers;}
+  get _root() {
+    return this._vue.$data.root;
+  }
+
+  get _queryHandlers() {
+    return this._vue.$data.queryHandlers;
+  }
 
   destroy() {
     _.each(this._queryHandlers, queryHandler => {queryHandler.destroy();});
@@ -1684,7 +1764,7 @@ class Coupler {
   }
 
   couple(path, operation) {
-    return this._coupleSegments(path.split('/'), operation);
+    return this._coupleSegments(splitPath(path, true), operation);
   }
 
   _coupleSegments(segments, operation) {
@@ -1694,8 +1774,9 @@ class Coupler {
     for (const segment of segments) {
       let child = segment ? node.children && node.children[segment] : this._root;
       if (!child) {
-        child = new Node(this, `${node.path === '/' ? '' : node.path}/${segment}`);
+        child = new Node(this, `${node.path === '/' ? '' : node.path}/${segment}`, node);
         Vue.set(node.children, segment, child);
+        this._nodeIndex[child.path] = child;
       }
       superseded = superseded || child.listening;
       ready = ready || child.ready;
@@ -1714,7 +1795,7 @@ class Coupler {
   }
 
   decouple(path, operation) {
-    return this._decoupleSegments(path.split('/'), operation);
+    return this._decoupleSegments(splitPath(path, true), operation);
   }
 
   _decoupleSegments(segments, operation) {
@@ -1747,8 +1828,11 @@ class Coupler {
         node = ancestors[i];
         if (node === this._root || node.active || !_.isEmpty(node.children)) break;
         Vue.delete(ancestors[i - 1].children, segments[i]);
+        node.ready = undefined;
+        delete this._nodeIndex[node.path];
       }
-      this._prunePath(segments.join('/'), this.findCoupledDescendantPaths(segments));
+      const path = segments.join('/');
+      this._prunePath(path, this.findCoupledDescendantPaths(path));
     }
   }
 
@@ -1771,7 +1855,7 @@ class Coupler {
 
   // Return whether the node at path or any ancestors are coupled.
   isTrunkCoupled(path) {
-    const segments = path.split('/');
+    const segments = splitPath(path, true);
     let node;
     for (const segment of segments) {
       node = segment ? node.children && node.children[segment] : this._root;
@@ -1781,10 +1865,9 @@ class Coupler {
     return false;
   }
 
-  findCoupledDescendantPaths(pathOrSegments) {
-    const segments = _.isString(pathOrSegments) ? pathOrSegments.split('/') : pathOrSegments;
+  findCoupledDescendantPaths(path) {
     let node;
-    for (const segment of segments) {
+    for (const segment of splitPath(path, true)) {
       node = segment ? node.children && node.children[segment] : this._root;
       if (!node) break;
     }
@@ -1792,12 +1875,18 @@ class Coupler {
   }
 
   isSubtreeReady(path) {
-    const segments = path.split('/');
-    let node;
-    for (const segment of segments) {
-      node = segment ? node.children && node.children[segment] : this._root;
-      if (!node) return false;
+    let node, childSegment;
+    function extractChildSegment(match) {
+      childSegment = match.slice(1);
+      return '';
+    }
+    while (!(node = this._nodeIndex[path])) {
+      path = path.replace(/\/[^/]*$/, extractChildSegment) || '/';
+    }
+    if (childSegment) void node.children;  // state an interest in the closest ancestor's children
+    while (node) {
       if (node.ready) return true;
+      node = node.parent;
     }
     return false;
   }
@@ -1995,7 +2084,7 @@ class Modeler {
   }
 
   _getMount(path, scaffold, predicate) {
-    const segments = path.split('/');
+    const segments = splitPath(path, true);
     let node;
     for (const segment of segments) {
       let child = segment ?
@@ -2372,9 +2461,8 @@ class Tree {
     const operation = this._dispatcher.createOperation('read', method, ref);
     let unwatch;
     if (valueCallback) {
-      const segments = _(ref.path).split('/').map(segment => unescapeKey(segment)).value();
       unwatch = this._vue.$watch(
-        this.getObject.bind(this, segments), valueCallback, {immediate: true});
+        this.getObject.bind(this, ref.path), valueCallback, {immediate: true});
     }
     operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
     this._dispatcher.begin(operation).then(() => {
@@ -2521,16 +2609,15 @@ class Tree {
         const subPath = descendantPath.slice(offset);
         let subValue = value;
         if (subPath) {
-          const segments = subPath.split('/');
-          for (const segment of segments) {
-            subValue = subValue[unescapeKey(segment)];
+          for (const segment of splitPath(subPath)) {
+            subValue = subValue[segment];
             if (subValue === undefined) break;
           }
         }
         if (subValue === undefined || subValue === null) {
           this._prune(descendantPath);
         } else {
-          const key = unescapeKey(_.last(descendantPath.split('/')));
+          const key = _.last(splitPath(descendantPath));
           this._plantValue(
             descendantPath, key, subValue, this._scaffoldAncestors(descendantPath), false,
             override
@@ -2546,7 +2633,7 @@ class Tree {
   _extractCommonPathPrefix(values) {
     let prefixSegments;
     _.each(values, (value, path) => {
-      const segments = path === '/' ? [''] : path.split('/');
+      const segments = path === '/' ? [''] : splitPath(path, true);
       if (prefixSegments) {
         let firstMismatchIndex = 0;
         const maxIndex = Math.min(prefixSegments.length, segments.length);
@@ -2633,14 +2720,13 @@ class Tree {
 
   _scaffoldAncestors(path, remoteWrite) {
     let object;
-    const segments = _(path).split('/').dropRight().value();
+    const segments = _.dropRight(splitPath(path));
     _.each(segments, (segment, i) => {
-      const childKey = unescapeKey(segment);
-      let child = childKey ? object[childKey] : this.root;
+      let child = segment ? object[segment] : this.root;
       if (!child) {
         const ancestorPath = segments.slice(0, i + 1).join('/');
         if (remoteWrite && this._localWrites[ancestorPath || '/']) return;
-        child = this._plantValue(ancestorPath, childKey, {}, object);
+        child = this._plantValue(ancestorPath, segment, {}, object);
       }
       object = child;
     });
@@ -2727,7 +2813,7 @@ class Tree {
       if (path === localWritePath || localWritePath === '/' ||
           _.startsWith(path, localWritePath + '/')) return true;
       if (path === '/' || _.startsWith(localWritePath, path + '/')) {
-        const segments = localWritePath.split('/');
+        const segments = splitPath(localWritePath, true);
         for (let i = segments.length; i > 0; i--) {
           const subPath = segments.slice(0, i).join('/');
           const active = i === segments.length;
@@ -2748,7 +2834,7 @@ class Tree {
     // properties.  In that case, use the target path to figure those out instead.  Note that all
     // ancestors of the target object will necessarily not be primitives and will have those
     // properties.
-    const targetSegments = _(targetPath).split('/').map(unescapeKey).value();
+    const targetSegments = splitPath(targetPath);
     while (object && object !== this.root) {
       const parent =
         object.$parent || object === targetObject && this.getObject(targetSegments.slice(0, -1));
@@ -2794,10 +2880,9 @@ class Tree {
     return coupledDescendantFound;
   }
 
-  getObject(pathOrSegments) {
+  getObject(path) {
+    const segments = splitPath(path);
     let object;
-    const segments = _.isString(pathOrSegments) ?
-      _(pathOrSegments).split('/').map(unescapeKey).value() : pathOrSegments;
     for (const segment of segments) {
       object = segment ? object[segment] : this.root;
       if (object === undefined) return;
