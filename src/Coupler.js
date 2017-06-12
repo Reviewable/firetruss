@@ -125,9 +125,10 @@ class QueryHandler {
 
 
 class Node {
-  constructor(coupler, path) {
+  constructor(coupler, path, parent) {
     this._coupler = coupler;
     this.path = path;
+    this.parent = parent;
     this.url = this._coupler._rootUrl + path;
     this.operations = [];
     this.queryCount = 0;
@@ -234,11 +235,18 @@ export default class Coupler {
     this._applySnapshot = applySnapshot;
     this._prunePath = prunePath;
     this._vue = new Vue({data: {root: new Node(this, '/'), queryHandlers: {}}});
+    this._nodeIndex = Object.create(null);
+    this._nodeIndex['/'] = this._root;
     Object.freeze(this);
   }
 
-  get _root() {return this._vue.root;}
-  get _queryHandlers() {return this._vue.queryHandlers;}
+  get _root() {
+    return this._vue.$data.root;
+  }
+
+  get _queryHandlers() {
+    return this._vue.$data.queryHandlers;
+  }
 
   destroy() {
     _.each(this._queryHandlers, queryHandler => {queryHandler.destroy();});
@@ -257,8 +265,9 @@ export default class Coupler {
     for (const segment of segments) {
       let child = segment ? node.children && node.children[segment] : this._root;
       if (!child) {
-        child = new Node(this, `${node.path === '/' ? '' : node.path}/${segment}`);
+        child = new Node(this, `${node.path === '/' ? '' : node.path}/${segment}`, node);
         Vue.set(node.children, segment, child);
+        this._nodeIndex[child.path] = child;
       }
       superseded = superseded || child.listening;
       ready = ready || child.ready;
@@ -310,6 +319,8 @@ export default class Coupler {
         node = ancestors[i];
         if (node === this._root || node.active || !_.isEmpty(node.children)) break;
         Vue.delete(ancestors[i - 1].children, segments[i]);
+        node.ready = undefined;
+        delete this._nodeIndex[node.path];
       }
       this._prunePath(segments.join('/'), this.findCoupledDescendantPaths(segments));
     }
@@ -355,12 +366,18 @@ export default class Coupler {
   }
 
   isSubtreeReady(path) {
-    const segments = path.split('/');
-    let node;
-    for (const segment of segments) {
-      node = segment ? node.children && node.children[segment] : this._root;
-      if (!node) return false;
+    let node, childSegment;
+    function extractChildSegment(match) {
+      childSegment = match.slice(1);
+      return '';
+    }
+    while (!(node = this._nodeIndex[path])) {
+      path = path.replace(/\/[^/]*$/, extractChildSegment) || '/';
+    }
+    if (childSegment) void node.children;  // state an interest in the closest ancestor's children
+    while (node) {
       if (node.ready) return true;
+      node = node.parent;
     }
     return false;
   }
