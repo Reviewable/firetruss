@@ -75,71 +75,6 @@
 
 	function noop() {}
 
-	var SERVER_TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
-
-	function escapeKey(key) {
-	  if (!key) { return key; }
-	  return key.toString().replace(/[\\\.\$\#\[\]\/]/g, function(char) {
-	    return '\\' + char.charCodeAt(0).toString(16);
-	  });
-	}
-
-	function unescapeKey(key) {
-	  if (!key) { return key; }
-	  return key.toString().replace(/\\[0-9a-f]{2}/gi, function(code) {
-	    return String.fromCharCode(parseInt(code.slice(1), 16));
-	  });
-	}
-
-	function wrapPromiseCallback(callback) {
-	  return function() {
-	    try {
-	      return Promise.resolve(callback.apply(this, arguments));
-	    } catch (e) {
-	      return Promise.reject(e);
-	    }
-	  };
-	}
-
-	function promiseCancel(promise, cancel) {
-	  promise = promiseFinally(promise, function () {cancel = null;});
-	  promise.cancel = function () {
-	    if (!cancel) { return; }
-	    cancel();
-	    cancel = null;
-	  };
-	  propagatePromiseProperty(promise, 'cancel');
-	  return promise;
-	}
-
-	function propagatePromiseProperty(promise, propertyName) {
-	  var originalThen = promise.then, originalCatch = promise.catch;
-	  promise.then = function (onResolved, onRejected) {
-	    var derivedPromise = originalThen.call(promise, onResolved, onRejected);
-	    derivedPromise[propertyName] = promise[propertyName];
-	    propagatePromiseProperty(derivedPromise, propertyName);
-	    return derivedPromise;
-	  };
-	  promise.catch = function (onRejected) {
-	    var derivedPromise = originalCatch.call(promise, onRejected);
-	    derivedPromise[propertyName] = promise[propertyName];
-	    propagatePromiseProperty(derivedPromise, propertyName);
-	    return derivedPromise;
-	  };
-	  return promise;
-	}
-
-	function promiseFinally(promise, onFinally) {
-	  if (!onFinally) { return promise; }
-	  onFinally = wrapPromiseCallback(onFinally);
-	  return promise.then(function (result) {
-	    return onFinally().then(function () { return result; });
-	  }, function (error) {
-	    return onFinally().then(function () { return Promise.reject(error); });
-	  });
-	}
-
-
 	var LruCacheItem = function LruCacheItem(key, value) {
 	  this.key = key;
 	  this.value = value;
@@ -199,8 +134,24 @@
 	    }
 	};
 
-
 	var pathSegments = new LruCache(1000);
+	var pathMatchers = {};
+	var maxNumPathMatchers = 1000;
+
+
+	function escapeKey(key) {
+	  if (!key) { return key; }
+	  return key.toString().replace(/[\\\.\$\#\[\]\/]/g, function(char) {
+	    return '\\' + char.charCodeAt(0).toString(16);
+	  });
+	}
+
+	function unescapeKey(key) {
+	  if (!key) { return key; }
+	  return key.toString().replace(/\\[0-9a-f]{2}/gi, function(code) {
+	    return String.fromCharCode(parseInt(code.slice(1), 16));
+	  });
+	}
 
 	function joinPath() {
 	  var segments = [];
@@ -225,20 +176,6 @@
 	  }
 	  return segments;
 	}
-
-	function isTrussEqual(a, b) {
-	  return _.isEqual(a, b, isTrussValueEqual);
-	}
-
-	function isTrussValueEqual(a, b) {
-	  if (a === b || a === undefined || a === null || b === undefined || b === null ||
-	      a.$truss || b.$truss) { return a === b; }
-	  if (a.isEqual) { return a.isEqual(b); }
-	}
-
-
-	var pathMatchers = {};
-	var maxNumPathMatchers = 1000;
 
 
 	var PathMatcher = function PathMatcher(pattern) {
@@ -279,7 +216,6 @@
 	PathMatcher.prototype.toString = function toString () {
 	  return this._regex.toString();
 	};
-
 
 	function makePathMatcher(pattern) {
 	  var matcher = pathMatchers[pattern];
@@ -1050,6 +986,18 @@
 
 	var stats = new Stats();
 
+	var SERVER_TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
+
+	function isTrussEqual(a, b) {
+	  return _.isEqual(a, b, isTrussValueEqual);
+	}
+
+	function isTrussValueEqual(a, b) {
+	  if (a === b || a === undefined || a === null || b === undefined || b === null ||
+	      a.$truss || b.$truss) { return a === b; }
+	  if (a.isEqual) { return a.isEqual(b); }
+	}
+
 	var commonjsGlobal = typeof window !== 'undefined' ? window : typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : {};
 
 
@@ -1338,6 +1286,54 @@
 	  if (!refs) { return; }
 	  if (refs instanceof Handle) { return refs.toString(); }
 	  return _.mapValues(refs, flattenRefs);
+	}
+
+	function wrapPromiseCallback(callback) {
+	  return function() {
+	    try {
+	      return Promise.resolve(callback.apply(this, arguments));
+	    } catch (e) {
+	      return Promise.reject(e);
+	    }
+	  };
+	}
+
+	function promiseCancel(promise, cancel) {
+	  promise = promiseFinally(promise, function () {cancel = null;});
+	  promise.cancel = function () {
+	    if (!cancel) { return; }
+	    cancel();
+	    cancel = null;
+	  };
+	  propagatePromiseProperty(promise, 'cancel');
+	  return promise;
+	}
+
+	function propagatePromiseProperty(promise, propertyName) {
+	  var originalThen = promise.then, originalCatch = promise.catch;
+	  promise.then = function (onResolved, onRejected) {
+	    var derivedPromise = originalThen.call(promise, onResolved, onRejected);
+	    derivedPromise[propertyName] = promise[propertyName];
+	    propagatePromiseProperty(derivedPromise, propertyName);
+	    return derivedPromise;
+	  };
+	  promise.catch = function (onRejected) {
+	    var derivedPromise = originalCatch.call(promise, onRejected);
+	    derivedPromise[propertyName] = promise[propertyName];
+	    propagatePromiseProperty(derivedPromise, propertyName);
+	    return derivedPromise;
+	  };
+	  return promise;
+	}
+
+	function promiseFinally(promise, onFinally) {
+	  if (!onFinally) { return promise; }
+	  onFinally = wrapPromiseCallback(onFinally);
+	  return promise.then(function (result) {
+	    return onFinally().then(function () { return result; });
+	  }, function (error) {
+	    return onFinally().then(function () { return Promise.reject(error); });
+	  });
 	}
 
 	var INTERCEPT_KEYS = [
@@ -3140,16 +3136,19 @@
 	  // properties.In that case, use the target path to figure those out instead.Note that all
 	  // ancestors of the target object will necessarily not be primitives and will have those
 	  // properties.
-	  var targetSegments = splitPath(targetPath);
+	  var targetKey;
+	  var targetParentPath = targetPath.replace(/\/[^/]+$/, function (match) {
+	    targetKey = match.slice(1);
+	    return '';
+	  });
 	  while (object && object !== this.root) {
 	    var parent =
-	      object.$parent || object === targetObject && this$1.getObject(targetSegments.slice(0, -1));
+	      object.$parent || object === targetObject && this$1.getObject(targetParentPath);
 	    if (!this$1._modeler.isPlaceholder(object.$path || targetPath)) {
 	      var ghostObjects = deleted ? null : [targetObject];
 	      if (!this$1._holdsConcreteData(object, ghostObjects)) {
 	        deleted = true;
-	        this$1._deleteFirebaseProperty(
-	          parent, object.$key || object === targetObject && _.last(targetSegments));
+	        this$1._deleteFirebaseProperty(parent, object.$key || object === targetObject && targetKey);
 	      }
 	    }
 	    object = parent;

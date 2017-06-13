@@ -1,5 +1,5 @@
 import test from 'ava';
-import {escapeKey, unescapeKey, joinPath, makePathMatcher} from './utils.js';
+import {escapeKey, unescapeKey, joinPath, makePathMatcher} from './paths.js';
 
 test('escapeKey', t => {
   t.is(escapeKey('foo\\.$#[]/'), 'foo\\5c\\2e\\24\\23\\5b\\5d\\2f');

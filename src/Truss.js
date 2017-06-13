@@ -8,11 +8,10 @@ import KeyGenerator from './KeyGenerator.js';
 import MetaTree from './MetaTree.js';
 import {Handle, Reference} from './Reference.js';
 import Tree from './Tree.js';
-import stats from './stats.js';
-import {
-  escapeKey, unescapeKey, wrapPromiseCallback, promiseCancel, promiseFinally,
-  SERVER_TIMESTAMP
-} from './utils.js';
+import stats from './utils/stats.js';
+import {escapeKey, unescapeKey} from './utils/paths.js';
+import {wrapPromiseCallback, promiseCancel, promiseFinally} from './utils/promises.js';
+import {SERVER_TIMESTAMP} from './utils/utils.js';
 
 
 let bridge, logging;

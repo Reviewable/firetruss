@@ -1,9 +1,9 @@
 import {Reference, Handle} from './Reference.js';
 import angular from './angularCompatibility.js';
-import stats from './stats.js';
-import {
-  makePathMatcher, joinPath, splitPath, isTrussEqual, escapeKey, unescapeKey, promiseFinally
-} from './utils.js';
+import stats from './utils/stats.js';
+import {makePathMatcher, joinPath, splitPath, escapeKey, unescapeKey} from './utils/paths.js';
+import {isTrussEqual} from './utils/utils.js';
+import {promiseFinally} from './utils/promises.js';
 
 import _ from 'lodash';
 import performanceNow from 'performance-now';

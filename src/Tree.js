@@ -1,7 +1,8 @@
 import angular from './angularCompatibility.js';
 import Coupler from './Coupler.js';
 import Modeler from './Modeler.js';
-import {escapeKey, unescapeKey, joinPath, splitPath, SERVER_TIMESTAMP} from './utils.js';
+import {escapeKey, unescapeKey, joinPath, splitPath} from './utils/paths.js';
+import {SERVER_TIMESTAMP} from './utils/utils.js';
 
 import _ from 'lodash';
 import Vue from 'vue';
@@ -473,16 +474,19 @@ export default class Tree {
     // properties.  In that case, use the target path to figure those out instead.  Note that all
     // ancestors of the target object will necessarily not be primitives and will have those
     // properties.
-    const targetSegments = splitPath(targetPath);
+    let targetKey;
+    const targetParentPath = targetPath.replace(/\/[^/]+$/, match => {
+      targetKey = match.slice(1);
+      return '';
+    });
     while (object && object !== this.root) {
       const parent =
-        object.$parent || object === targetObject && this.getObject(targetSegments.slice(0, -1));
+        object.$parent || object === targetObject && this.getObject(targetParentPath);
       if (!this._modeler.isPlaceholder(object.$path || targetPath)) {
         const ghostObjects = deleted ? null : [targetObject];
         if (!this._holdsConcreteData(object, ghostObjects)) {
           deleted = true;
-          this._deleteFirebaseProperty(
-            parent, object.$key || object === targetObject && _.last(targetSegments));
+          this._deleteFirebaseProperty(parent, object.$key || object === targetObject && targetKey);
         }
       }
       object = parent;

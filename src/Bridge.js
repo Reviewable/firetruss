@@ -1,4 +1,4 @@
-import {unescapeKey} from './utils.js';
+import {unescapeKey} from './utils/paths.js';
 import _ from 'lodash';
 
 // jshint browser:true

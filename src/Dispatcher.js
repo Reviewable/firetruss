@@ -1,5 +1,5 @@
 import _ from 'lodash';
-import {wrapPromiseCallback} from './utils.js';
+import {wrapPromiseCallback} from './utils/promises.js';
 
 
 const INTERCEPT_KEYS = [

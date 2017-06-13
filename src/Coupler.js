@@ -1,7 +1,7 @@
 import _ from 'lodash';
 import Vue from 'vue';
 import angular from './angularCompatibility.js';
-import {splitPath} from './utils.js';
+import {splitPath} from './utils/paths.js';
 
 
 class QueryHandler {

@@ -1,4 +1,4 @@
-import {escapeKey, unescapeKey, makePathMatcher} from './utils.js';
+import {escapeKey, unescapeKey, makePathMatcher} from './utils/paths.js';
 
 import _ from 'lodash';
 
