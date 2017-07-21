@@ -2391,6 +2391,7 @@
 	    var this$1 = this;
 
 	  var computedProperties = this._augmentClass(Class);
+	  var allVariables = [];
 	  var mounts = Class.$trussMount;
 	  if (!mounts) { throw new Error(("Class " + (Class.name) + " lacks a $trussMount static property")); }
 	  if (!_.isArray(mounts)) { mounts = [mounts]; }
@@ -2411,6 +2412,7 @@
 	      )) {
 	        throw new Error(("Variable name conflicts with built-in property or method: " + variable));
 	      }
+	      allVariables.push(variable);
 	    }
 	    var escapedKey = mount.path.match(/\/([^/]*)$/)[1];
 	    if (escapedKey.charAt(0) === '$') {
@@ -2430,6 +2432,15 @@
 	      Class: Class, matcher: matcher, computedProperties: computedProperties, escapedKey: escapedKey, placeholder: mount.placeholder,
 	      local: mount.local
 	    });
+	  });
+	  _.each(allVariables, function (variable) {
+	    if (!Class.prototype[variable]) {
+	      Object.defineProperty(Class.prototype, variable, {get: function() {
+	        return creatingObjectProperties ?
+	          creatingObjectProperties[variable] && creatingObjectProperties[variable].value :
+	          undefined;
+	      }});
+	    }
 	  });
 	};
 

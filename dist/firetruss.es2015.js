@@ -2145,6 +2145,7 @@ class Modeler {
 
   _mountClass(Class, rootAcceptable) {
     const computedProperties = this._augmentClass(Class);
+    const allVariables = [];
     let mounts = Class.$trussMount;
     if (!mounts) throw new Error(`Class ${Class.name} lacks a $trussMount static property`);
     if (!_.isArray(mounts)) mounts = [mounts];
@@ -2163,6 +2164,7 @@ class Modeler {
         )) {
           throw new Error(`Variable name conflicts with built-in property or method: ${variable}`);
         }
+        allVariables.push(variable);
       }
       const escapedKey = mount.path.match(/\/([^/]*)$/)[1];
       if (escapedKey.charAt(0) === '$') {
@@ -2182,6 +2184,15 @@ class Modeler {
         Class, matcher, computedProperties, escapedKey, placeholder: mount.placeholder,
         local: mount.local
       });
+    });
+    _.each(allVariables, variable => {
+      if (!Class.prototype[variable]) {
+        Object.defineProperty(Class.prototype, variable, {get: function() {
+          return creatingObjectProperties ?
+            creatingObjectProperties[variable] && creatingObjectProperties[variable].value :
+            undefined;
+        }});
+      }
     });
   }
 
