@@ -306,7 +306,7 @@ export default class Modeler {
    * before any Firebase properties are added.
    */
   createObject(path, properties) {
-    let mount = this._getMount(path) || {Class: Value};
+    const mount = this._getMount(path) || {Class: Value};
     if (mount.matcher) {
       const match = mount.matcher.match(path);
       for (const variable in match) {

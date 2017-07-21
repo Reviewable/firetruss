@@ -87,7 +87,9 @@ export default class Tree {
     }
     this._initialized = true;
     this._modeler.init(classes, !this._vue.$data.$root);
-    this._plantPlaceholders(this.root, '/');
+    const createdObjects = [];
+    this._plantPlaceholders(this.root, '/', createdObjects);
+    for (const object of createdObjects) this._completeCreateObject(object);
   }
 
   destroy() {
@@ -239,6 +241,7 @@ export default class Tree {
     // any objects currently selected by a query, but won't add or remove results.
     this._writeSerial++;
     this._localWriteTimestamp = this._truss.now;
+    const createdObjects = [];
     _.each(values, (value, path) => {
       const local = this._modeler.isLocal(path);
       const coupledDescendantPaths =
@@ -259,8 +262,9 @@ export default class Tree {
         } else {
           const key = _.last(splitPath(descendantPath));
           this._plantValue(
-            descendantPath, key, subValue, this._scaffoldAncestors(descendantPath), false,
-            override
+            descendantPath, key, subValue,
+            this._scaffoldAncestors(descendantPath, false, createdObjects), false, override,
+            createdObjects
           );
         }
         if (!override && !local) {
@@ -268,6 +272,7 @@ export default class Tree {
         }
       }
     });
+    for (const object of createdObjects) this._completeCreateObject(object);
   }
 
   _extractCommonPathPrefix(values) {
@@ -304,7 +309,7 @@ export default class Tree {
   _createObject(path, key, parent) {
     if (!this._initialized && path !== '/') this.init();
     let properties = {
-      // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
+      // We want Vue to wrap this; we'll make it non-enumerable in _fixObject.
       $parent: {value: parent, configurable: true, enumerable: true},
       $path: {value: path}
     };
@@ -351,22 +356,27 @@ export default class Tree {
       if (snap.writeSerial >= writeSerial) delete this._localWrites[path];
     });
     if (snap.exists) {
-      const parent = this._scaffoldAncestors(snap.path, true);
-      if (parent) this._plantValue(snap.path, snap.key, snap.value, parent, true, false);
+      const createdObjects = [];
+      const parent = this._scaffoldAncestors(snap.path, true, createdObjects);
+      if (parent) {
+        this._plantValue(snap.path, snap.key, snap.value, parent, true, false, createdObjects);
+      }
+      for (const object of createdObjects) this._completeCreateObject(object);
     } else {
       this._prune(snap.path, null, true);
     }
   }
 
-  _scaffoldAncestors(path, remoteWrite) {
+  _scaffoldAncestors(path, remoteWrite, createdObjects) {
     let object;
     const segments = _.dropRight(splitPath(path));
     _.each(segments, (segment, i) => {
       let child = segment ? object[segment] : this.root;
       if (!child) {
         const ancestorPath = segments.slice(0, i + 1).join('/');
-        if (remoteWrite && this._localWrites[ancestorPath || '/']) return;
-        child = this._plantValue(ancestorPath, segment, {}, object);
+        child = this._plantValue(
+          ancestorPath, segment, {}, object, remoteWrite, false, createdObjects);
+        if (!child) return;
       }
       object = child;
     });
@@ -374,12 +384,10 @@ export default class Tree {
   }
 
   _plantValue(path, key, value, parent, remoteWrite, override, createdObjects) {
-    const top = !createdObjects;
-    createdObjects = createdObjects || [];
     if (remoteWrite && (value === null || value === undefined)) {
       throw new Error(`Snapshot includes invalid value at ${path}: ${value}`);
     }
-    if (remoteWrite && this._localWrites[path]) return;
+    if (remoteWrite && this._localWrites[path || '/']) return;
     if (value === SERVER_TIMESTAMP) value = this._localWriteTimestamp;
     if (!_.isArray(value) && !(_.isObject(value) && value.constructor === Object)) {
       this._setFirebaseProperty(parent, key, value);
@@ -406,11 +414,11 @@ export default class Tree {
     _.each(value, (item, escapedChildKey) => {
       this._plantValue(
         joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite,
-        override
+        override, createdObjects
       );
     });
     if (objectCreated) {
-      this._plantPlaceholders(object, path);
+      this._plantPlaceholders(object, path, createdObjects);
     } else {
       _.each(object, (item, childKey) => {
         const escapedChildKey = escapeKey(childKey);
@@ -419,17 +427,15 @@ export default class Tree {
         }
       });
     }
-    if (top) {
-      for (const object of createdObjects) this._completeCreateObject(object);
-    }
     return object;
   }
 
-  _plantPlaceholders(object, path) {
+  _plantPlaceholders(object, path, createdObjects) {
     this._modeler.forEachPlaceholderChild(path, (escapedKey, placeholder) => {
       const key = unescapeKey(escapedKey);
       if (!object.hasOwnProperty(key)) {
-        this._plantValue(joinPath(path, escapedKey), key, placeholder, object);
+        this._plantValue(
+          joinPath(path, escapedKey), key, placeholder, object, false, false, createdObjects);
       }
     });
   }

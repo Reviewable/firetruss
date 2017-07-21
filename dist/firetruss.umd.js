@@ -2701,12 +2701,20 @@
 	};
 
 	Tree.prototype.init = function init (classes) {
+	    var this$1 = this;
+
 	  if (this._initialized) {
 	    throw new Error('Data objects already created, too late to mount classes');
 	  }
 	  this._initialized = true;
 	  this._modeler.init(classes, !this._vue.$data.$root);
-	  this._plantPlaceholders(this.root, '/');
+	  var createdObjects = [];
+	  this._plantPlaceholders(this.root, '/', createdObjects);
+	  for (var i = 0, list = createdObjects; i < list.length; i += 1) {
+	      var object = list[i];
+
+	      this$1._completeCreateObject(object);
+	    }
 	};
 
 	Tree.prototype.destroy = function destroy () {
@@ -2871,6 +2879,7 @@
 	  // any objects currently selected by a query, but won't add or remove results.
 	  this._writeSerial++;
 	  this._localWriteTimestamp = this._truss.now;
+	  var createdObjects = [];
 	  _.each(values, function (value, path) {
 	    var local = this$1._modeler.isLocal(path);
 	    var coupledDescendantPaths =
@@ -2895,8 +2904,9 @@
 	      } else {
 	        var key = _.last(splitPath(descendantPath));
 	        this$1._plantValue(
-	          descendantPath, key, subValue, this$1._scaffoldAncestors(descendantPath), false,
-	          override
+	          descendantPath, key, subValue,
+	          this$1._scaffoldAncestors(descendantPath, false, createdObjects), false, override,
+	          createdObjects
 	        );
 	      }
 	      if (!override && !local) {
@@ -2904,6 +2914,11 @@
 	      }
 	    }
 	  });
+	  for (var i = 0, list = createdObjects; i < list.length; i += 1) {
+	      var object = list[i];
+
+	      this$1._completeCreateObject(object);
+	    }
 	};
 
 	Tree.prototype._extractCommonPathPrefix = function _extractCommonPathPrefix (values) {
@@ -2940,7 +2955,7 @@
 	Tree.prototype._createObject = function _createObject (path, key, parent) {
 	  if (!this._initialized && path !== '/') { this.init(); }
 	  var properties = {
-	    // We want Vue to wrap this; we'll make it non-enumerable in _completeCreateObject.
+	    // We want Vue to wrap this; we'll make it non-enumerable in _fixObject.
 	    $parent: {value: parent, configurable: true, enumerable: true},
 	    $path: {value: path}
 	  };
@@ -2999,14 +3014,22 @@
 	    if (snap.writeSerial >= writeSerial) { delete this$1._localWrites[path]; }
 	  });
 	  if (snap.exists) {
-	    var parent = this._scaffoldAncestors(snap.path, true);
-	    if (parent) { this._plantValue(snap.path, snap.key, snap.value, parent, true, false); }
+	    var createdObjects = [];
+	    var parent = this._scaffoldAncestors(snap.path, true, createdObjects);
+	    if (parent) {
+	      this._plantValue(snap.path, snap.key, snap.value, parent, true, false, createdObjects);
+	    }
+	    for (var i = 0, list = createdObjects; i < list.length; i += 1) {
+	        var object = list[i];
+
+	        this$1._completeCreateObject(object);
+	      }
 	  } else {
 	    this._prune(snap.path, null, true);
 	  }
 	};
 
-	Tree.prototype._scaffoldAncestors = function _scaffoldAncestors (path, remoteWrite) {
+	Tree.prototype._scaffoldAncestors = function _scaffoldAncestors (path, remoteWrite, createdObjects) {
 	    var this$1 = this;
 
 	  var object;
@@ -3015,8 +3038,9 @@
 	    var child = segment ? object[segment] : this$1.root;
 	    if (!child) {
 	      var ancestorPath = segments.slice(0, i + 1).join('/');
-	      if (remoteWrite && this$1._localWrites[ancestorPath || '/']) { return; }
-	      child = this$1._plantValue(ancestorPath, segment, {}, object);
+	      child = this$1._plantValue(
+	        ancestorPath, segment, {}, object, remoteWrite, false, createdObjects);
+	      if (!child) { return; }
 	    }
 	    object = child;
 	  });
@@ -3026,12 +3050,10 @@
 	Tree.prototype._plantValue = function _plantValue (path, key, value, parent, remoteWrite, override, createdObjects) {
 	    var this$1 = this;
 
-	  var top = !createdObjects;
-	  createdObjects = createdObjects || [];
 	  if (remoteWrite && (value === null || value === undefined)) {
 	    throw new Error(("Snapshot includes invalid value at " + path + ": " + value));
 	  }
-	  if (remoteWrite && this._localWrites[path]) { return; }
+	  if (remoteWrite && this._localWrites[path || '/']) { return; }
 	  if (value === SERVER_TIMESTAMP) { value = this._localWriteTimestamp; }
 	  if (!_.isArray(value) && !(_.isObject(value) && value.constructor === Object)) {
 	    this._setFirebaseProperty(parent, key, value);
@@ -3058,11 +3080,11 @@
 	  _.each(value, function (item, escapedChildKey) {
 	    this$1._plantValue(
 	      joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite,
-	      override
+	      override, createdObjects
 	    );
 	  });
 	  if (objectCreated) {
-	    this._plantPlaceholders(object, path);
+	    this._plantPlaceholders(object, path, createdObjects);
 	  } else {
 	    _.each(object, function (item, childKey) {
 	      var escapedChildKey = escapeKey(childKey);
@@ -3071,23 +3093,17 @@
 	      }
 	    });
 	  }
-	  if (top) {
-	    for (var i = 0, list = createdObjects; i < list.length; i += 1) {
-	        var object$1 = list[i];
-
-	        this$1._completeCreateObject(object$1);
-	      }
-	  }
 	  return object;
 	};
 
-	Tree.prototype._plantPlaceholders = function _plantPlaceholders (object, path) {
+	Tree.prototype._plantPlaceholders = function _plantPlaceholders (object, path, createdObjects) {
 	    var this$1 = this;
 
 	  this._modeler.forEachPlaceholderChild(path, function (escapedKey, placeholder) {
 	    var key = unescapeKey(escapedKey);
 	    if (!object.hasOwnProperty(key)) {
-	      this$1._plantValue(joinPath(path, escapedKey), key, placeholder, object);
+	      this$1._plantValue(
+	        joinPath(path, escapedKey), key, placeholder, object, false, false, createdObjects);
 	    }
 	  });
 	};
