@@ -498,11 +498,15 @@
 	  return Promise.race([simulationPromise, timeoutPromise]);
 	};
 
-	Bridge.prototype.updateLocalStorage = function updateLocalStorage (items) {
+	Bridge.prototype.updateLocalStorage = function updateLocalStorage (ref) {
+	    var items = ref.items;
+
 	  try {
 	    var storage = window.localStorage || window.sessionStorage;
-	    for (var item in items) {
-	      if (item.value === null) {
+	    for (var i = 0, list = items; i < list.length; i += 1) {
+	      var item = list[i];
+
+	        if (item.value === null) {
 	        storage.removeItem(item.key);
 	      } else {
 	        storage.setItem(item.key, item.value);

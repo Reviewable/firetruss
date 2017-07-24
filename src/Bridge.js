@@ -237,10 +237,10 @@ export default class Bridge {
     return Promise.race([simulationPromise, timeoutPromise]);
   }
 
-  updateLocalStorage(items) {
+  updateLocalStorage({items}) {
     try {
       const storage = window.localStorage || window.sessionStorage;
-      for (const item in items) {
+      for (const item of items) {
         if (item.value === null) {
           storage.removeItem(item.key);
         } else {
