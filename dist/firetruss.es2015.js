@@ -146,6 +146,24 @@ function unescapeKey(key) {
   });
 }
 
+function escapeKeys(object) {
+  // isExtensible check avoids trying to escape references to Firetruss internals.
+  if (!(typeof object === 'object' && Object.isExtensible(object))) return object;
+  let result = object;
+  for (const key in object) {
+    if (!object.hasOwnProperty(key)) continue;
+    const value = object[key];
+    const escapedKey = escapeKey(key);
+    const escapedValue = escapeKeys(value);
+    if (escapedKey !== key || escapedValue !== value) {
+      if (result === object) result = _.clone(object);
+      result[escapedKey] = escapedValue;
+      if (result[key] === value) delete result[key];
+    }
+  }
+  return result;
+}
+
 function joinPath() {
   const segments = [];
   for (let segment of arguments) {
@@ -2533,7 +2551,7 @@ class Tree {
   }
 
   update(ref, method, values) {
-    values = _.clone(values);
+    values = _.mapValues(values, value => escapeKeys(value));
     let numValues = _.size(values);
     if (!numValues) return Promise.resolve();
     if (method === 'update' || method === 'override') {
@@ -2567,7 +2585,7 @@ class Tree {
       } catch (e) {
         return Promise.reject(e);
       }
-      const values = _.clone(txn.values);
+      const values = _.mapValues(values, value => escapeKeys(value));
       const oldValue = toFirebaseJson(this.getObject(ref.path));
       switch (txn.outcome) {
         case 'abort': return;
@@ -3007,16 +3025,12 @@ function relativizePaths(rootPath, values) {
 }
 
 function toFirebaseJson(object) {
-  if (typeof object === 'object') {
-    const result = {};
-    for (const key in object) {
-      if (!object.hasOwnProperty(key)) continue;
-      result[escapeKey(key)] = toFirebaseJson(object[key]);
-    }
-    return result;
-  } else {
-    return object;
+  if (typeof object !== 'object') return object;
+  const result = {};
+  for (const key in object) {
+    if (object.hasOwnProperty(key)) result[escapeKey(key)] = toFirebaseJson(object[key]);
   }
+  return result;
 }
 
 let bridge;

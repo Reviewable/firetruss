@@ -1,7 +1,7 @@
 import angular from './angularCompatibility.js';
 import Coupler from './Coupler.js';
 import Modeler from './Modeler.js';
-import {escapeKey, unescapeKey, joinPath, splitPath} from './utils/paths.js';
+import {escapeKey, escapeKeys, unescapeKey, joinPath, splitPath} from './utils/paths.js';
 import {SERVER_TIMESTAMP} from './utils/utils.js';
 
 import _ from 'lodash';
@@ -166,7 +166,7 @@ export default class Tree {
   }
 
   update(ref, method, values) {
-    values = _.clone(values);
+    values = _.mapValues(values, value => escapeKeys(value));
     let numValues = _.size(values);
     if (!numValues) return Promise.resolve();
     if (method === 'update' || method === 'override') {
@@ -200,7 +200,7 @@ export default class Tree {
       } catch (e) {
         return Promise.reject(e);
       }
-      const values = _.clone(txn.values);
+      const values = _.mapValues(values, value => escapeKeys(value));
       const oldValue = toFirebaseJson(this.getObject(ref.path));
       switch (txn.outcome) {
         case 'abort': return;
@@ -640,15 +640,11 @@ export function relativizePaths(rootPath, values) {
 }
 
 export function toFirebaseJson(object) {
-  if (typeof object === 'object') {
-    const result = {};
-    for (const key in object) {
-      if (!object.hasOwnProperty(key)) continue;
-      result[escapeKey(key)] = toFirebaseJson(object[key]);
-    }
-    return result;
-  } else {
-    return object;
+  if (typeof object !== 'object') return object;
+  const result = {};
+  for (const key in object) {
+    if (object.hasOwnProperty(key)) result[escapeKey(key)] = toFirebaseJson(object[key]);
   }
+  return result;
 }
 

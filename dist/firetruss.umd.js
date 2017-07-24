@@ -153,6 +153,24 @@
 	  });
 	}
 
+	function escapeKeys(object) {
+	  // isExtensible check avoids trying to escape references to Firetruss internals.
+	  if (!(typeof object === 'object' && Object.isExtensible(object))) { return object; }
+	  var result = object;
+	  for (var key in object) {
+	    if (!object.hasOwnProperty(key)) { continue; }
+	    var value = object[key];
+	    var escapedKey = escapeKey(key);
+	    var escapedValue = escapeKeys(value);
+	    if (escapedKey !== key || escapedValue !== value) {
+	      if (result === object) { result = _.clone(object); }
+	      result[escapedKey] = escapedValue;
+	      if (result[key] === value) { delete result[key]; }
+	    }
+	  }
+	  return result;
+	}
+
 	function joinPath() {
 	  var segments = [];
 	  for (var i = 0, list = arguments; i < list.length; i += 1) {
@@ -2808,7 +2826,7 @@
 	Tree.prototype.update = function update (ref, method, values) {
 	    var this$1 = this;
 
-	  values = _.clone(values);
+	  values = _.mapValues(values, function (value) { return escapeKeys(value); });
 	  var numValues = _.size(values);
 	  if (!numValues) { return Promise.resolve(); }
 	  if (method === 'update' || method === 'override') {
@@ -2846,7 +2864,7 @@
 	    } catch (e) {
 	      return Promise.reject(e);
 	    }
-	    var values = _.clone(txn.values);
+	    var values = _.mapValues(values, function (value) { return escapeKeys(value); });
 	    var oldValue = toFirebaseJson(this$1.getObject(ref.path));
 	    switch (txn.outcome) {
 	      case 'abort': return;
@@ -3333,16 +3351,12 @@
 	}
 
 	function toFirebaseJson(object) {
-	  if (typeof object === 'object') {
-	    var result = {};
-	    for (var key in object) {
-	      if (!object.hasOwnProperty(key)) { continue; }
-	      result[escapeKey(key)] = toFirebaseJson(object[key]);
-	    }
-	    return result;
-	  } else {
-	    return object;
+	  if (typeof object !== 'object') { return object; }
+	  var result = {};
+	  for (var key in object) {
+	    if (object.hasOwnProperty(key)) { result[escapeKey(key)] = toFirebaseJson(object[key]); }
 	  }
+	  return result;
 	}
 
 	var bridge;

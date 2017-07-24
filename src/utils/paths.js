@@ -21,6 +21,24 @@ export function unescapeKey(key) {
   });
 }
 
+export function escapeKeys(object) {
+  // isExtensible check avoids trying to escape references to Firetruss internals.
+  if (!(typeof object === 'object' && Object.isExtensible(object))) return object;
+  let result = object;
+  for (const key in object) {
+    if (!object.hasOwnProperty(key)) continue;
+    const value = object[key];
+    const escapedKey = escapeKey(key);
+    const escapedValue = escapeKeys(value);
+    if (escapedKey !== key || escapedValue !== value) {
+      if (result === object) result = _.clone(object);
+      result[escapedKey] = escapedValue;
+      if (result[key] === value) delete result[key];
+    }
+  }
+  return result;
+}
+
 export function joinPath() {
   const segments = [];
   for (let segment of arguments) {
