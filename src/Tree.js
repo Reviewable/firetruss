@@ -482,10 +482,10 @@ export default class Tree {
     // properties.
     let targetKey;
     const targetParentPath = targetPath.replace(/\/[^/]+$/, match => {
-      targetKey = match.slice(1);
+      targetKey = unescapeKey(match.slice(1));
       return '';
     });
-    while (object && object !== this.root) {
+    while (object !== undefined && object !== this.root) {
       const parent =
         object.$parent || object === targetObject && this.getObject(targetParentPath);
       if (!this._modeler.isPlaceholder(object.$path || targetPath)) {

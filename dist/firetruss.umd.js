@@ -256,14 +256,16 @@
 	  var value = ref.value;
 	  var valueError = ref.valueError;
 	  var exists = ref.exists;
+	  var writeSerial = ref.writeSerial;
 
 	  this._path = path;
 	  this._value = value;
 	  this._valueError = errorFromJson(valueError);
 	  this._exists = value === undefined ? exists || false : value !== null;
+	  this._writeSerial = writeSerial;
 	};
 
-	var prototypeAccessors$1 = { path: {},exists: {},value: {},key: {} };
+	var prototypeAccessors$1 = { path: {},exists: {},value: {},key: {},writeSerial: {} };
 
 	prototypeAccessors$1.path.get = function () {
 	  return this._path;
@@ -281,6 +283,10 @@
 	prototypeAccessors$1.key.get = function () {
 	  if (this._key === undefined) { this._key = unescapeKey(this._path.replace(/.*\//, '')); }
 	  return this._key;
+	};
+
+	prototypeAccessors$1.writeSerial.get = function () {
+	  return this._writeSerial;
 	};
 
 	Snapshot.prototype._checkValue = function _checkValue () {
@@ -3187,10 +3193,10 @@
 	  // properties.
 	  var targetKey;
 	  var targetParentPath = targetPath.replace(/\/[^/]+$/, function (match) {
-	    targetKey = match.slice(1);
+	    targetKey = unescapeKey(match.slice(1));
 	    return '';
 	  });
-	  while (object && object !== this.root) {
+	  while (object !== undefined && object !== this.root) {
 	    var parent =
 	      object.$parent || object === targetObject && this$1.getObject(targetParentPath);
 	    if (!this$1._modeler.isPlaceholder(object.$path || targetPath)) {

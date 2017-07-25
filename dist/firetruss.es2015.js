@@ -241,11 +241,12 @@ const MIN_WORKER_VERSION = '0.4.0';
 
 
 class Snapshot {
-  constructor({path, value, valueError, exists}) {
+  constructor({path, value, valueError, exists, writeSerial}) {
     this._path = path;
     this._value = value;
     this._valueError = errorFromJson(valueError);
     this._exists = value === undefined ? exists || false : value !== null;
+    this._writeSerial = writeSerial;
   }
 
   get path() {
@@ -264,6 +265,10 @@ class Snapshot {
   get key() {
     if (this._key === undefined) this._key = unescapeKey(this._path.replace(/.*\//, ''));
     return this._key;
+  }
+
+  get writeSerial() {
+    return this._writeSerial;
   }
 
   _checkValue() {
@@ -2867,10 +2872,10 @@ class Tree {
     // properties.
     let targetKey;
     const targetParentPath = targetPath.replace(/\/[^/]+$/, match => {
-      targetKey = match.slice(1);
+      targetKey = unescapeKey(match.slice(1));
       return '';
     });
-    while (object && object !== this.root) {
+    while (object !== undefined && object !== this.root) {
       const parent =
         object.$parent || object === targetObject && this.getObject(targetParentPath);
       if (!this._modeler.isPlaceholder(object.$path || targetPath)) {
