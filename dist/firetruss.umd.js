@@ -2142,13 +2142,7 @@
 	Object.defineProperties( Coupler.prototype, prototypeAccessors$1$3 );
 
 	// These are defined separately for each object so they're not included in Value below.
-	var RESERVED_VALUE_PROPERTY_NAMES = {
-	  $truss: true, $parent: true, $key: true, $path: true, $ref: true,
-	  $$touchThis: true, $$initializers: true, $$finalizers: true,
-	  $$$trussCheck: true,
-	  __ob__: true
-	};
-
+	var RESERVED_VALUE_PROPERTY_NAMES = {$$$trussCheck: true, __ob__: true};
 
 	// Holds properties that we're going to set on a model object that's being created right now as soon
 	// as it's been created, but that we'd like to be accessible in the constructor.  The object
@@ -2389,6 +2383,7 @@
 
 	        var descriptor = Object.getOwnPropertyDescriptor(proto, name);
 	      if (name.charAt(0) === '$') {
+	        if (name === '$finalize') { continue; }
 	        if (_.isEqual(descriptor, Object.getOwnPropertyDescriptor(Value.prototype, name))) {
 	          continue;
 	        }
@@ -2549,6 +2544,7 @@
 	        fn();
 	      }
 	  }
+	  if (_.isFunction(object.$finalize)) { object.$finalize(); }
 	};
 
 	Modeler.prototype.isPlaceholder = function isPlaceholder (path) {
@@ -2580,7 +2576,7 @@
 	    for (var i = 0, list = Object.getOwnPropertyNames(object); i < list.length; i += 1) {
 	      var key = list[i];
 
-	        if (RESERVED_VALUE_PROPERTY_NAMES[key]) { continue; }
+	        if (RESERVED_VALUE_PROPERTY_NAMES[key] || Value.prototype.hasOwnProperty(key)) { continue; }
 	      // jshint loopfunc:true
 	      var mount = this$1._findMount(function (mount) { return mount.Class === object.constructor; });
 	      // jshint loopfunc:false

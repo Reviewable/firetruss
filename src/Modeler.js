@@ -9,13 +9,7 @@ import _ from 'lodash';
 import performanceNow from 'performance-now';
 
 // These are defined separately for each object so they're not included in Value below.
-const RESERVED_VALUE_PROPERTY_NAMES = {
-  $truss: true, $parent: true, $key: true, $path: true, $ref: true,
-  $$touchThis: true, $$initializers: true, $$finalizers: true,
-  $$$trussCheck: true,
-  __ob__: true
-};
-
+const RESERVED_VALUE_PROPERTY_NAMES = {$$$trussCheck: true, __ob__: true};
 
 // Holds properties that we're going to set on a model object that's being created right now as soon
 // as it's been created, but that we'd like to be accessible in the constructor.  The object
@@ -233,6 +227,7 @@ export default class Modeler {
       for (const name of Object.getOwnPropertyNames(proto)) {
         const descriptor = Object.getOwnPropertyDescriptor(proto, name);
         if (name.charAt(0) === '$') {
+          if (name === '$finalize') continue;
           if (_.isEqual(descriptor, Object.getOwnPropertyDescriptor(Value.prototype, name))) {
             continue;
           }
@@ -381,6 +376,7 @@ export default class Modeler {
       // Some destructors remove themselves from the array, so clone it before iterating.
       for (const fn of _.clone(object.$$finalizers)) fn();
     }
+    if (_.isFunction(object.$finalize)) object.$finalize();
   }
 
   isPlaceholder(path) {
@@ -408,7 +404,7 @@ export default class Modeler {
     if (top) checkedObjects = [];
     try {
       for (const key of Object.getOwnPropertyNames(object)) {
-        if (RESERVED_VALUE_PROPERTY_NAMES[key]) continue;
+        if (RESERVED_VALUE_PROPERTY_NAMES[key] || Value.prototype.hasOwnProperty(key)) continue;
         // jshint loopfunc:true
         const mount = this._findMount(mount => mount.Class === object.constructor);
         // jshint loopfunc:false
