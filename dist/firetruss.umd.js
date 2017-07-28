@@ -1142,7 +1142,7 @@
 	    var this$1 = this;
 
 	  var dataProperties = _.mapValues(this._connections, function (descriptor, key) { return ({
-	    configurable: true, enumerable: true, get: function () { return this$1._values.$data[key]; }
+	    configurable: true, enumerable: false, get: function () { return this$1._values.$data[key]; }
 	  }); });
 	  Object.defineProperties(this._data, dataProperties);
 	  if (this._scope) {
@@ -1151,7 +1151,8 @@
 	        throw new Error(("Property already defined on connection target: " + key));
 	      }
 	    }
-	    if (!this._scope.__ob__) { Object.defineProperties(this._scope, dataProperties); }
+	    Object.defineProperties(this._scope, dataProperties);
+	    if (this._scope.__ob__) { this._scope.__ob__.dep.notify(); }
 	  }
 	};
 
@@ -1249,7 +1250,6 @@
 	        unwatch();
 	        delete this$1._disconnects[key];
 	        Vue.set(this$1._values.$data, key, subScope);
-	        if (this$1._scope.__ob__) { Vue.set(this$1._scope, key, subScope); }
 	        angularProxy.digest();
 	      }
 	    );
@@ -1272,7 +1272,6 @@
 	Connector.prototype._updateRefValue = function _updateRefValue (key, value) {
 	  if (this._values.$data[key] !== value) {
 	    Vue.set(this._values.$data, key, value);
-	    if (this._scope && this._scope.__ob__) { Vue.set(this._scope, key, value); }
 	    angularProxy.digest();
 	  }
 	};
@@ -1282,7 +1281,6 @@
 
 	  if (!this._values.$data[key]) {
 	    Vue.set(this._values.$data, key, {});
-	    if (this._scope && this._scope.__ob__) { Vue.set(this._scope, key, this._values.$data[key]); }
 	    angularProxy.digest();
 	  }
 	  var subScope = this._values.$data[key];

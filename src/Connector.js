@@ -71,7 +71,7 @@ export default class Connector {
 
   _linkScopeProperties() {
     const dataProperties = _.mapValues(this._connections, (descriptor, key) => ({
-      configurable: true, enumerable: true, get: () => this._values.$data[key]
+      configurable: true, enumerable: false, get: () => this._values.$data[key]
     }));
     Object.defineProperties(this._data, dataProperties);
     if (this._scope) {
@@ -80,7 +80,8 @@ export default class Connector {
           throw new Error(`Property already defined on connection target: ${key}`);
         }
       }
-      if (!this._scope.__ob__) Object.defineProperties(this._scope, dataProperties);
+      Object.defineProperties(this._scope, dataProperties);
+      if (this._scope.__ob__) this._scope.__ob__.dep.notify();
     }
   }
 
@@ -172,7 +173,6 @@ export default class Connector {
           unwatch();
           delete this._disconnects[key];
           Vue.set(this._values.$data, key, subScope);
-          if (this._scope.__ob__) Vue.set(this._scope, key, subScope);
           angular.digest();
         }
       );
@@ -195,7 +195,6 @@ export default class Connector {
   _updateRefValue(key, value) {
     if (this._values.$data[key] !== value) {
       Vue.set(this._values.$data, key, value);
-      if (this._scope && this._scope.__ob__) Vue.set(this._scope, key, value);
       angular.digest();
     }
   }
@@ -203,7 +202,6 @@ export default class Connector {
   _updateQueryValue(key, childKeys) {
     if (!this._values.$data[key]) {
       Vue.set(this._values.$data, key, {});
-      if (this._scope && this._scope.__ob__) Vue.set(this._scope, key, this._values.$data[key]);
       angular.digest();
     }
     const subScope = this._values.$data[key];
