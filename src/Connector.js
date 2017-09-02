@@ -21,10 +21,10 @@ export default class Connector {
     this._disconnects = {};
     this._angularUnwatches = undefined;
     this._data = {};
-    this._values = new Vue({data: _.mapValues(connections, _.constant(undefined))});
     this._vue = new Vue({data: {
       descriptors: {},
-      refs: refs || {}
+      refs: refs || {},
+      values: _.mapValues(connections, _.constant(undefined))
     }});
     this.destroy = this.destroy;  // allow instance-level overrides of destroy() method
     Object.seal(this);
@@ -65,13 +65,12 @@ export default class Connector {
     this._unlinkScopeProperties();
     _.each(this._angularUnwatches, unwatch => {unwatch();});
     _.each(this._connections, (descriptor, key) => {this._disconnect(key);});
-    this._values.$destroy();
     this._vue.$destroy();
   }
 
   _linkScopeProperties() {
     const dataProperties = _.mapValues(this._connections, (descriptor, key) => ({
-      configurable: true, enumerable: false, get: () => this._values.$data[key]
+      configurable: true, enumerable: false, get: () => this._vue.values[key]
     }));
     Object.defineProperties(this._data, dataProperties);
     if (this._scope) {
@@ -172,7 +171,7 @@ export default class Connector {
           if (!subReady) return;
           unwatch();
           delete this._disconnects[key];
-          Vue.set(this._values.$data, key, subScope);
+          Vue.set(this._vue.values, key, subScope);
           angular.digest();
         }
       );
@@ -193,18 +192,18 @@ export default class Connector {
   }
 
   _updateRefValue(key, value) {
-    if (this._values.$data[key] !== value) {
-      Vue.set(this._values.$data, key, value);
+    if (this._vue.values[key] !== value) {
+      Vue.set(this._vue.values, key, value);
       angular.digest();
     }
   }
 
   _updateQueryValue(key, childKeys) {
-    if (!this._values.$data[key]) {
-      Vue.set(this._values.$data, key, {});
+    if (!this._vue.values[key]) {
+      Vue.set(this._vue.values, key, {});
       angular.digest();
     }
-    const subScope = this._values.$data[key];
+    const subScope = this._vue.values[key];
     for (const childKey in subScope) {
       if (!subScope.hasOwnProperty(childKey)) continue;
       if (!_.contains(childKeys, childKey)) {

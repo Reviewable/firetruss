@@ -1084,10 +1084,10 @@
 	  this._disconnects = {};
 	  this._angularUnwatches = undefined;
 	  this._data = {};
-	  this._values = new Vue({data: _.mapValues(connections, _.constant(undefined))});
 	  this._vue = new Vue({data: {
 	    descriptors: {},
-	    refs: refs || {}
+	    refs: refs || {},
+	    values: _.mapValues(connections, _.constant(undefined))
 	  }});
 	  this.destroy = this.destroy;// allow instance-level overrides of destroy() method
 	  Object.seal(this);
@@ -1134,7 +1134,6 @@
 	  this._unlinkScopeProperties();
 	  _.each(this._angularUnwatches, function (unwatch) {unwatch();});
 	  _.each(this._connections, function (descriptor, key) {this$1._disconnect(key);});
-	  this._values.$destroy();
 	  this._vue.$destroy();
 	};
 
@@ -1142,7 +1141,7 @@
 	    var this$1 = this;
 
 	  var dataProperties = _.mapValues(this._connections, function (descriptor, key) { return ({
-	    configurable: true, enumerable: false, get: function () { return this$1._values.$data[key]; }
+	    configurable: true, enumerable: false, get: function () { return this$1._vue.values[key]; }
 	  }); });
 	  Object.defineProperties(this._data, dataProperties);
 	  if (this._scope) {
@@ -1249,7 +1248,7 @@
 	        if (!subReady) { return; }
 	        unwatch();
 	        delete this$1._disconnects[key];
-	        Vue.set(this$1._values.$data, key, subScope);
+	        Vue.set(this$1._vue.values, key, subScope);
 	        angularProxy.digest();
 	      }
 	    );
@@ -1270,8 +1269,8 @@
 	};
 
 	Connector.prototype._updateRefValue = function _updateRefValue (key, value) {
-	  if (this._values.$data[key] !== value) {
-	    Vue.set(this._values.$data, key, value);
+	  if (this._vue.values[key] !== value) {
+	    Vue.set(this._vue.values, key, value);
 	    angularProxy.digest();
 	  }
 	};
@@ -1279,11 +1278,11 @@
 	Connector.prototype._updateQueryValue = function _updateQueryValue (key, childKeys) {
 	    var this$1 = this;
 
-	  if (!this._values.$data[key]) {
-	    Vue.set(this._values.$data, key, {});
+	  if (!this._vue.values[key]) {
+	    Vue.set(this._vue.values, key, {});
 	    angularProxy.digest();
 	  }
-	  var subScope = this._values.$data[key];
+	  var subScope = this._vue.values[key];
 	  for (var childKey in subScope) {
 	    if (!subScope.hasOwnProperty(childKey)) { continue; }
 	    if (!_.contains(childKeys, childKey)) {
@@ -3271,6 +3270,7 @@
 	};
 
 	Tree.prototype._setFirebaseProperty = function _setFirebaseProperty (object, key, value) {
+	  // console.log(`set ${object.$path}/${key}`, value);
 	  if (object.hasOwnProperty('$data')) { object = object.$data; }
 	  var descriptor = this._getFirebasePropertyDescriptor(object, key);
 	  if (descriptor) {
