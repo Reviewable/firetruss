@@ -597,8 +597,8 @@ class Bridge {
     }
   }
 
-  transaction(url, oldValue, relativeUpdates) {
-    return this._send({msg: 'transaction', url, oldValue, relativeUpdates});
+  transaction(url, oldValue, relativeUpdates, writeSerial) {
+    return this._send({msg: 'transaction', url, oldValue, relativeUpdates, writeSerial});
   }
 
   onDisconnect(url, method, value) {
@@ -1820,7 +1820,7 @@ class Coupler {
       ancestors.push(node);
     }
     if (!node || !(operation ? node.count : node.queryCount)) {
-      throw new Error(`Path not coupled: ${segments.join('/')}`);
+      throw new Error(`Path not coupled: ${segments.join('/') || '/'}`);
     }
     if (operation) {
       _.pull(node.operations, operation);
@@ -1844,7 +1844,7 @@ class Coupler {
         node.ready = undefined;
         delete this._nodeIndex[node.path];
       }
-      const path = segments.join('/');
+      const path = segments.join('/') || '/';
       this._prunePath(path, this.findCoupledDescendantPaths(path));
     }
   }
@@ -1882,6 +1882,7 @@ class Coupler {
     let node;
     for (const segment of splitPath(path, true)) {
       node = segment ? node.children && node.children[segment] : this._root;
+      if (node && node.active) return {[path]: node.active};
       if (!node) break;
     }
     return node && node.collectCoupledDescendantPaths();
@@ -2398,12 +2399,12 @@ function wrapConnections(object, connections) {
 }
 
 class Transaction {
-  constructor(path, tree) {
+  constructor(path, currentValue) {
     this._path = path;
-    this._tree = tree;
+    this._currentValue = currentValue;
   }
 
-  get currentValue() {return this._tree.getObject(this._path);}
+  get currentValue() {return this._currentValue;}
   get outcome() {return this._outcome;}
   get values() {return this._values;}
 
@@ -2583,16 +2584,18 @@ class Tree {
 
     const attemptTransaction = () => {
       if (tries++ >= 25) return Promise.reject(new Error('maxretry'));
-      const txn = new Transaction();
+      const currentValue = ref.value;
+      const txn = new Transaction(ref.path, currentValue);
       try {
         updateFunction(txn);
       } catch (e) {
         return Promise.reject(e);
       }
-      const values = _.mapValues(values, value => escapeKeys(value));
-      const oldValue = toFirebaseJson(this.getObject(ref.path));
+      if (txn.outcome === 'abort') return txn;  // early return to save time
+      const values = _.mapValues(txn.values, value => escapeKeys(value));
+      // Capture old value before applying local writes.
+      const oldValue = toFirebaseJson(currentValue);
       switch (txn.outcome) {
-        case 'abort': return;
         case 'cancel':
           break;
         case 'set':
@@ -2613,10 +2616,15 @@ class Tree {
           throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
       }
       return this._bridge.transaction(
-        this._rootUrl + ref.path, oldValue, values
-      ).then(committed => {
-        if (!committed) return attemptTransaction();
-        return txn;
+        this._rootUrl + ref.path, oldValue, values, this._writeSerial
+      ).then(result => {
+        if (result.committed) {
+          txn._currentValue = result.currentValue;
+          return txn;
+        } else {
+          this._integrateSnapshot(result.snapshot);
+          return attemptTransaction();
+        }
       });
     };
 
@@ -2634,10 +2642,10 @@ class Tree {
     _.each(values, (value, path) => {
       const local = this._modeler.isLocal(path);
       const coupledDescendantPaths =
-        local ? [path] : this._coupler.findCoupledDescendantPaths(path);
+        local ? {[path]: true} : this._coupler.findCoupledDescendantPaths(path);
       if (_.isEmpty(coupledDescendantPaths)) return;
       const offset = (path === '/' ? 0 : path.length) + 1;
-      for (const descendantPath of coupledDescendantPaths) {
+      for (const descendantPath in coupledDescendantPaths) {
         const subPath = descendantPath.slice(offset);
         let subValue = value;
         if (subPath) {
@@ -2741,7 +2749,7 @@ class Tree {
   }
 
   _integrateSnapshot(snap) {
-    _.each(_.keys(this._localWrites), (writeSerial, path) => {
+    _.each(this._localWrites, (writeSerial, path) => {
       if (snap.writeSerial >= writeSerial) delete this._localWrites[path];
     });
     if (snap.exists) {
@@ -2758,13 +2766,16 @@ class Tree {
 
   _scaffoldAncestors(path, remoteWrite, createdObjects) {
     let object;
-    const segments = _.dropRight(splitPath(path));
+    const segments = _.dropRight(splitPath(path, true));
+    let ancestorPath = '/';
     _.each(segments, (segment, i) => {
-      let child = segment ? object[segment] : this.root;
-      if (!child) {
-        const ancestorPath = segments.slice(0, i + 1).join('/');
-        child = this._plantValue(
-          ancestorPath, segment, {}, object, remoteWrite, false, createdObjects);
+      const key = unescapeKey(segment);
+      let child = segment ? object.$data[key] : this.root;
+      if (segment) ancestorPath += (ancestorPath === '/' ? '' : '/') + segment;
+      if (child) {
+        if (remoteWrite && this._localWrites[ancestorPath]) return;
+      } else {
+        child = this._plantValue(ancestorPath, key, {}, object, remoteWrite, false, createdObjects);
         if (!child) return;
       }
       object = child;

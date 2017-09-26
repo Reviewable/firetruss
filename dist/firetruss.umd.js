@@ -644,8 +644,8 @@
 	  }
 	};
 
-	Bridge.prototype.transaction = function transaction (url, oldValue, relativeUpdates) {
-	  return this._send({msg: 'transaction', url: url, oldValue: oldValue, relativeUpdates: relativeUpdates});
+	Bridge.prototype.transaction = function transaction (url, oldValue, relativeUpdates, writeSerial) {
+	  return this._send({msg: 'transaction', url: url, oldValue: oldValue, relativeUpdates: relativeUpdates, writeSerial: writeSerial});
 	};
 
 	Bridge.prototype.onDisconnect = function onDisconnect (url, method, value) {
@@ -2032,7 +2032,7 @@
 	    ancestors.push(node);
 	  }
 	  if (!node || !(operation ? node.count : node.queryCount)) {
-	    throw new Error(("Path not coupled: " + (segments.join('/'))));
+	    throw new Error(("Path not coupled: " + (segments.join('/') || '/')));
 	  }
 	  if (operation) {
 	    _.pull(node.operations, operation);
@@ -2056,7 +2056,7 @@
 	      node.ready = undefined;
 	      delete this$1._nodeIndex[node.path];
 	    }
-	    var path = segments.join('/');
+	    var path = segments.join('/') || '/';
 	    this._prunePath(path, this.findCoupledDescendantPaths(path));
 	  }
 	};
@@ -2102,6 +2102,8 @@
 	    var segment = list[i];
 
 	      node = segment ? node.children && node.children[segment] : this$1._root;
+	    if (node && node.active) { return ( obj = {}, obj[path] = node.active, obj );
+	        var obj; }
 	    if (!node) { break; }
 	  }
 	  return node && node.collectCoupledDescendantPaths();
@@ -2658,14 +2660,14 @@
 	  });
 	}
 
-	var Transaction = function Transaction(path, tree) {
+	var Transaction = function Transaction(path, currentValue) {
 	  this._path = path;
-	  this._tree = tree;
+	  this._currentValue = currentValue;
 	};
 
 	var prototypeAccessors$7 = { currentValue: {},outcome: {},values: {} };
 
-	prototypeAccessors$7.currentValue.get = function () {return this._tree.getObject(this._path);};
+	prototypeAccessors$7.currentValue.get = function () {return this._currentValue;};
 	prototypeAccessors$7.outcome.get = function () {return this._outcome;};
 	prototypeAccessors$7.values.get = function () {return this._values;};
 
@@ -2863,16 +2865,18 @@
 
 	  var attemptTransaction = function () {
 	    if (tries++ >= 25) { return Promise.reject(new Error('maxretry')); }
-	    var txn = new Transaction();
+	    var currentValue = ref.value;
+	    var txn = new Transaction(ref.path, currentValue);
 	    try {
 	      updateFunction(txn);
 	    } catch (e) {
 	      return Promise.reject(e);
 	    }
-	    var values = _.mapValues(values, function (value) { return escapeKeys(value); });
-	    var oldValue = toFirebaseJson(this$1.getObject(ref.path));
+	    if (txn.outcome === 'abort') { return txn; }// early return to save time
+	    var values = _.mapValues(txn.values, function (value) { return escapeKeys(value); });
+	    // Capture old value before applying local writes.
+	    var oldValue = toFirebaseJson(currentValue);
 	    switch (txn.outcome) {
-	      case 'abort': return;
 	      case 'cancel':
 	        break;
 	      case 'set':
@@ -2894,10 +2898,15 @@
 	        throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
 	    }
 	    return this$1._bridge.transaction(
-	      this$1._rootUrl + ref.path, oldValue, values
-	    ).then(function (committed) {
-	      if (!committed) { return attemptTransaction(); }
-	      return txn;
+	      this$1._rootUrl + ref.path, oldValue, values, this$1._writeSerial
+	    ).then(function (result) {
+	      if (result.committed) {
+	        txn._currentValue = result.currentValue;
+	        return txn;
+	      } else {
+	        this$1._integrateSnapshot(result.snapshot);
+	        return attemptTransaction();
+	      }
 	    });
 	  };
 
@@ -2917,17 +2926,16 @@
 	  _.each(values, function (value, path) {
 	    var local = this$1._modeler.isLocal(path);
 	    var coupledDescendantPaths =
-	      local ? [path] : this$1._coupler.findCoupledDescendantPaths(path);
+	      local ? ( obj = {}, obj[path] = true, obj ) : this$1._coupler.findCoupledDescendantPaths(path);
+	      var obj;
 	    if (_.isEmpty(coupledDescendantPaths)) { return; }
 	    var offset = (path === '/' ? 0 : path.length) + 1;
-	    for (var i = 0, list = coupledDescendantPaths; i < list.length; i += 1) {
-	      var descendantPath = list[i];
-
-	        var subPath = descendantPath.slice(offset);
+	    for (var descendantPath in coupledDescendantPaths) {
+	      var subPath = descendantPath.slice(offset);
 	      var subValue = value;
 	      if (subPath) {
-	        for (var i$1 = 0, list$1 = splitPath(subPath); i$1 < list$1.length; i$1 += 1) {
-	          var segment = list$1[i$1];
+	        for (var i = 0, list = splitPath(subPath); i < list.length; i += 1) {
+	          var segment = list[i];
 
 	            subValue = subValue[segment];
 	          if (subValue === undefined) { break; }
@@ -3044,7 +3052,7 @@
 	Tree.prototype._integrateSnapshot = function _integrateSnapshot (snap) {
 	    var this$1 = this;
 
-	  _.each(_.keys(this._localWrites), function (writeSerial, path) {
+	  _.each(this._localWrites, function (writeSerial, path) {
 	    if (snap.writeSerial >= writeSerial) { delete this$1._localWrites[path]; }
 	  });
 	  if (snap.exists) {
@@ -3067,13 +3075,16 @@
 	    var this$1 = this;
 
 	  var object;
-	  var segments = _.dropRight(splitPath(path));
+	  var segments = _.dropRight(splitPath(path, true));
+	  var ancestorPath = '/';
 	  _.each(segments, function (segment, i) {
-	    var child = segment ? object[segment] : this$1.root;
-	    if (!child) {
-	      var ancestorPath = segments.slice(0, i + 1).join('/');
-	      child = this$1._plantValue(
-	        ancestorPath, segment, {}, object, remoteWrite, false, createdObjects);
+	    var key = unescapeKey(segment);
+	    var child = segment ? object.$data[key] : this$1.root;
+	    if (segment) { ancestorPath += (ancestorPath === '/' ? '' : '/') + segment; }
+	    if (child) {
+	      if (remoteWrite && this$1._localWrites[ancestorPath]) { return; }
+	    } else {
+	      child = this$1._plantValue(ancestorPath, key, {}, object, remoteWrite, false, createdObjects);
 	      if (!child) { return; }
 	    }
 	    object = child;

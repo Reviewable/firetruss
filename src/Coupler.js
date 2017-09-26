@@ -299,7 +299,7 @@ export default class Coupler {
       ancestors.push(node);
     }
     if (!node || !(operation ? node.count : node.queryCount)) {
-      throw new Error(`Path not coupled: ${segments.join('/')}`);
+      throw new Error(`Path not coupled: ${segments.join('/') || '/'}`);
     }
     if (operation) {
       _.pull(node.operations, operation);
@@ -323,7 +323,7 @@ export default class Coupler {
         node.ready = undefined;
         delete this._nodeIndex[node.path];
       }
-      const path = segments.join('/');
+      const path = segments.join('/') || '/';
       this._prunePath(path, this.findCoupledDescendantPaths(path));
     }
   }
@@ -361,6 +361,7 @@ export default class Coupler {
     let node;
     for (const segment of splitPath(path, true)) {
       node = segment ? node.children && node.children[segment] : this._root;
+      if (node && node.active) return {[path]: node.active};
       if (!node) break;
     }
     return node && node.collectCoupledDescendantPaths();

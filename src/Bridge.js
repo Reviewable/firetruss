@@ -363,8 +363,8 @@ export default class Bridge {
     }
   }
 
-  transaction(url, oldValue, relativeUpdates) {
-    return this._send({msg: 'transaction', url, oldValue, relativeUpdates});
+  transaction(url, oldValue, relativeUpdates, writeSerial) {
+    return this._send({msg: 'transaction', url, oldValue, relativeUpdates, writeSerial});
   }
 
   onDisconnect(url, method, value) {
