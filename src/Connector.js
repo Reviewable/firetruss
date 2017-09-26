@@ -211,10 +211,7 @@ export default class Connector {
         angular.digest();
       }
     }
-    let object;
-    for (const segment of splitPath(this._vue.descriptors[key].path)) {
-      object = segment ? object[segment] : this._tree.root;
-    }
+    const object = this._tree.getObject(this._vue.descriptors[key].path);
     for (const childKey of childKeys) {
       if (subScope.hasOwnProperty(childKey)) continue;
       Vue.set(subScope, childKey, object[childKey]);
