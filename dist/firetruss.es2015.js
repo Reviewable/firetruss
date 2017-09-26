@@ -1143,10 +1143,7 @@ class Connector {
         angularProxy.digest();
       }
     }
-    let object;
-    for (const segment of splitPath(this._vue.descriptors[key].path)) {
-      object = segment ? object[segment] : this._tree.root;
-    }
+    const object = this._tree.getObject(this._vue.descriptors[key].path);
     for (const childKey of childKeys) {
       if (subScope.hasOwnProperty(childKey)) continue;
       Vue.set(subScope, childKey, object[childKey]);
@@ -2247,11 +2244,16 @@ class Modeler {
     let writeAllowed = false;
 
     object.$$initializers.push(vue => {
+      let unwatchNow = false;
       const unwatch = vue.$watch(computeValue.bind(object, prop, propertyStats), newValue => {
         if (newValue instanceof FrozenWrapper) {
           newValue = newValue.value;
-          unwatch();
-          _.pull(object.$$finalizers, unwatch);
+          if (unwatch) {
+            unwatch();
+            _.pull(object.$$finalizers, unwatch);
+          } else {
+            unwatchNow = true;
+          }
         }
         if (isTrussEqual(value, newValue)) return;
         // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
@@ -2262,7 +2264,11 @@ class Modeler {
         angularProxy.digest();
         if (newValue instanceof ErrorWrapper) throw newValue.error;
       }, {immediate: true});  // use immediate:true since watcher will run computeValue anyway
-      object.$$finalizers.push(unwatch);
+      if (unwatchNow) {
+        unwatch();
+      } else {
+        object.$$finalizers.push(unwatch);
+      }
     });
     return {
       enumerable: true, configurable: true,
@@ -2941,7 +2947,6 @@ class Tree {
   }
 
   _setFirebaseProperty(object, key, value) {
-    // console.log(`set ${object.$path}/${key}`, value);
     if (object.hasOwnProperty('$data')) object = object.$data;
     let descriptor = this._getFirebasePropertyDescriptor(object, key);
     if (descriptor) {

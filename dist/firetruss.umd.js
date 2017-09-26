@@ -1276,8 +1276,6 @@
 	};
 
 	Connector.prototype._updateQueryValue = function _updateQueryValue (key, childKeys) {
-	    var this$1 = this;
-
 	  if (!this._vue.values[key]) {
 	    Vue.set(this._vue.values, key, {});
 	    angularProxy.digest();
@@ -1290,14 +1288,9 @@
 	      angularProxy.digest();
 	    }
 	  }
-	  var object;
-	  for (var i = 0, list = splitPath(this._vue.descriptors[key].path); i < list.length; i += 1) {
-	    var segment = list[i];
-
-	      object = segment ? object[segment] : this$1._tree.root;
-	  }
-	  for (var i$1 = 0, list$1 = childKeys; i$1 < list$1.length; i$1 += 1) {
-	    var childKey$1 = list$1[i$1];
+	  var object = this._tree.getObject(this._vue.descriptors[key].path);
+	  for (var i = 0, list = childKeys; i < list.length; i += 1) {
+	    var childKey$1 = list[i];
 
 	      if (subScope.hasOwnProperty(childKey$1)) { continue; }
 	    Vue.set(subScope, childKey$1, object[childKey$1]);
@@ -2502,11 +2495,16 @@
 	  var writeAllowed = false;
 
 	  object.$$initializers.push(function (vue) {
+	    var unwatchNow = false;
 	    var unwatch = vue.$watch(computeValue.bind(object, prop, propertyStats), function (newValue) {
 	      if (newValue instanceof FrozenWrapper) {
 	        newValue = newValue.value;
-	        unwatch();
-	        _.pull(object.$$finalizers, unwatch);
+	        if (unwatch) {
+	          unwatch();
+	          _.pull(object.$$finalizers, unwatch);
+	        } else {
+	          unwatchNow = true;
+	        }
 	      }
 	      if (isTrussEqual(value, newValue)) { return; }
 	      // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
@@ -2517,7 +2515,11 @@
 	      angularProxy.digest();
 	      if (newValue instanceof ErrorWrapper) { throw newValue.error; }
 	    }, {immediate: true});// use immediate:true since watcher will run computeValue anyway
-	    object.$$finalizers.push(unwatch);
+	    if (unwatchNow) {
+	      unwatch();
+	    } else {
+	      object.$$finalizers.push(unwatch);
+	    }
 	  });
 	  return {
 	    enumerable: true, configurable: true,
@@ -3270,7 +3272,6 @@
 	};
 
 	Tree.prototype._setFirebaseProperty = function _setFirebaseProperty (object, key, value) {
-	  // console.log(`set ${object.$path}/${key}`, value);
 	  if (object.hasOwnProperty('$data')) { object = object.$data; }
 	  var descriptor = this._getFirebasePropertyDescriptor(object, key);
 	  if (descriptor) {

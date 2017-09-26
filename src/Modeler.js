@@ -341,11 +341,16 @@ export default class Modeler {
     let writeAllowed = false;
 
     object.$$initializers.push(vue => {
+      let unwatchNow = false;
       const unwatch = vue.$watch(computeValue.bind(object, prop, propertyStats), newValue => {
         if (newValue instanceof FrozenWrapper) {
           newValue = newValue.value;
-          unwatch();
-          _.pull(object.$$finalizers, unwatch);
+          if (unwatch) {
+            unwatch();
+            _.pull(object.$$finalizers, unwatch);
+          } else {
+            unwatchNow = true;
+          }
         }
         if (isTrussEqual(value, newValue)) return;
         // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
@@ -356,7 +361,11 @@ export default class Modeler {
         angular.digest();
         if (newValue instanceof ErrorWrapper) throw newValue.error;
       }, {immediate: true});  // use immediate:true since watcher will run computeValue anyway
-      object.$$finalizers.push(unwatch);
+      if (unwatchNow) {
+        unwatch();
+      } else {
+        object.$$finalizers.push(unwatch);
+      }
     });
     return {
       enumerable: true, configurable: true,
