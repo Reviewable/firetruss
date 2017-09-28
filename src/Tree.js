@@ -2,6 +2,7 @@ import angular from './angularCompatibility.js';
 import Coupler from './Coupler.js';
 import Modeler from './Modeler.js';
 import {escapeKey, escapeKeys, unescapeKey, joinPath, splitPath} from './utils/paths.js';
+import {wrapPromiseCallback} from './utils/promises.js';
 import {SERVER_TIMESTAMP} from './utils/utils.js';
 
 import _ from 'lodash';
@@ -191,50 +192,51 @@ export default class Tree {
 
   commit(ref, updateFunction) {
     let tries = 0;
+    updateFunction = wrapPromiseCallback(updateFunction);
 
     const attemptTransaction = () => {
       if (tries++ >= 25) return Promise.reject(new Error('maxretry'));
       const currentValue = ref.value;
       const txn = new Transaction(ref.path, currentValue);
-      try {
-        updateFunction(txn);
-      } catch (e) {
-        return Promise.reject(e);
-      }
-      if (txn.outcome === 'abort') return txn;  // early return to save time
-      const values = _.mapValues(txn.values, value => escapeKeys(value));
-      // Capture old value before applying local writes.
-      const oldValue = toFirebaseJson(currentValue);
-      switch (txn.outcome) {
-        case 'cancel':
-          break;
-        case 'set':
-          if (this._modeler.isLocal(ref.path)) {
-            throw new Error(`Commit in local subtree: ${ref.path}`);
-          }
-          this._applyLocalWrite({[ref.path]: values['']});
-          break;
-        case 'update':
-          checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
-          _(values).keys().each(path => {
-            if (this._modeler.isLocal(path)) throw new Error(`Commit in local subtree: ${path}`);
-          });
-          this._applyLocalWrite(values);
-          relativizePaths(ref.path, values);
-          break;
-        default:
-          throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
-      }
-      return this._bridge.transaction(
-        this._rootUrl + ref.path, oldValue, values, this._writeSerial
-      ).then(result => {
-        if (result.committed) {
-          txn._currentValue = result.currentValue;
-          return txn;
-        } else {
-          this._integrateSnapshot(result.snapshot);
-          return attemptTransaction();
+      // Resolve an empty promise before running the update function to ensure that Vue's watcher
+      // queue gets emptied (it's also scheduled as a microtask) and computed properties are up to
+      // date.
+      return Promise.resolve().then(() => updateFunction(txn)).then(() => {
+        if (txn.outcome === 'abort') return txn;  // early return to save time
+        const values = _.mapValues(txn.values, value => escapeKeys(value));
+        // Capture old value before applying local writes.
+        const oldValue = toFirebaseJson(currentValue);
+        switch (txn.outcome) {
+          case 'cancel':
+            break;
+          case 'set':
+            if (this._modeler.isLocal(ref.path)) {
+              throw new Error(`Commit in local subtree: ${ref.path}`);
+            }
+            this._applyLocalWrite({[ref.path]: values['']});
+            break;
+          case 'update':
+            checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
+            _(values).keys().each(path => {
+              if (this._modeler.isLocal(path)) throw new Error(`Commit in local subtree: ${path}`);
+            });
+            this._applyLocalWrite(values);
+            relativizePaths(ref.path, values);
+            break;
+          default:
+            throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
         }
+        return this._bridge.transaction(
+          this._rootUrl + ref.path, oldValue, values, this._writeSerial
+        ).then(result => {
+          if (result.committed) {
+            txn._currentValue = result.currentValue;
+            return txn;
+          } else {
+            this._integrateSnapshot(result.snapshot);
+            return attemptTransaction();
+          }
+        });
       });
     };
 

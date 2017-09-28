@@ -2862,51 +2862,52 @@
 	    var this$1 = this;
 
 	  var tries = 0;
+	  updateFunction = wrapPromiseCallback(updateFunction);
 
 	  var attemptTransaction = function () {
 	    if (tries++ >= 25) { return Promise.reject(new Error('maxretry')); }
 	    var currentValue = ref.value;
 	    var txn = new Transaction(ref.path, currentValue);
-	    try {
-	      updateFunction(txn);
-	    } catch (e) {
-	      return Promise.reject(e);
-	    }
-	    if (txn.outcome === 'abort') { return txn; }// early return to save time
-	    var values = _.mapValues(txn.values, function (value) { return escapeKeys(value); });
-	    // Capture old value before applying local writes.
-	    var oldValue = toFirebaseJson(currentValue);
-	    switch (txn.outcome) {
-	      case 'cancel':
-	        break;
-	      case 'set':
-	        if (this$1._modeler.isLocal(ref.path)) {
-	          throw new Error(("Commit in local subtree: " + (ref.path)));
-	        }
-	        this$1._applyLocalWrite(( obj = {}, obj[ref.path] = values[''], obj ));
-	      var obj;
-	        break;
-	      case 'update':
-	        checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
-	        _(values).keys().each(function (path) {
-	          if (this$1._modeler.isLocal(path)) { throw new Error(("Commit in local subtree: " + path)); }
-	        });
-	        this$1._applyLocalWrite(values);
-	        relativizePaths(ref.path, values);
-	        break;
-	      default:
-	        throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
-	    }
-	    return this$1._bridge.transaction(
-	      this$1._rootUrl + ref.path, oldValue, values, this$1._writeSerial
-	    ).then(function (result) {
-	      if (result.committed) {
-	        txn._currentValue = result.currentValue;
-	        return txn;
-	      } else {
-	        this$1._integrateSnapshot(result.snapshot);
-	        return attemptTransaction();
+	    // Resolve an empty promise before running the update function to ensure that Vue's watcher
+	    // queue gets emptied (it's also scheduled as a microtask) and computed properties are up to
+	    // date.
+	    return Promise.resolve().then(function () { return updateFunction(txn); }).then(function () {
+	      if (txn.outcome === 'abort') { return txn; }// early return to save time
+	      var values = _.mapValues(txn.values, function (value) { return escapeKeys(value); });
+	      // Capture old value before applying local writes.
+	      var oldValue = toFirebaseJson(currentValue);
+	      switch (txn.outcome) {
+	        case 'cancel':
+	          break;
+	        case 'set':
+	          if (this$1._modeler.isLocal(ref.path)) {
+	            throw new Error(("Commit in local subtree: " + (ref.path)));
+	          }
+	          this$1._applyLocalWrite(( obj = {}, obj[ref.path] = values[''], obj ));
+	        var obj;
+	          break;
+	        case 'update':
+	          checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
+	          _(values).keys().each(function (path) {
+	            if (this$1._modeler.isLocal(path)) { throw new Error(("Commit in local subtree: " + path)); }
+	          });
+	          this$1._applyLocalWrite(values);
+	          relativizePaths(ref.path, values);
+	          break;
+	        default:
+	          throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
 	      }
+	      return this$1._bridge.transaction(
+	        this$1._rootUrl + ref.path, oldValue, values, this$1._writeSerial
+	      ).then(function (result) {
+	        if (result.committed) {
+	          txn._currentValue = result.currentValue;
+	          return txn;
+	        } else {
+	          this$1._integrateSnapshot(result.snapshot);
+	          return attemptTransaction();
+	        }
+	      });
 	    });
 	  };
 
