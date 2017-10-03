@@ -2934,7 +2934,7 @@
 	    for (var descendantPath in coupledDescendantPaths) {
 	      var subPath = descendantPath.slice(offset);
 	      var subValue = value;
-	      if (subPath) {
+	      if (subPath && value !== null && value !== undefined) {
 	        for (var i = 0, list = splitPath(subPath); i < list.length; i += 1) {
 	          var segment = list[i];
 
@@ -3101,7 +3101,7 @@
 	  }
 	  if (remoteWrite && this._localWrites[path || '/']) { return; }
 	  if (value === SERVER_TIMESTAMP) { value = this._localWriteTimestamp; }
-	  if (!_.isArray(value) && !(_.isObject(value) && value.constructor === Object)) {
+	  if (!_.isArray(value) && !_.isPlainObject(value)) {
 	    this._setFirebaseProperty(parent, key, value);
 	    return;
 	  }
@@ -3287,6 +3287,7 @@
 	  if (object.hasOwnProperty('$data')) { object = object.$data; }
 	  var descriptor = this._getFirebasePropertyDescriptor(object, key);
 	  if (descriptor) {
+	    if (object[key] === value) { return; }
 	    this._firebasePropertyEditAllowed = true;
 	    object[key] = value;
 	    this._firebasePropertyEditAllowed = false;

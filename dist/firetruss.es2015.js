@@ -2649,7 +2649,7 @@ class Tree {
       for (const descendantPath in coupledDescendantPaths) {
         const subPath = descendantPath.slice(offset);
         let subValue = value;
-        if (subPath) {
+        if (subPath && value !== null && value !== undefined) {
           for (const segment of splitPath(subPath)) {
             subValue = subValue[segment];
             if (subValue === undefined) break;
@@ -2790,7 +2790,7 @@ class Tree {
     }
     if (remoteWrite && this._localWrites[path || '/']) return;
     if (value === SERVER_TIMESTAMP) value = this._localWriteTimestamp;
-    if (!_.isArray(value) && !(_.isObject(value) && value.constructor === Object)) {
+    if (!_.isArray(value) && !_.isPlainObject(value)) {
       this._setFirebaseProperty(parent, key, value);
       return;
     }
@@ -2962,6 +2962,7 @@ class Tree {
     if (object.hasOwnProperty('$data')) object = object.$data;
     let descriptor = this._getFirebasePropertyDescriptor(object, key);
     if (descriptor) {
+      if (object[key] === value) return;
       this._firebasePropertyEditAllowed = true;
       object[key] = value;
       this._firebasePropertyEditAllowed = false;
