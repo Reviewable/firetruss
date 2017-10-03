@@ -413,7 +413,7 @@ export default class Tree {
       // as the object's own properties won't be made reactive until *after* it's been created.
       this._setFirebaseProperty(parent, key, null);
       object = this._createObject(path, key, parent);
-      this._setFirebaseProperty(parent, key, object);
+      this._setFirebaseProperty(parent, key, object, object.$hidden);
       this._fixObject(object);
       createdObjects.push(object);
       objectCreated = true;
@@ -569,10 +569,18 @@ export default class Tree {
     return descriptor;
   }
 
-  _setFirebaseProperty(object, key, value) {
+  _setFirebaseProperty(object, key, value, hidden) {
     if (object.hasOwnProperty('$data')) object = object.$data;
     let descriptor = this._getFirebasePropertyDescriptor(object, key);
     if (descriptor) {
+      if (hidden) {
+        // Redefine property as hidden after it's been created, since we usually don't know whether
+        // it should be hidden until too late.  This is a one-way deal -- you can't unhide a
+        // property later, but that's fine for our purposes.
+        Object.defineProperty(object, key, {
+          get: descriptor.get, set: descriptor.set, configurable: true, enumerable: false
+        });
+      }
       if (object[key] === value) return;
       this._firebasePropertyEditAllowed = true;
       object[key] = value;
@@ -582,7 +590,7 @@ export default class Tree {
       descriptor = Object.getOwnPropertyDescriptor(object, key);
       Object.defineProperty(object, key, {
         get: descriptor.get, set: this._overwriteFirebaseProperty.bind(this, descriptor, key),
-        configurable: true, enumerable: true
+        configurable: true, enumerable: !hidden
       });
     }
     angular.digest();

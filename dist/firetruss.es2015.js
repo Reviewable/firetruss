@@ -1941,6 +1941,7 @@ class Value {
     return this.$key;
   }
   get $data() {return this;}
+  get $hidden() {return false;}
   get $empty() {return _.isEmpty(this.$data);}
   get $keys() {return _.keys(this.$data);}
   get $values() {return _.values(this.$data);}
@@ -2096,7 +2097,7 @@ class Modeler {
     let node;
     for (const segment of segments) {
       let child = segment ?
-        node.children && (node.children[segment] || node.children.$) : this._trie;
+        node.children && (node.children[segment] || !scaffold && node.children.$) : this._trie;
       if (!child) {
         if (!scaffold) return;
         node.children = node.children || {};
@@ -2189,14 +2190,15 @@ class Modeler {
         if (!_.has(mount, 'placeholder')) mount.placeholder = {};
       }
       const targetMount = this._getMount(mount.path.replace(/\$[^/]*/g, '$'), true);
-      if (targetMount.matcher) {
+      if (targetMount.matcher && (
+            targetMount.escapedKey === escapedKey ||
+            targetMount.escapedKey.charAt(0) === '$' && escapedKey.charAt(0) === '$')) {
         throw new Error(
           `Multiple classes mounted at ${mount.path}: ${targetMount.Class.name}, ${Class.name}`);
       }
-      _.extend(targetMount, {
-        Class, matcher, computedProperties, escapedKey, placeholder: mount.placeholder,
-        local: mount.local
-      });
+      _.extend(
+        targetMount, {Class, matcher, computedProperties, escapedKey},
+        _.pick(mount, 'placeholder', 'local', 'keysUnsafe', 'hidden'));
     });
     _.each(allVariables, variable => {
       if (!Class.prototype[variable]) {
@@ -2229,6 +2231,7 @@ class Modeler {
     creatingObjectProperties = null;
 
     if (mount.keysUnsafe) properties.$data = {value: Object.create(null)};
+    if (mount.hidden) properties.$hidden = {value: true};
     if (mount.computedProperties) {
       _.each(mount.computedProperties, prop => {
         properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop);
@@ -2802,7 +2805,7 @@ class Tree {
       // as the object's own properties won't be made reactive until *after* it's been created.
       this._setFirebaseProperty(parent, key, null);
       object = this._createObject(path, key, parent);
-      this._setFirebaseProperty(parent, key, object);
+      this._setFirebaseProperty(parent, key, object, object.$hidden);
       this._fixObject(object);
       createdObjects.push(object);
       objectCreated = true;
@@ -2958,10 +2961,18 @@ class Tree {
     return descriptor;
   }
 
-  _setFirebaseProperty(object, key, value) {
+  _setFirebaseProperty(object, key, value, hidden) {
     if (object.hasOwnProperty('$data')) object = object.$data;
     let descriptor = this._getFirebasePropertyDescriptor(object, key);
     if (descriptor) {
+      if (hidden) {
+        // Redefine property as hidden after it's been created, since we usually don't know whether
+        // it should be hidden until too late.  This is a one-way deal -- you can't unhide a
+        // property later, but that's fine for our purposes.
+        Object.defineProperty(object, key, {
+          get: descriptor.get, set: descriptor.set, configurable: true, enumerable: false
+        });
+      }
       if (object[key] === value) return;
       this._firebasePropertyEditAllowed = true;
       object[key] = value;
@@ -2971,7 +2982,7 @@ class Tree {
       descriptor = Object.getOwnPropertyDescriptor(object, key);
       Object.defineProperty(object, key, {
         get: descriptor.get, set: this._overwriteFirebaseProperty.bind(this, descriptor, key),
-        configurable: true, enumerable: true
+        configurable: true, enumerable: !hidden
       });
     }
     angularProxy.digest();

@@ -37,6 +37,7 @@ class Value {
     return this.$key;
   }
   get $data() {return this;}
+  get $hidden() {return false;}
   get $empty() {return _.isEmpty(this.$data);}
   get $keys() {return _.keys(this.$data);}
   get $values() {return _.values(this.$data);}
@@ -192,7 +193,7 @@ export default class Modeler {
     let node;
     for (const segment of segments) {
       let child = segment ?
-        node.children && (node.children[segment] || node.children.$) : this._trie;
+        node.children && (node.children[segment] || !scaffold && node.children.$) : this._trie;
       if (!child) {
         if (!scaffold) return;
         node.children = node.children || {};
@@ -285,14 +286,15 @@ export default class Modeler {
         if (!_.has(mount, 'placeholder')) mount.placeholder = {};
       }
       const targetMount = this._getMount(mount.path.replace(/\$[^/]*/g, '$'), true);
-      if (targetMount.matcher) {
+      if (targetMount.matcher && (
+            targetMount.escapedKey === escapedKey ||
+            targetMount.escapedKey.charAt(0) === '$' && escapedKey.charAt(0) === '$')) {
         throw new Error(
           `Multiple classes mounted at ${mount.path}: ${targetMount.Class.name}, ${Class.name}`);
       }
-      _.extend(targetMount, {
-        Class, matcher, computedProperties, escapedKey, placeholder: mount.placeholder,
-        local: mount.local
-      });
+      _.extend(
+        targetMount, {Class, matcher, computedProperties, escapedKey},
+        _.pick(mount, 'placeholder', 'local', 'keysUnsafe', 'hidden'));
     });
     _.each(allVariables, variable => {
       if (!Class.prototype[variable]) {
@@ -325,6 +327,7 @@ export default class Modeler {
     creatingObjectProperties = null;
 
     if (mount.keysUnsafe) properties.$data = {value: Object.create(null)};
+    if (mount.hidden) properties.$hidden = {value: true};
     if (mount.computedProperties) {
       _.each(mount.computedProperties, prop => {
         properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop);

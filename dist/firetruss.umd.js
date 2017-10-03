@@ -2146,7 +2146,7 @@
 
 	var Value = function Value () {};
 
-	var prototypeAccessors$9 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$empty: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$initializers: {},$$finalizers: {} };
+	var prototypeAccessors$9 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$hidden: {},$empty: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$initializers: {},$$finalizers: {} };
 
 	prototypeAccessors$9.$parent.get = function () {return creatingObjectProperties.$parent.value;};
 	prototypeAccessors$9.$path.get = function () {return creatingObjectProperties.$path.value;};
@@ -2165,6 +2165,7 @@
 	  return this.$key;
 	};
 	prototypeAccessors$9.$data.get = function () {return this;};
+	prototypeAccessors$9.$hidden.get = function () {return false;};
 	prototypeAccessors$9.$empty.get = function () {return _.isEmpty(this.$data);};
 	prototypeAccessors$9.$keys.get = function () {return _.keys(this.$data);};
 	prototypeAccessors$9.$values.get = function () {return _.values(this.$data);};
@@ -2332,7 +2333,7 @@
 	    var segment = list[i];
 
 	      var child = segment ?
-	      node.children && (node.children[segment] || node.children.$) : this$1._trie;
+	      node.children && (node.children[segment] || !scaffold && node.children.$) : this$1._trie;
 	    if (!child) {
 	      if (!scaffold) { return; }
 	      node.children = node.children || {};
@@ -2439,14 +2440,15 @@
 	      if (!_.has(mount, 'placeholder')) { mount.placeholder = {}; }
 	    }
 	    var targetMount = this$1._getMount(mount.path.replace(/\$[^/]*/g, '$'), true);
-	    if (targetMount.matcher) {
+	    if (targetMount.matcher && (
+	          targetMount.escapedKey === escapedKey ||
+	          targetMount.escapedKey.charAt(0) === '$' && escapedKey.charAt(0) === '$')) {
 	      throw new Error(
 	        ("Multiple classes mounted at " + (mount.path) + ": " + (targetMount.Class.name) + ", " + (Class.name)));
 	    }
-	    _.extend(targetMount, {
-	      Class: Class, matcher: matcher, computedProperties: computedProperties, escapedKey: escapedKey, placeholder: mount.placeholder,
-	      local: mount.local
-	    });
+	    _.extend(
+	      targetMount, {Class: Class, matcher: matcher, computedProperties: computedProperties, escapedKey: escapedKey},
+	      _.pick(mount, 'placeholder', 'local', 'keysUnsafe', 'hidden'));
 	  });
 	  _.each(allVariables, function (variable) {
 	    if (!Class.prototype[variable]) {
@@ -2481,6 +2483,7 @@
 	  creatingObjectProperties = null;
 
 	  if (mount.keysUnsafe) { properties.$data = {value: Object.create(null)}; }
+	  if (mount.hidden) { properties.$hidden = {value: true}; }
 	  if (mount.computedProperties) {
 	    _.each(mount.computedProperties, function (prop) {
 	      properties[prop.name] = this$1._buildComputedPropertyDescriptor(object, prop);
@@ -3113,7 +3116,7 @@
 	    // as the object's own properties won't be made reactive until *after* it's been created.
 	    this._setFirebaseProperty(parent, key, null);
 	    object = this._createObject(path, key, parent);
-	    this._setFirebaseProperty(parent, key, object);
+	    this._setFirebaseProperty(parent, key, object, object.$hidden);
 	    this._fixObject(object);
 	    createdObjects.push(object);
 	    objectCreated = true;
@@ -3283,10 +3286,18 @@
 	  return descriptor;
 	};
 
-	Tree.prototype._setFirebaseProperty = function _setFirebaseProperty (object, key, value) {
+	Tree.prototype._setFirebaseProperty = function _setFirebaseProperty (object, key, value, hidden) {
 	  if (object.hasOwnProperty('$data')) { object = object.$data; }
 	  var descriptor = this._getFirebasePropertyDescriptor(object, key);
 	  if (descriptor) {
+	    if (hidden) {
+	      // Redefine property as hidden after it's been created, since we usually don't know whether
+	      // it should be hidden until too late.This is a one-way deal -- you can't unhide a
+	      // property later, but that's fine for our purposes.
+	      Object.defineProperty(object, key, {
+	        get: descriptor.get, set: descriptor.set, configurable: true, enumerable: false
+	      });
+	    }
 	    if (object[key] === value) { return; }
 	    this._firebasePropertyEditAllowed = true;
 	    object[key] = value;
@@ -3296,7 +3307,7 @@
 	    descriptor = Object.getOwnPropertyDescriptor(object, key);
 	    Object.defineProperty(object, key, {
 	      get: descriptor.get, set: this._overwriteFirebaseProperty.bind(this, descriptor, key),
-	      configurable: true, enumerable: true
+	      configurable: true, enumerable: !hidden
 	    });
 	  }
 	  angularProxy.digest();
