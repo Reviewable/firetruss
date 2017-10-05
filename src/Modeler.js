@@ -357,6 +357,7 @@ export default class Modeler {
         }
         if (isTrussEqual(value, newValue)) return;
         // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
+        freeze(newValue);
         propertyStats.numUpdates += 1;
         writeAllowed = true;
         object[prop.name] = newValue;
@@ -495,4 +496,15 @@ function wrapConnections(object, connections) {
       return wrapConnections(object, descriptor);
     }
   });
+}
+
+function freeze(object) {
+  if (object === null || object === undefined || Object.isFrozen(object) || !_.isObject(object) ||
+      object.$truss) return object;
+  object = Object.freeze(object);
+  if (_.isArray(object)) {
+    return _.map(object, value => freeze(value));
+  } else {
+    return _.mapValues(object, value => freeze(value));
+  }
 }

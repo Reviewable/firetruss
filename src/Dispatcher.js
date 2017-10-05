@@ -70,9 +70,9 @@ class Operation {
     this._ended = value;
   }
 
-  _markReady() {
+  _markReady(ending) {
     this._ready = true;
-    this._tries = 0;
+    if (!ending) this._tries = 0;
     _.each(this._slowHandles, handle => handle.cancel());
   }
 
@@ -214,7 +214,7 @@ export default class Dispatcher {
   }
 
   _afterEnd(operation) {
-    this.markReady(operation);
+    operation._markReady(true);
     if (operation.error) {
       const onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
       return this._bridge.probeError(operation.error).then(() => {
