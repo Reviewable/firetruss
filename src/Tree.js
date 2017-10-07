@@ -58,7 +58,7 @@ export default class Tree {
     this._localWrites = {};
     this._localWriteTimestamp = null;
     this._initialized = false;
-    this._modeler = new Modeler();
+    this._modeler = new Modeler(truss.constructor.VERSION === 'dev');
     this._coupler = new Coupler(
       rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
     this._vue = new Vue({data: {$root: undefined}});

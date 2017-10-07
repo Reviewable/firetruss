@@ -103,7 +103,7 @@ export default class Truss {
   peek(target, callback) {
     callback = wrapPromiseCallback(callback);
     let cleanup, cancel;
-    const promise = new Promise((resolve, reject) => {
+    const promise = Promise.resolve().then(() => new Promise((resolve, reject) => {
       const scope = {};
       let callbackPromise;
 
@@ -141,7 +141,7 @@ export default class Truss {
         reject(new Error('Canceled'));
         cleanup();
       };
-    });
+    }));
     return promiseCancel(promise, cancel);
   }
 

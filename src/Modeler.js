@@ -160,8 +160,9 @@ class FrozenWrapper {
 
 
 export default class Modeler {
-  constructor() {
+  constructor(debug) {
     this._trie = {Class: Value};
+    this._debug = debug;
     Object.freeze(this);
   }
 
@@ -345,7 +346,27 @@ export default class Modeler {
 
     object.$$initializers.push(vue => {
       let unwatchNow = false;
-      const unwatch = vue.$watch(computeValue.bind(object, prop, propertyStats), newValue => {
+      const compute = computeValue.bind(object, prop, propertyStats);
+      if (this._debug) compute.toString = () => {return prop.fullName;};
+      const unwatch = vue.$watch(compute, newValue => {
+        if (_.isObject(newValue) && newValue.then) {
+          const computationSerial = propertyStats.numRecomputes;
+          newValue.then(finalValue => {
+            if (computationSerial === propertyStats.numRecomputes) update(finalValue);
+          }, error => {
+            if (computationSerial === propertyStats.numRecomputes) {
+              if (update(new ErrorWrapper(error))) throw error;
+            }
+          });
+        } else {
+          if (update(newValue)) {
+            angular.digest();
+            if (newValue instanceof ErrorWrapper) throw newValue.error;
+          }
+        }
+      }, {immediate: true});  // use immediate:true since watcher will run computeValue anyway
+
+      function update(newValue) {
         if (newValue instanceof FrozenWrapper) {
           newValue = newValue.value;
           if (unwatch) {
@@ -362,9 +383,8 @@ export default class Modeler {
         writeAllowed = true;
         object[prop.name] = newValue;
         writeAllowed = false;
-        angular.digest();
-        if (newValue instanceof ErrorWrapper) throw newValue.error;
-      }, {immediate: true});  // use immediate:true since watcher will run computeValue anyway
+      }
+
       if (unwatchNow) {
         unwatch();
       } else {

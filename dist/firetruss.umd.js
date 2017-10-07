@@ -2294,8 +2294,9 @@
 	};
 
 
-	var Modeler = function Modeler() {
+	var Modeler = function Modeler(debug) {
 	  this._trie = {Class: Value};
+	  this._debug = debug;
 	  Object.freeze(this);
 	};
 
@@ -2494,6 +2495,8 @@
 	};
 
 	Modeler.prototype._buildComputedPropertyDescriptor = function _buildComputedPropertyDescriptor (object, prop) {
+	    var this$1 = this;
+
 	  var propertyStats = stats.for(prop.fullName);
 
 	  var value;
@@ -2501,7 +2504,27 @@
 
 	  object.$$initializers.push(function (vue) {
 	    var unwatchNow = false;
-	    var unwatch = vue.$watch(computeValue.bind(object, prop, propertyStats), function (newValue) {
+	    var compute = computeValue.bind(object, prop, propertyStats);
+	    if (this$1._debug) { compute.toString = function () {return prop.fullName;}; }
+	    var unwatch = vue.$watch(compute, function (newValue) {
+	      if (_.isObject(newValue) && newValue.then) {
+	        var computationSerial = propertyStats.numRecomputes;
+	        newValue.then(function (finalValue) {
+	          if (computationSerial === propertyStats.numRecomputes) { update(finalValue); }
+	        }, function (error) {
+	          if (computationSerial === propertyStats.numRecomputes) {
+	            if (update(new ErrorWrapper(error))) { throw error; }
+	          }
+	        });
+	      } else {
+	        if (update(newValue)) {
+	          angularProxy.digest();
+	          if (newValue instanceof ErrorWrapper) { throw newValue.error; }
+	        }
+	      }
+	    }, {immediate: true});// use immediate:true since watcher will run computeValue anyway
+
+	    function update(newValue) {
 	      if (newValue instanceof FrozenWrapper) {
 	        newValue = newValue.value;
 	        if (unwatch) {
@@ -2518,9 +2541,8 @@
 	      writeAllowed = true;
 	      object[prop.name] = newValue;
 	      writeAllowed = false;
-	      angularProxy.digest();
-	      if (newValue instanceof ErrorWrapper) { throw newValue.error; }
-	    }, {immediate: true});// use immediate:true since watcher will run computeValue anyway
+	    }
+
 	    if (unwatchNow) {
 	      unwatch();
 	    } else {
@@ -2725,7 +2747,7 @@
 	  this._localWrites = {};
 	  this._localWriteTimestamp = null;
 	  this._initialized = false;
-	  this._modeler = new Modeler();
+	  this._modeler = new Modeler(truss.constructor.VERSION === 'dev');
 	  this._coupler = new Coupler(
 	    rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
 	  this._vue = new Vue({data: {$root: undefined}});
@@ -3491,7 +3513,7 @@
 
 	  callback = wrapPromiseCallback(callback);
 	  var cleanup, cancel;
-	  var promise = new Promise(function (resolve, reject) {
+	  var promise = Promise.resolve().then(function () { return new Promise(function (resolve, reject) {
 	    var scope = {};
 	    var callbackPromise;
 
@@ -3529,7 +3551,7 @@
 	      reject(new Error('Canceled'));
 	      cleanup();
 	    };
-	  });
+	  }); });
 	  return promiseCancel(promise, cancel);
 	};
 
