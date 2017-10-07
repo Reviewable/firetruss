@@ -2,7 +2,6 @@ import {Handle, Query, Reference} from './Reference.js';
 import angular from './angularCompatibility.js';
 import stats from './utils/stats.js';
 import {isTrussEqual} from './utils/utils.js';
-import {splitPath} from './utils/paths.js';
 
 import _ from 'lodash';
 import performanceNow from 'performance-now';

@@ -2146,7 +2146,7 @@
 
 	var Value = function Value () {};
 
-	var prototypeAccessors$9 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$hidden: {},$empty: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$initializers: {},$$finalizers: {} };
+	var prototypeAccessors$9 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$hidden: {},$empty: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$initializers: {},$$finalizers: {},$$destroyed: {} };
 
 	prototypeAccessors$9.$parent.get = function () {return creatingObjectProperties.$parent.value;};
 	prototypeAccessors$9.$path.get = function () {return creatingObjectProperties.$path.value;};
@@ -2178,6 +2178,7 @@
 	Value.prototype.$intercept = function $intercept (actionType, callbacks) {
 	    var this$1 = this;
 
+	  if (this.$$destroyed) { throw new Error('Object already destroyed'); }
 	  var unintercept = this.$truss.intercept(actionType, callbacks);
 	  var uninterceptAndRemoveFinalizer = function () {
 	    unintercept();
@@ -2190,6 +2191,7 @@
 	Value.prototype.$connect = function $connect (scope, connections) {
 	    var this$1 = this;
 
+	  if (this.$$destroyed) { throw new Error('Object already destroyed'); }
 	  if (!connections) {
 	    connections = scope;
 	    scope = undefined;
@@ -2208,6 +2210,7 @@
 	Value.prototype.$peek = function $peek (target, callback) {
 	    var this$1 = this;
 
+	  if (this.$$destroyed) { throw new Error('Object already destroyed'); }
 	  var promise = promiseFinally(
 	    this.$truss.peek(target, callback), function () {_.pull(this$1.$$finalizers, promise.cancel);}
 	  );
@@ -2218,6 +2221,7 @@
 	Value.prototype.$watch = function $watch (subjectFn, callbackFn, options) {
 	    var this$1 = this;
 
+	  if (this.$$destroyed) { throw new Error('Object already destroyed'); }
 	  var unwatchAndRemoveFinalizer;
 
 	  var unwatch = this.$truss.watch(function () {
@@ -2236,6 +2240,7 @@
 	Value.prototype.$when = function $when (expression, options) {
 	    var this$1 = this;
 
+	  if (this.$$destroyed) { throw new Error('Object already destroyed'); }
 	  var promise = this.$truss.when(function () {
 	    this$1.$$touchThis();
 	    return expression.call(this$1);
@@ -2279,6 +2284,10 @@
 	  Object.defineProperty(this, '$$finalizers', {
 	    value: [], writable: false, enumerable: false, configurable: false});
 	  return this.$$finalizers;
+	};
+
+	prototypeAccessors$9.$$destroyed.get = function () {
+	  return false;
 	};
 
 	Object.defineProperties( Value.prototype, prototypeAccessors$9 );
@@ -2507,6 +2516,7 @@
 	    var compute = computeValue.bind(object, prop, propertyStats);
 	    if (this$1._debug) { compute.toString = function () {return prop.fullName;}; }
 	    var unwatch = vue.$watch(compute, function (newValue) {
+	      if (object.$$destroyed) { throw new Error('Object already destroyed'); }
 	      if (_.isObject(newValue) && newValue.then) {
 	        var computationSerial = propertyStats.numRecomputes;
 	        newValue.then(function (finalValue) {
@@ -2572,6 +2582,8 @@
 	      }
 	  }
 	  if (_.isFunction(object.$finalize)) { object.$finalize(); }
+	  Object.defineProperty(
+	    object, '$$destroyed', {value: true, enumerable: false, configurable: false});
 	};
 
 	Modeler.prototype.isPlaceholder = function isPlaceholder (path) {
@@ -2645,6 +2657,7 @@
 
 	function computeValue(prop, propertyStats) {
 	  // jshint validthis: true
+	  if (this.$$destroyed) { throw new Error('Object already destroyed'); }
 	  // Touch this object, since a failed access to a missing property doesn't get captured as a
 	  // dependency.
 	  this.$$touchThis();
@@ -3082,7 +3095,7 @@
 	  if (!(object && object.$truss)) { return; }
 	  this._modeler.destroyObject(object);
 	  for (var key in object) {
-	    if (!Object.hasOwnProperty(object, key)) { continue; }
+	    if (!object.hasOwnProperty(key)) { continue; }
 	    this$1._destroyObject(object[key]);
 	  }
 	};
@@ -3138,12 +3151,13 @@
 	  }
 	  if (remoteWrite && this._localWrites[path || '/']) { return; }
 	  if (value === SERVER_TIMESTAMP) { value = this._localWriteTimestamp; }
+	  var object = parent[key];
 	  if (!_.isArray(value) && !_.isPlainObject(value)) {
+	    this._destroyObject(object);
 	    this._setFirebaseProperty(parent, key, value);
 	    return;
 	  }
 	  var objectCreated = false;
-	  var object = parent[key];
 	  if (!_.isObject(object)) {
 	    // Need to pre-set the property, so that if the child object attempts to watch any of its own
 	    // properties while being created the $$touchThis method has something to add a dependency on

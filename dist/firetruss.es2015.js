@@ -1952,6 +1952,7 @@ class Value {
   get $overridden() {return false;}
 
   $intercept(actionType, callbacks) {
+    if (this.$$destroyed) throw new Error('Object already destroyed');
     const unintercept = this.$truss.intercept(actionType, callbacks);
     const uninterceptAndRemoveFinalizer = () => {
       unintercept();
@@ -1962,6 +1963,7 @@ class Value {
   }
 
   $connect(scope, connections) {
+    if (this.$$destroyed) throw new Error('Object already destroyed');
     if (!connections) {
       connections = scope;
       scope = undefined;
@@ -1978,6 +1980,7 @@ class Value {
   }
 
   $peek(target, callback) {
+    if (this.$$destroyed) throw new Error('Object already destroyed');
     const promise = promiseFinally(
       this.$truss.peek(target, callback), () => {_.pull(this.$$finalizers, promise.cancel);}
     );
@@ -1986,6 +1989,7 @@ class Value {
   }
 
   $watch(subjectFn, callbackFn, options) {
+    if (this.$$destroyed) throw new Error('Object already destroyed');
     let unwatchAndRemoveFinalizer;
 
     const unwatch = this.$truss.watch(() => {
@@ -2002,6 +2006,7 @@ class Value {
   }
 
   $when(expression, options) {
+    if (this.$$destroyed) throw new Error('Object already destroyed');
     const promise = this.$truss.when(() => {
       this.$$touchThis();
       return expression.call(this);
@@ -2045,6 +2050,10 @@ class Value {
     Object.defineProperty(this, '$$finalizers', {
       value: [], writable: false, enumerable: false, configurable: false});
     return this.$$finalizers;
+  }
+
+  get $$destroyed() {
+    return false;
   }
 }
 
@@ -2253,6 +2262,7 @@ class Modeler {
       const compute = computeValue.bind(object, prop, propertyStats);
       if (this._debug) compute.toString = () => {return prop.fullName;};
       const unwatch = vue.$watch(compute, newValue => {
+        if (object.$$destroyed) throw new Error('Object already destroyed');
         if (_.isObject(newValue) && newValue.then) {
           const computationSerial = propertyStats.numRecomputes;
           newValue.then(finalValue => {
@@ -2314,6 +2324,8 @@ class Modeler {
       for (const fn of _.clone(object.$$finalizers)) fn();
     }
     if (_.isFunction(object.$finalize)) object.$finalize();
+    Object.defineProperty(
+      object, '$$destroyed', {value: true, enumerable: false, configurable: false});
   }
 
   isPlaceholder(path) {
@@ -2381,6 +2393,7 @@ class Modeler {
 
 function computeValue(prop, propertyStats) {
   // jshint validthis: true
+  if (this.$$destroyed) throw new Error('Object already destroyed');
   // Touch this object, since a failed access to a missing property doesn't get captured as a
   // dependency.
   this.$$touchThis();
@@ -2779,7 +2792,7 @@ class Tree {
     if (!(object && object.$truss)) return;
     this._modeler.destroyObject(object);
     for (const key in object) {
-      if (!Object.hasOwnProperty(object, key)) continue;
+      if (!object.hasOwnProperty(key)) continue;
       this._destroyObject(object[key]);
     }
   }
@@ -2825,12 +2838,13 @@ class Tree {
     }
     if (remoteWrite && this._localWrites[path || '/']) return;
     if (value === SERVER_TIMESTAMP) value = this._localWriteTimestamp;
+    let object = parent[key];
     if (!_.isArray(value) && !_.isPlainObject(value)) {
+      this._destroyObject(object);
       this._setFirebaseProperty(parent, key, value);
       return;
     }
     let objectCreated = false;
-    let object = parent[key];
     if (!_.isObject(object)) {
       // Need to pre-set the property, so that if the child object attempts to watch any of its own
       // properties while being created the $$touchThis method has something to add a dependency on

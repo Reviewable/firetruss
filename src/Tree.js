@@ -355,7 +355,7 @@ export default class Tree {
     if (!(object && object.$truss)) return;
     this._modeler.destroyObject(object);
     for (const key in object) {
-      if (!Object.hasOwnProperty(object, key)) continue;
+      if (!object.hasOwnProperty(key)) continue;
       this._destroyObject(object[key]);
     }
   }
@@ -401,12 +401,13 @@ export default class Tree {
     }
     if (remoteWrite && this._localWrites[path || '/']) return;
     if (value === SERVER_TIMESTAMP) value = this._localWriteTimestamp;
+    let object = parent[key];
     if (!_.isArray(value) && !_.isPlainObject(value)) {
+      this._destroyObject(object);
       this._setFirebaseProperty(parent, key, value);
       return;
     }
     let objectCreated = false;
-    let object = parent[key];
     if (!_.isObject(object)) {
       // Need to pre-set the property, so that if the child object attempts to watch any of its own
       // properties while being created the $$touchThis method has something to add a dependency on
