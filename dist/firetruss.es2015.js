@@ -2240,7 +2240,9 @@ class Modeler {
     const object = new mount.Class();
     creatingObjectProperties = null;
 
-    if (mount.keysUnsafe) properties.$data = {value: Object.create(null)};
+    if (mount.keysUnsafe) {
+      properties.$data = {value: Object.create(null), configurable: true, enumerable: true};
+    }
     if (mount.hidden) properties.$hidden = {value: true};
     if (mount.computedProperties) {
       _.each(mount.computedProperties, prop => {
@@ -2773,7 +2775,7 @@ class Tree {
       const descriptor = Object.getOwnPropertyDescriptor(object, name);
       if (descriptor.configurable && descriptor.enumerable) {
         descriptor.enumerable = false;
-        if (name === '$parent') descriptor.configurable = false;
+        if (_.startsWith(name, '$')) descriptor.configurable = false;
         Object.defineProperty(object, name, descriptor);
       }
     }
@@ -2989,8 +2991,8 @@ class Tree {
     return object;
   }
 
-  _getFirebasePropertyDescriptor(object, key) {
-    let descriptor = Object.getOwnPropertyDescriptor(object, key);
+  _getFirebasePropertyDescriptor(object, data, key) {
+    let descriptor = Object.getOwnPropertyDescriptor(data, key);
     if (descriptor) {
       if (!descriptor.enumerable) {
         throw new Error(
@@ -3000,7 +3002,7 @@ class Tree {
       if (!descriptor.get || !descriptor.set) {
         throw new Error(`Unbound property at ${object.$path}: ${key}`);
       }
-    } else if (key in object) {
+    } else if (key in data) {
       throw new Error(
         `Key conflict between Firebase and inherited property at ${object.$path}: ${key}`);
     }
@@ -3008,25 +3010,25 @@ class Tree {
   }
 
   _setFirebaseProperty(object, key, value, hidden) {
-    if (object.hasOwnProperty('$data')) object = object.$data;
-    let descriptor = this._getFirebasePropertyDescriptor(object, key);
+    const data = object.hasOwnProperty('$data') ? object.$data : object;
+    let descriptor = this._getFirebasePropertyDescriptor(object, data, key);
     if (descriptor) {
       if (hidden) {
         // Redefine property as hidden after it's been created, since we usually don't know whether
         // it should be hidden until too late.  This is a one-way deal -- you can't unhide a
         // property later, but that's fine for our purposes.
-        Object.defineProperty(object, key, {
+        Object.defineProperty(data, key, {
           get: descriptor.get, set: descriptor.set, configurable: true, enumerable: false
         });
       }
-      if (object[key] === value) return;
+      if (data[key] === value) return;
       this._firebasePropertyEditAllowed = true;
-      object[key] = value;
+      data[key] = value;
       this._firebasePropertyEditAllowed = false;
     } else {
-      Vue.set(object, key, value);
-      descriptor = Object.getOwnPropertyDescriptor(object, key);
-      Object.defineProperty(object, key, {
+      Vue.set(data, key, value);
+      descriptor = Object.getOwnPropertyDescriptor(data, key);
+      Object.defineProperty(data, key, {
         get: descriptor.get, set: this._overwriteFirebaseProperty.bind(this, descriptor, key),
         configurable: true, enumerable: !hidden
       });
@@ -3044,11 +3046,11 @@ class Tree {
   }
 
   _deleteFirebaseProperty(object, key) {
-    if (object.hasOwnProperty('$data')) object = object.$data;
+    const data = object.hasOwnProperty('$data') ? object.$data : object;
     // Make sure it's actually a Firebase property.
-    this._getFirebasePropertyDescriptor(object, key);
-    this._destroyObject(object[key]);
-    Vue.delete(object, key);
+    this._getFirebasePropertyDescriptor(object, data, key);
+    this._destroyObject(data[key]);
+    Vue.delete(data, key);
     angularProxy.digest();
   }
 

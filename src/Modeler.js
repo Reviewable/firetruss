@@ -336,7 +336,9 @@ export default class Modeler {
     const object = new mount.Class();
     creatingObjectProperties = null;
 
-    if (mount.keysUnsafe) properties.$data = {value: Object.create(null)};
+    if (mount.keysUnsafe) {
+      properties.$data = {value: Object.create(null), configurable: true, enumerable: true};
+    }
     if (mount.hidden) properties.$hidden = {value: true};
     if (mount.computedProperties) {
       _.each(mount.computedProperties, prop => {
