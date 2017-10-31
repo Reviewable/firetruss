@@ -359,8 +359,12 @@ export default class Modeler {
       let unwatchNow = false;
       const compute = computeValue.bind(object, prop, propertyStats);
       if (this._debug) compute.toString = () => {return prop.fullName;};
-      const unwatch = vue.$watch(compute, newValue => {
-        if (object.$$destroyed) throw new Error('Object already destroyed');
+      let unwatch = () => {unwatchNow = true;};
+      unwatch = vue.$watch(compute, newValue => {
+        if (object.$$destroyed) {
+          unwatch();
+          return;
+        }
         if (_.isObject(newValue) && newValue.then) {
           const computationSerial = propertyStats.numRecomputes;
           newValue.then(finalValue => {
@@ -381,12 +385,8 @@ export default class Modeler {
       function update(newValue) {
         if (newValue instanceof FrozenWrapper) {
           newValue = newValue.value;
-          if (unwatch) {
-            unwatch();
-            _.pull(object.$$finalizers, unwatch);
-          } else {
-            unwatchNow = true;
-          }
+          unwatch();
+          _.pull(object.$$finalizers, unwatch);
         }
         if (isTrussEqual(value, newValue)) return;
         // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
@@ -474,7 +474,7 @@ export default class Modeler {
         }
         const value = object[key];
         if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
-            !(value instanceof Function)) {
+            !(value instanceof Function || value instanceof Promise)) {
           value.$$$trussCheck = true;
           checkedObjects.push(value);
           this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
@@ -491,7 +491,7 @@ export default class Modeler {
 
 function computeValue(prop, propertyStats) {
   // jshint validthis: true
-  if (this.$$destroyed) throw new Error('Object already destroyed');
+  if (this.$$destroyed) return;
   // Touch this object, since a failed access to a missing property doesn't get captured as a
   // dependency.
   this.$$touchThis();

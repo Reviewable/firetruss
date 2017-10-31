@@ -500,7 +500,7 @@ export default class Tree {
     });
     while (object !== undefined && object !== this.root) {
       const parent =
-        object.$parent || object === targetObject && this.getObject(targetParentPath);
+        object && object.$parent || object === targetObject && this.getObject(targetParentPath);
       if (!this._modeler.isPlaceholder(object.$path || targetPath)) {
         const ghostObjects = deleted ? null : [targetObject];
         if (!this._holdsConcreteData(object, ghostObjects)) {
