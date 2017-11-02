@@ -197,7 +197,7 @@ class PathMatcher {
       return '\u0001';
     });
     Object.freeze(this.variables);
-    if (/[$-.?[-^{|}]/.test(pathTemplate)) {
+    if (/[.$#\[\]]|\\(?!\d\d)/.test(pathTemplate)) {
       throw new Error('Path pattern has unescaped keys: ' + pattern);
     }
     this._regex = new RegExp(
@@ -748,6 +748,10 @@ class Handle {
 
   match(pattern) {
     return makePathMatcher(pattern).match(this.path);
+  }
+
+  test(pattern) {
+    return makePathMatcher(pattern).test(this.path);
   }
 
   isEqual(that) {
@@ -2741,10 +2745,7 @@ class Tree {
       }
     });
     const pathPrefix = prefixSegments.length === 1 ? '/' : prefixSegments.join('/');
-    _.each(_.keys(values), key => {
-      values[key.slice(pathPrefix.length + 1)] = values[key];
-      delete values[key];
-    });
+    relativizePaths(pathPrefix, values);
     return pathPrefix;
   }
 
@@ -3094,8 +3095,9 @@ function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
 }
 
 function relativizePaths(rootPath, values) {
+  const offset = rootPath === '/' ? 1 : rootPath.length + 1;
   _.each(_.keys(values), path => {
-    values[path.slice(rootPath === '/' ? 1 : rootPath.length + 1)] = values[path];
+    values[path.slice(offset)] = values[path];
     delete values[path];
   });
 }

@@ -79,6 +79,10 @@ export class Handle {
     return makePathMatcher(pattern).match(this.path);
   }
 
+  test(pattern) {
+    return makePathMatcher(pattern).test(this.path);
+  }
+
   isEqual(that) {
     if (!(that instanceof Handle)) return false;
     return this._tree === that._tree && this.toString() === that.toString() &&

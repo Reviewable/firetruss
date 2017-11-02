@@ -302,10 +302,7 @@ export default class Tree {
       }
     });
     const pathPrefix = prefixSegments.length === 1 ? '/' : prefixSegments.join('/');
-    _.each(_.keys(values), key => {
-      values[key.slice(pathPrefix.length + 1)] = values[key];
-      delete values[key];
-    });
+    relativizePaths(pathPrefix, values);
     return pathPrefix;
   }
 
@@ -655,8 +652,9 @@ export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
 }
 
 export function relativizePaths(rootPath, values) {
+  const offset = rootPath === '/' ? 1 : rootPath.length + 1;
   _.each(_.keys(values), path => {
-    values[path.slice(rootPath === '/' ? 1 : rootPath.length + 1)] = values[path];
+    values[path.slice(offset)] = values[path];
     delete values[path];
   });
 }
