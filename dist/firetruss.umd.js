@@ -2904,7 +2904,9 @@
 	  }
 	  numValues = _.size(values);
 	  if (!numValues) { return Promise.resolve(); }
-	  var url = this._rootUrl + this._extractCommonPathPrefix(values);
+	  var pathPrefix = extractCommonPathPrefix(values);
+	  relativizePaths(pathPrefix, values);
+	  var url = this._rootUrl + pathPrefix;
 	  return this._dispatcher.execute('write', method, ref, function () {
 	    if (numValues === 1) {
 	      return this$1._bridge.set(url, values[''], this$1._writeSerial);
@@ -3018,28 +3020,6 @@
 
 	      this$1._completeCreateObject(object);
 	    }
-	};
-
-	Tree.prototype._extractCommonPathPrefix = function _extractCommonPathPrefix (values) {
-	  var prefixSegments;
-	  _.each(values, function (value, path) {
-	    var segments = path === '/' ? [''] : splitPath(path, true);
-	    if (prefixSegments) {
-	      var firstMismatchIndex = 0;
-	      var maxIndex = Math.min(prefixSegments.length, segments.length);
-	      while (firstMismatchIndex < maxIndex &&
-	             prefixSegments[firstMismatchIndex] === segments[firstMismatchIndex]) {
-	        firstMismatchIndex++;
-	      }
-	      prefixSegments = prefixSegments.slice(0, firstMismatchIndex);
-	      if (!prefixSegments.length) { return false; }
-	    } else {
-	      prefixSegments = segments;
-	    }
-	  });
-	  var pathPrefix = prefixSegments.length === 1 ? '/' : prefixSegments.join('/');
-	  relativizePaths(pathPrefix, values);
-	  return pathPrefix;
 	};
 
 	/**
@@ -3421,6 +3401,26 @@
 	      }
 	    }
 	  });
+	}
+
+	function extractCommonPathPrefix(values) {
+	  var prefixSegments;
+	  _.each(values, function (value, path) {
+	    var segments = path === '/' ? [''] : splitPath(path, true);
+	    if (prefixSegments) {
+	      var firstMismatchIndex = 0;
+	      var maxIndex = Math.min(prefixSegments.length, segments.length);
+	      while (firstMismatchIndex < maxIndex &&
+	             prefixSegments[firstMismatchIndex] === segments[firstMismatchIndex]) {
+	        firstMismatchIndex++;
+	      }
+	      prefixSegments = prefixSegments.slice(0, firstMismatchIndex);
+	      if (!prefixSegments.length) { return false; }
+	    } else {
+	      prefixSegments = segments;
+	    }
+	  });
+	  return prefixSegments.length === 1 ? '/' : prefixSegments.join('/');
 	}
 
 	function relativizePaths(rootPath, values) {

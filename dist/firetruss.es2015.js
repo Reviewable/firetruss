@@ -2623,7 +2623,9 @@ class Tree {
     }
     numValues = _.size(values);
     if (!numValues) return Promise.resolve();
-    const url = this._rootUrl + this._extractCommonPathPrefix(values);
+    const pathPrefix = extractCommonPathPrefix(values);
+    relativizePaths(pathPrefix, values);
+    const url = this._rootUrl + pathPrefix;
     return this._dispatcher.execute('write', method, ref, () => {
       if (numValues === 1) {
         return this._bridge.set(url, values[''], this._writeSerial);
@@ -2725,28 +2727,6 @@ class Tree {
       }
     });
     for (const object of createdObjects) this._completeCreateObject(object);
-  }
-
-  _extractCommonPathPrefix(values) {
-    let prefixSegments;
-    _.each(values, (value, path) => {
-      const segments = path === '/' ? [''] : splitPath(path, true);
-      if (prefixSegments) {
-        let firstMismatchIndex = 0;
-        const maxIndex = Math.min(prefixSegments.length, segments.length);
-        while (firstMismatchIndex < maxIndex &&
-               prefixSegments[firstMismatchIndex] === segments[firstMismatchIndex]) {
-          firstMismatchIndex++;
-        }
-        prefixSegments = prefixSegments.slice(0, firstMismatchIndex);
-        if (!prefixSegments.length) return false;
-      } else {
-        prefixSegments = segments;
-      }
-    });
-    const pathPrefix = prefixSegments.length === 1 ? '/' : prefixSegments.join('/');
-    relativizePaths(pathPrefix, values);
-    return pathPrefix;
   }
 
   /**
@@ -3092,6 +3072,26 @@ function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
       }
     }
   });
+}
+
+function extractCommonPathPrefix(values) {
+  let prefixSegments;
+  _.each(values, (value, path) => {
+    const segments = path === '/' ? [''] : splitPath(path, true);
+    if (prefixSegments) {
+      let firstMismatchIndex = 0;
+      const maxIndex = Math.min(prefixSegments.length, segments.length);
+      while (firstMismatchIndex < maxIndex &&
+             prefixSegments[firstMismatchIndex] === segments[firstMismatchIndex]) {
+        firstMismatchIndex++;
+      }
+      prefixSegments = prefixSegments.slice(0, firstMismatchIndex);
+      if (!prefixSegments.length) return false;
+    } else {
+      prefixSegments = segments;
+    }
+  });
+  return prefixSegments.length === 1 ? '/' : prefixSegments.join('/');
 }
 
 function relativizePaths(rootPath, values) {
