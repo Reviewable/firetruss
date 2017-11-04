@@ -197,7 +197,7 @@ class PathMatcher {
       return '\u0001';
     });
     Object.freeze(this.variables);
-    if (/[.$#\[\]]|\\(?!\d\d)/.test(pathTemplate)) {
+    if (/[.$#\[\]]|\\(?![0-9a-f][0-9a-f])/i.test(pathTemplate)) {
       throw new Error('Path pattern has unescaped keys: ' + pattern);
     }
     this._regex = new RegExp(
