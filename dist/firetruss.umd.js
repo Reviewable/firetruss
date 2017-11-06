@@ -3574,11 +3574,23 @@
 	};
 
 	Truss.prototype.watch = function watch (subjectFn, callbackFn, options) {
+	  var usePreciseDefaults = _.isObject(options && options.precise);
 	  var numCallbacks = 0;
+	  var oldValueClone;
+	  if (usePreciseDefaults) { oldValueClone = _.clone(options.precise, options.deep); }
 
 	  var unwatch = this._vue.$watch(subjectFn, function (newValue, oldValue) {
+	    if (options && options.precise) {
+	      var newValueClone = usePreciseDefaults ?
+	        (options.deep ?
+	          _.defaultsDeep({}, newValue, options.precise) :
+	          _.defaults({}, newValue, options.precise)) :
+	        _.clone(newValue, options.deep);
+	      if (_.isEqual(newValueClone, oldValueClone)) { return; }
+	      oldValueClone = newValueClone;
+	    }
 	    numCallbacks++;
-	    if (numCallbacks === 1) {
+	    if (!unwatch) {
 	      // Delay the immediate callback until we've had a chance to return the unwatch function.
 	      Promise.resolve().then(function () {
 	        if (numCallbacks > 1 || subjectFn() !== newValue) { return; }

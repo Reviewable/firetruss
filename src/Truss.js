@@ -146,11 +146,23 @@ export default class Truss {
   }
 
   watch(subjectFn, callbackFn, options) {
+    const usePreciseDefaults = _.isObject(options && options.precise);
     let numCallbacks = 0;
+    let oldValueClone;
+    if (usePreciseDefaults) oldValueClone = _.clone(options.precise, options.deep);
 
     const unwatch = this._vue.$watch(subjectFn, (newValue, oldValue) => {
+      if (options && options.precise) {
+        const newValueClone = usePreciseDefaults ?
+          (options.deep ?
+            _.defaultsDeep({}, newValue, options.precise) :
+            _.defaults({}, newValue, options.precise)) :
+          _.clone(newValue, options.deep);
+        if (_.isEqual(newValueClone, oldValueClone)) return;
+        oldValueClone = newValueClone;
+      }
       numCallbacks++;
-      if (numCallbacks === 1) {
+      if (!unwatch) {
         // Delay the immediate callback until we've had a chance to return the unwatch function.
         Promise.resolve().then(() => {
           if (numCallbacks > 1 || subjectFn() !== newValue) return;
