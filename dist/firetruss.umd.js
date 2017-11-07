@@ -2150,7 +2150,7 @@
 
 	var Value = function Value () {};
 
-	var prototypeAccessors$9 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$hidden: {},$empty: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$initializers: {},$$finalizers: {},$$destroyed: {} };
+	var prototypeAccessors$9 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$hidden: {},$empty: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$initializers: {},$$finalizers: {},$destroyed: {} };
 
 	prototypeAccessors$9.$parent.get = function () {return creatingObjectProperties.$parent.value;};
 	prototypeAccessors$9.$path.get = function () {return creatingObjectProperties.$path.value;};
@@ -2182,7 +2182,7 @@
 	Value.prototype.$intercept = function $intercept (actionType, callbacks) {
 	    var this$1 = this;
 
-	  if (this.$$destroyed) { throw new Error('Object already destroyed'); }
+	  if (this.$destroyed) { throw new Error('Object already destroyed'); }
 	  var unintercept = this.$truss.intercept(actionType, callbacks);
 	  var uninterceptAndRemoveFinalizer = function () {
 	    unintercept();
@@ -2195,7 +2195,7 @@
 	Value.prototype.$connect = function $connect (scope, connections) {
 	    var this$1 = this;
 
-	  if (this.$$destroyed) { throw new Error('Object already destroyed'); }
+	  if (this.$destroyed) { throw new Error('Object already destroyed'); }
 	  if (!connections) {
 	    connections = scope;
 	    scope = undefined;
@@ -2214,7 +2214,7 @@
 	Value.prototype.$peek = function $peek (target, callback) {
 	    var this$1 = this;
 
-	  if (this.$$destroyed) { throw new Error('Object already destroyed'); }
+	  if (this.$destroyed) { throw new Error('Object already destroyed'); }
 	  var promise = promiseFinally(
 	    this.$truss.peek(target, callback), function () {_.pull(this$1.$$finalizers, promise.cancel);}
 	  );
@@ -2225,7 +2225,7 @@
 	Value.prototype.$watch = function $watch (subjectFn, callbackFn, options) {
 	    var this$1 = this;
 
-	  if (this.$$destroyed) { throw new Error('Object already destroyed'); }
+	  if (this.$destroyed) { throw new Error('Object already destroyed'); }
 	  var unwatchAndRemoveFinalizer;
 
 	  var unwatch = this.$truss.watch(function () {
@@ -2244,7 +2244,7 @@
 	Value.prototype.$when = function $when (expression, options) {
 	    var this$1 = this;
 
-	  if (this.$$destroyed) { throw new Error('Object already destroyed'); }
+	  if (this.$destroyed) { throw new Error('Object already destroyed'); }
 	  var promise = this.$truss.when(function () {
 	    this$1.$$touchThis();
 	    return expression.call(this$1);
@@ -2290,7 +2290,7 @@
 	  return this.$$finalizers;
 	};
 
-	prototypeAccessors$9.$$destroyed.get = function () {
+	prototypeAccessors$9.$destroyed.get = function () {
 	  return false;
 	};
 
@@ -2523,7 +2523,7 @@
 	    if (this$1._debug) { compute.toString = function () {return prop.fullName;}; }
 	    var unwatch = function () {unwatchNow = true;};
 	    unwatch = vue.$watch(compute, function (newValue) {
-	      if (object.$$destroyed) {
+	      if (object.$destroyed) {
 	        unwatch();
 	        return;
 	      }
@@ -2589,7 +2589,7 @@
 	  }
 	  if (_.isFunction(object.$finalize)) { object.$finalize(); }
 	  Object.defineProperty(
-	    object, '$$destroyed', {value: true, enumerable: false, configurable: false});
+	    object, '$destroyed', {value: true, enumerable: false, configurable: false});
 	};
 
 	Modeler.prototype.isPlaceholder = function isPlaceholder (path) {
@@ -2663,7 +2663,7 @@
 
 	function computeValue(prop, propertyStats) {
 	  // jshint validthis: true
-	  if (this.$$destroyed) { return; }
+	  if (this.$destroyed) { return; }
 	  // Touch this object, since a failed access to a missing property doesn't get captured as a
 	  // dependency.
 	  this.$$touchThis();

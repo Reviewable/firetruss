@@ -48,7 +48,7 @@ class Value {
   get $overridden() {return false;}
 
   $intercept(actionType, callbacks) {
-    if (this.$$destroyed) throw new Error('Object already destroyed');
+    if (this.$destroyed) throw new Error('Object already destroyed');
     const unintercept = this.$truss.intercept(actionType, callbacks);
     const uninterceptAndRemoveFinalizer = () => {
       unintercept();
@@ -59,7 +59,7 @@ class Value {
   }
 
   $connect(scope, connections) {
-    if (this.$$destroyed) throw new Error('Object already destroyed');
+    if (this.$destroyed) throw new Error('Object already destroyed');
     if (!connections) {
       connections = scope;
       scope = undefined;
@@ -76,7 +76,7 @@ class Value {
   }
 
   $peek(target, callback) {
-    if (this.$$destroyed) throw new Error('Object already destroyed');
+    if (this.$destroyed) throw new Error('Object already destroyed');
     const promise = promiseFinally(
       this.$truss.peek(target, callback), () => {_.pull(this.$$finalizers, promise.cancel);}
     );
@@ -85,7 +85,7 @@ class Value {
   }
 
   $watch(subjectFn, callbackFn, options) {
-    if (this.$$destroyed) throw new Error('Object already destroyed');
+    if (this.$destroyed) throw new Error('Object already destroyed');
     let unwatchAndRemoveFinalizer;
 
     const unwatch = this.$truss.watch(() => {
@@ -102,7 +102,7 @@ class Value {
   }
 
   $when(expression, options) {
-    if (this.$$destroyed) throw new Error('Object already destroyed');
+    if (this.$destroyed) throw new Error('Object already destroyed');
     const promise = this.$truss.when(() => {
       this.$$touchThis();
       return expression.call(this);
@@ -148,7 +148,7 @@ class Value {
     return this.$$finalizers;
   }
 
-  get $$destroyed() {
+  get $destroyed() {
     return false;
   }
 }
@@ -361,7 +361,7 @@ export default class Modeler {
       if (this._debug) compute.toString = () => {return prop.fullName;};
       let unwatch = () => {unwatchNow = true;};
       unwatch = vue.$watch(compute, newValue => {
-        if (object.$$destroyed) {
+        if (object.$destroyed) {
           unwatch();
           return;
         }
@@ -423,7 +423,7 @@ export default class Modeler {
     }
     if (_.isFunction(object.$finalize)) object.$finalize();
     Object.defineProperty(
-      object, '$$destroyed', {value: true, enumerable: false, configurable: false});
+      object, '$destroyed', {value: true, enumerable: false, configurable: false});
   }
 
   isPlaceholder(path) {
@@ -491,7 +491,7 @@ export default class Modeler {
 
 function computeValue(prop, propertyStats) {
   // jshint validthis: true
-  if (this.$$destroyed) return;
+  if (this.$destroyed) return;
   // Touch this object, since a failed access to a missing property doesn't get captured as a
   // dependency.
   this.$$touchThis();
