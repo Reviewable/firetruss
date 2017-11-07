@@ -1719,7 +1719,7 @@
 	  if (this._listening) { return; }
 	  this._coupler._bridge.on(
 	    this._query.toString(), this._url, this._query.constraints, 'value',
-	    this._handleSnapshot, this._handleError.bind(this._query.path), this, {sync: true});
+	    this._handleSnapshot, this._handleError, this, {sync: true});
 	  this._listening = true;
 	};
 
@@ -1862,8 +1862,8 @@
 	    if (this.listening) { return; }
 	    _.each(this.operations, function (op) {this$1._coupler._dispatcher.clearReady(op);});
 	    this._coupler._bridge.on(
-	      this.url, this.url, null, 'value', this._handleSnapshot, this._handleError.bind(this),
-	      this, {sync: true});
+	      this.url, this.url, null, 'value', this._handleSnapshot, this._handleError, this,
+	      {sync: true});
 	    this.listening = true;
 	  } else {
 	    _.each(this.children, function (child) {child.listen();});
