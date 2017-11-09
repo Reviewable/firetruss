@@ -1230,10 +1230,10 @@ class SlowHandle {
     this.cancel();
     this._fired = false;
     const elapsed = Date.now() - this._operation._startTimestamp;
-    this._timeoutId = setTimeout(this._delay - elapsed, () => {
+    this._timeoutId = setTimeout(() => {
       this._fired = true;
       this._callback(this._operation);
-    });
+    }, this._delay - elapsed);
   }
 
   cancel() {

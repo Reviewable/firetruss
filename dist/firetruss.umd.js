@@ -1378,10 +1378,10 @@
 	  this.cancel();
 	  this._fired = false;
 	  var elapsed = Date.now() - this._operation._startTimestamp;
-	  this._timeoutId = setTimeout(this._delay - elapsed, function () {
+	  this._timeoutId = setTimeout(function () {
 	    this$1._fired = true;
 	    this$1._callback(this$1._operation);
-	  });
+	  }, this._delay - elapsed);
 	};
 
 	SlowHandle.prototype.cancel = function cancel () {
