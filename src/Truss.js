@@ -204,8 +204,20 @@ export default class Truss {
         reject(new Error('Canceled'));
       };
     });
-    promise = promiseCancel(promiseFinally(promise, cleanup));
+    promise = promiseCancel(promiseFinally(promise, cleanup), cleanup);
     if (options && options.scope) options.scope.$on('$destroy', () => {promise.cancel();});
+    return promise;
+  }
+
+  nextTick() {
+    let cleanup;
+    let promise = new Promise((resolve, reject) => {
+      Vue.nextTick(resolve);
+      cleanup = () => {
+        reject(new Error('Canceled'));
+      };
+    });
+    promise = promiseCancel(promise, cleanup);
     return promise;
   }
 

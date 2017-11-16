@@ -2254,6 +2254,16 @@
 	  return promise;
 	};
 
+	Value.prototype.$nextTick = function $nextTick () {
+	    var this$1 = this;
+
+	  if (this.$destroyed) { throw new Error('Object already destroyed'); }
+	  var promise = this.$truss.nextTick();
+	  promiseFinally(promise, function () {_.pull(this$1.$$finalizers, promise.cancel);});
+	  this.$$finalizers.push(promise.cancel);
+	  return promise;
+	};
+
 	Value.prototype.$freezeComputedProperty = function $freezeComputedProperty () {
 	  if (!_.isBoolean(currentPropertyFrozen)) {
 	    throw new Error('Cannot freeze a computed property outside of its getter function');
@@ -2514,7 +2524,7 @@
 
 	  var propertyStats = stats.for(prop.fullName);
 
-	  var value;
+	  var value, pendingPromise;
 	  var writeAllowed = false;
 
 	  object.$$initializers.push(function (vue) {
@@ -2527,9 +2537,13 @@
 	        unwatch();
 	        return;
 	      }
+	      if (pendingPromise) {
+	        if (pendingPromise.cancel) { pendingPromise.cancel(); }
+	        pendingPromise = undefined;
+	      }
 	      if (_.isObject(newValue) && newValue.then) {
 	        var computationSerial = propertyStats.numRecomputes;
-	        newValue.then(function (finalValue) {
+	        pendingPromise = newValue.then(function (finalValue) {
 	          if (computationSerial === propertyStats.numRecomputes) { update(finalValue); }
 	        }, function (error) {
 	          if (computationSerial === propertyStats.numRecomputes) {
@@ -3634,8 +3648,20 @@
 	      reject(new Error('Canceled'));
 	    };
 	  });
-	  promise = promiseCancel(promiseFinally(promise, cleanup));
+	  promise = promiseCancel(promiseFinally(promise, cleanup), cleanup);
 	  if (options && options.scope) { options.scope.$on('$destroy', function () {promise.cancel();}); }
+	  return promise;
+	};
+
+	Truss.prototype.nextTick = function nextTick () {
+	  var cleanup;
+	  var promise = new Promise(function (resolve, reject) {
+	    Vue.nextTick(resolve);
+	    cleanup = function () {
+	      reject(new Error('Canceled'));
+	    };
+	  });
+	  promise = promiseCancel(promise, cleanup);
 	  return promise;
 	};
 

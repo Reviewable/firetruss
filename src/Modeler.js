@@ -112,6 +112,14 @@ class Value {
     return promise;
   }
 
+  $nextTick() {
+    if (this.$destroyed) throw new Error('Object already destroyed');
+    const promise = this.$truss.nextTick();
+    promiseFinally(promise, () => {_.pull(this.$$finalizers, promise.cancel);});
+    this.$$finalizers.push(promise.cancel);
+    return promise;
+  }
+
   $freezeComputedProperty() {
     if (!_.isBoolean(currentPropertyFrozen)) {
       throw new Error('Cannot freeze a computed property outside of its getter function');
@@ -352,7 +360,7 @@ export default class Modeler {
   _buildComputedPropertyDescriptor(object, prop) {
     const propertyStats = stats.for(prop.fullName);
 
-    let value;
+    let value, pendingPromise;
     let writeAllowed = false;
 
     object.$$initializers.push(vue => {
@@ -365,9 +373,13 @@ export default class Modeler {
           unwatch();
           return;
         }
+        if (pendingPromise) {
+          if (pendingPromise.cancel) pendingPromise.cancel();
+          pendingPromise = undefined;
+        }
         if (_.isObject(newValue) && newValue.then) {
           const computationSerial = propertyStats.numRecomputes;
-          newValue.then(finalValue => {
+          pendingPromise = newValue.then(finalValue => {
             if (computationSerial === propertyStats.numRecomputes) update(finalValue);
           }, error => {
             if (computationSerial === propertyStats.numRecomputes) {
