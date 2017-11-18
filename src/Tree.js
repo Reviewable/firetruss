@@ -173,13 +173,7 @@ export default class Tree {
     if (method === 'update' || method === 'override') {
       checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
     }
-    this._applyLocalWrite(values, method === 'override');
-    if (method === 'override') return Promise.resolve();
-    for (const path of _.keys(values)) {
-      if (this._modeler.isLocal(path)) delete values[path];
-    }
-    numValues = _.size(values);
-    if (!numValues) return Promise.resolve();
+    if (this._applyLocalWrite(values, method === 'override')) return Promise.resolve();
     const pathPrefix = extractCommonPathPrefix(values);
     relativizePaths(pathPrefix, values);
     const url = this._rootUrl + pathPrefix;
@@ -212,17 +206,11 @@ export default class Tree {
           case 'cancel':
             break;
           case 'set':
-            if (this._modeler.isLocal(ref.path)) {
-              throw new Error(`Commit in local subtree: ${ref.path}`);
-            }
-            this._applyLocalWrite({[ref.path]: values['']});
+            if (this._applyLocalWrite({[ref.path]: values['']})) return Promise.resolve();
             break;
           case 'update':
             checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
-            _(values).keys().each(path => {
-              if (this._modeler.isLocal(path)) throw new Error(`Commit in local subtree: ${path}`);
-            });
-            this._applyLocalWrite(values);
+            if (this._applyLocalWrite(values)) return Promise.resolve();
             relativizePaths(ref.path, values);
             break;
           default:
@@ -253,8 +241,10 @@ export default class Tree {
     this._writeSerial++;
     this._localWriteTimestamp = this._truss.now;
     const createdObjects = [];
+    let numLocal = 0;
     _.each(values, (value, path) => {
-      const local = this._modeler.isLocal(path);
+      const local = this._modeler.isLocal(path, value);
+      if (local) numLocal++;
       const coupledDescendantPaths =
         local ? {[path]: true} : this._coupler.findCoupledDescendantPaths(path);
       if (_.isEmpty(coupledDescendantPaths)) return;
@@ -284,6 +274,10 @@ export default class Tree {
       }
     });
     for (const object of createdObjects) this._completeCreateObject(object);
+    if (numLocal && numLocal < _.size(values)) {
+      throw new Error('Write on a mix of local and remote tree paths.');
+    }
+    return override || !!numLocal;
   }
 
   /**

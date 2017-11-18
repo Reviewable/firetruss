@@ -443,11 +443,24 @@ export default class Modeler {
     return mount && mount.placeholder;
   }
 
-  isLocal(path) {
+  isLocal(path, value) {
     const mount = this._getMount(path, false, mount => mount.local);
+    if (mount && mount.local) return true;
+    if (this._hasLocalProperties(mount, value)) {
+      throw new Error('Write on a mix of local and remote tree paths.');
+    }
+    return false;
+  }
+
+  _hasLocalProperties(mount, value) {
     if (!mount) return false;
     if (mount.local) return true;
-    if (mount.localDescendants) throw new Error(`Subtree mixes local and remote data: ${path}`);
+    if (!mount.localDescendants || !_.isObject(value)) return false;
+    for (const key in value) {
+      const local =
+        this._hasLocalProperties(mount.children[escapeKey(key)] || mount.children.$, value[key]);
+      if (local) return true;
+    }
     return false;
   }
 

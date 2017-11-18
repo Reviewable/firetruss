@@ -2611,11 +2611,26 @@
 	  return mount && mount.placeholder;
 	};
 
-	Modeler.prototype.isLocal = function isLocal (path) {
+	Modeler.prototype.isLocal = function isLocal (path, value) {
 	  var mount = this._getMount(path, false, function (mount) { return mount.local; });
+	  if (mount && mount.local) { return true; }
+	  if (this._hasLocalProperties(mount, value)) {
+	    throw new Error('Write on a mix of local and remote tree paths.');
+	  }
+	  return false;
+	};
+
+	Modeler.prototype._hasLocalProperties = function _hasLocalProperties (mount, value) {
+	    var this$1 = this;
+
 	  if (!mount) { return false; }
 	  if (mount.local) { return true; }
-	  if (mount.localDescendants) { throw new Error(("Subtree mixes local and remote data: " + path)); }
+	  if (!mount.localDescendants || !_.isObject(value)) { return false; }
+	  for (var key in value) {
+	    var local =
+	      this$1._hasLocalProperties(mount.children[escapeKey(key)] || mount.children.$, value[key]);
+	    if (local) { return true; }
+	  }
 	  return false;
 	};
 
@@ -2909,15 +2924,7 @@
 	  if (method === 'update' || method === 'override') {
 	    checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
 	  }
-	  this._applyLocalWrite(values, method === 'override');
-	  if (method === 'override') { return Promise.resolve(); }
-	  for (var i = 0, list = _.keys(values); i < list.length; i += 1) {
-	    var path = list[i];
-
-	      if (this$1._modeler.isLocal(path)) { delete values[path]; }
-	  }
-	  numValues = _.size(values);
-	  if (!numValues) { return Promise.resolve(); }
+	  if (this._applyLocalWrite(values, method === 'override')) { return Promise.resolve(); }
 	  var pathPrefix = extractCommonPathPrefix(values);
 	  relativizePaths(pathPrefix, values);
 	  var url = this._rootUrl + pathPrefix;
@@ -2952,18 +2959,12 @@
 	        case 'cancel':
 	          break;
 	        case 'set':
-	          if (this$1._modeler.isLocal(ref.path)) {
-	            throw new Error(("Commit in local subtree: " + (ref.path)));
-	          }
-	          this$1._applyLocalWrite(( obj = {}, obj[ref.path] = values[''], obj ));
-	        var obj;
+	          if (this$1._applyLocalWrite(( obj = {}, obj[ref.path] = values[''], obj ))) { return Promise.resolve();
+	        var obj; }
 	          break;
 	        case 'update':
 	          checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
-	          _(values).keys().each(function (path) {
-	            if (this$1._modeler.isLocal(path)) { throw new Error(("Commit in local subtree: " + path)); }
-	          });
-	          this$1._applyLocalWrite(values);
+	          if (this$1._applyLocalWrite(values)) { return Promise.resolve(); }
 	          relativizePaths(ref.path, values);
 	          break;
 	        default:
@@ -2996,8 +2997,10 @@
 	  this._writeSerial++;
 	  this._localWriteTimestamp = this._truss.now;
 	  var createdObjects = [];
+	  var numLocal = 0;
 	  _.each(values, function (value, path) {
-	    var local = this$1._modeler.isLocal(path);
+	    var local = this$1._modeler.isLocal(path, value);
+	    if (local) { numLocal++; }
 	    var coupledDescendantPaths =
 	      local ? ( obj = {}, obj[path] = true, obj ) : this$1._coupler.findCoupledDescendantPaths(path);
 	      var obj;
@@ -3034,6 +3037,10 @@
 
 	      this$1._completeCreateObject(object);
 	    }
+	  if (numLocal && numLocal < _.size(values)) {
+	    throw new Error('Write on a mix of local and remote tree paths.');
+	  }
+	  return override || !!numLocal;
 	};
 
 	/**
