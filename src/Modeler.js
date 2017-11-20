@@ -47,6 +47,8 @@ class Value {
   get $ready() {return this.$ref.ready;}
   get $overridden() {return false;}
 
+  $newKey() {return this.$truss.newKey();}
+
   $intercept(actionType, callbacks) {
     if (this.$destroyed) throw new Error('Object already destroyed');
     const unintercept = this.$truss.intercept(actionType, callbacks);
@@ -160,6 +162,12 @@ class Value {
     return false;
   }
 }
+
+
+_.each(Value.prototype, (prop, name) => {
+  Object.defineProperty(
+    Value.prototype, name, {value: prop, enumerable: false, configurable: false, writable: false});
+});
 
 
 class ErrorWrapper {
@@ -381,16 +389,16 @@ export default class Modeler {
           const computationSerial = propertyStats.numRecomputes;
           pendingPromise = newValue.then(finalValue => {
             if (computationSerial === propertyStats.numRecomputes) update(finalValue);
+            // No need to angular.digest() here, since if we're running under Angular then we expect
+            // promises to be aliased to its $q service, which triggers digest itself.
           }, error => {
             if (computationSerial === propertyStats.numRecomputes) {
               if (update(new ErrorWrapper(error))) throw error;
             }
           });
-        } else {
-          if (update(newValue)) {
-            angular.digest();
-            if (newValue instanceof ErrorWrapper) throw newValue.error;
-          }
+        } else if (update(newValue)) {
+          angular.digest();
+          if (newValue instanceof ErrorWrapper) throw newValue.error;
         }
       }, {immediate: true});  // use immediate:true since watcher will run computeValue anyway
 
