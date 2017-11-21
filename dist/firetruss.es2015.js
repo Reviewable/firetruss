@@ -2244,8 +2244,7 @@ class Modeler {
   /**
    * Creates a Truss object and sets all its basic properties: path segment variables, user-defined
    * properties, and computed properties.  The latter two will be enumerable so that Vue will pick
-   * them up and make the reactive, so you should call _completeCreateObject once it's done so and
-   * before any Firebase properties are added.
+   * them up and make the reactive.
    */
   createObject(path, properties) {
     const mount = this._getMount(path) || {Class: Value};
@@ -2260,6 +2259,8 @@ class Modeler {
     const object = new mount.Class();
     creatingObjectProperties = null;
 
+    if (angularProxy.active) this._wrapProperties(object);
+
     if (mount.keysUnsafe) {
       properties.$data = {value: Object.create(null), configurable: true, enumerable: true};
     }
@@ -2271,6 +2272,20 @@ class Modeler {
     }
 
     return object;
+  }
+
+  _wrapProperties(object) {
+    _.each(object, (value, key) => {
+      const valueKey = '$_' + key;
+      Object.defineProperties(object, {
+        [valueKey]: {value, writable: true},
+        [key]: {
+          get: () => object[valueKey],
+          set: value => {object[valueKey] = value; angularProxy.digest();},
+          enumerable: true, configurable: true
+        }
+      });
+    });
   }
 
   _buildComputedPropertyDescriptor(object, prop) {
@@ -2392,7 +2407,8 @@ class Modeler {
     if (top) checkedObjects = [];
     try {
       for (const key of Object.getOwnPropertyNames(object)) {
-        if (RESERVED_VALUE_PROPERTY_NAMES[key] || Value.prototype.hasOwnProperty(key)) continue;
+        if (RESERVED_VALUE_PROPERTY_NAMES[key] || Value.prototype.hasOwnProperty(key) ||
+            /^\$_/.test(key)) continue;
         // jshint loopfunc:true
         const mount = this._findMount(mount => mount.Class === object.constructor);
         // jshint loopfunc:false
