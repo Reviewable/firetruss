@@ -472,11 +472,12 @@ export default class Tree {
     while (object !== undefined && object !== this.root) {
       const parent =
         object && object.$parent || object === targetObject && this.getObject(targetParentPath);
-      if (!this._modeler.isPlaceholder(object.$path || targetPath)) {
+      if (!this._modeler.isPlaceholder(object && object.$path || targetPath)) {
         const ghostObjects = deleted ? null : [targetObject];
         if (!this._holdsConcreteData(object, ghostObjects)) {
           deleted = true;
-          this._deleteFirebaseProperty(parent, object.$key || object === targetObject && targetKey);
+          this._deleteFirebaseProperty(
+            parent, object && object.$key || object === targetObject && targetKey);
         }
       }
       object = parent;

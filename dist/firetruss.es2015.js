@@ -2309,16 +2309,14 @@ class Modeler {
           pendingPromise = undefined;
         }
         if (_.isObject(newValue) && newValue.then) {
-          const computationSerial = propertyStats.numRecomputes;
-          pendingPromise = newValue.then(finalValue => {
-            if (computationSerial === propertyStats.numRecomputes) update(finalValue);
+          const promise = newValue.then(finalValue => {
+            if (promise === pendingPromise) update(finalValue);
             // No need to angular.digest() here, since if we're running under Angular then we expect
             // promises to be aliased to its $q service, which triggers digest itself.
           }, error => {
-            if (computationSerial === propertyStats.numRecomputes) {
-              if (update(new ErrorWrapper(error))) throw error;
-            }
+            if (promise === pendingPromise && update(new ErrorWrapper(error))) throw error;
           });
+          pendingPromise = promise;
         } else if (update(newValue)) {
           angularProxy.digest();
           if (newValue instanceof ErrorWrapper) throw newValue.error;
@@ -2964,11 +2962,12 @@ class Tree {
     while (object !== undefined && object !== this.root) {
       const parent =
         object && object.$parent || object === targetObject && this.getObject(targetParentPath);
-      if (!this._modeler.isPlaceholder(object.$path || targetPath)) {
+      if (!this._modeler.isPlaceholder(object && object.$path || targetPath)) {
         const ghostObjects = deleted ? null : [targetObject];
         if (!this._holdsConcreteData(object, ghostObjects)) {
           deleted = true;
-          this._deleteFirebaseProperty(parent, object.$key || object === targetObject && targetKey);
+          this._deleteFirebaseProperty(
+            parent, object && object.$key || object === targetObject && targetKey);
         }
       }
       object = parent;
