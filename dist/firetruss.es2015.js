@@ -2336,6 +2336,7 @@ class Modeler {
         writeAllowed = true;
         object[prop.name] = newValue;
         writeAllowed = false;
+        return true;
       }
 
       if (unwatchNow) {
