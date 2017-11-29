@@ -3308,7 +3308,7 @@ class Truss {
         Promise.resolve().then(() => {
           if (numCallbacks > 1 || subjectFn() !== newValue) return;
           callbackFn(newValue, oldValue);
-          angularProxy.digest();
+          // No need to digest since under Angular we'll be using $q as Promise.
         });
       } else {
         callbackFn(newValue, oldValue);
@@ -3316,6 +3316,7 @@ class Truss {
       }
     }, {immediate: true, deep: options && options.deep});
 
+    if (options && options.scope) options.scope.$on('$destroy', unwatch);
     return unwatch;
   }
 
