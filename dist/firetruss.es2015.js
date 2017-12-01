@@ -2755,13 +2755,11 @@ class Tree {
           const key = _.last(splitPath(descendantPath));
           this._plantValue(
             descendantPath, key, subValue,
-            this._scaffoldAncestors(descendantPath, false, createdObjects), false, override,
+            this._scaffoldAncestors(descendantPath, false, createdObjects), false, override, local,
             createdObjects
           );
         }
-        if (!override && !local) {
-          this._localWrites[descendantPath] = this._writeSerial;
-        }
+        if (!override && !local) this._localWrites[descendantPath] = this._writeSerial;
       }
     });
     for (const object of createdObjects) this._completeCreateObject(object);
@@ -2830,7 +2828,8 @@ class Tree {
       const createdObjects = [];
       const parent = this._scaffoldAncestors(snap.path, true, createdObjects);
       if (parent) {
-        this._plantValue(snap.path, snap.key, snap.value, parent, true, false, createdObjects);
+        this._plantValue(
+          snap.path, snap.key, snap.value, parent, true, false, false, createdObjects);
       }
       for (const object of createdObjects) this._completeCreateObject(object);
     } else {
@@ -2849,7 +2848,8 @@ class Tree {
       if (child) {
         if (remoteWrite && this._localWrites[ancestorPath]) return;
       } else {
-        child = this._plantValue(ancestorPath, key, {}, object, remoteWrite, false, createdObjects);
+        child = this._plantValue(
+          ancestorPath, key, {}, object, remoteWrite, false, false, createdObjects);
         if (!child) return;
       }
       object = child;
@@ -2857,14 +2857,14 @@ class Tree {
     return object;
   }
 
-  _plantValue(path, key, value, parent, remoteWrite, override, createdObjects) {
+  _plantValue(path, key, value, parent, remoteWrite, override, local, createdObjects) {
     if (remoteWrite && (value === null || value === undefined)) {
       throw new Error(`Snapshot includes invalid value at ${path}: ${value}`);
     }
     if (remoteWrite && this._localWrites[path || '/']) return;
     if (value === SERVER_TIMESTAMP) value = this._localWriteTimestamp;
     let object = parent[key];
-    if (!_.isArray(value) && !_.isPlainObject(value)) {
+    if (!_.isArray(value) && !(local ? _.isPlainObject(value) : _.isObject(value))) {
       this._destroyObject(object);
       this._setFirebaseProperty(parent, key, value);
       return;
@@ -2889,7 +2889,7 @@ class Tree {
     _.each(value, (item, escapedChildKey) => {
       this._plantValue(
         joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite,
-        override, createdObjects
+        override, local, createdObjects
       );
     });
     if (objectCreated) {
@@ -2910,7 +2910,8 @@ class Tree {
       const key = unescapeKey(escapedKey);
       if (!object.hasOwnProperty(key)) {
         this._plantValue(
-          joinPath(path, escapedKey), key, placeholder, object, false, false, createdObjects);
+          joinPath(path, escapedKey), key, placeholder, object, false, false, false,
+          createdObjects);
       }
     });
   }

@@ -3044,13 +3044,11 @@
 	        var key = _.last(splitPath(descendantPath));
 	        this$1._plantValue(
 	          descendantPath, key, subValue,
-	          this$1._scaffoldAncestors(descendantPath, false, createdObjects), false, override,
+	          this$1._scaffoldAncestors(descendantPath, false, createdObjects), false, override, local,
 	          createdObjects
 	        );
 	      }
-	      if (!override && !local) {
-	        this$1._localWrites[descendantPath] = this$1._writeSerial;
-	      }
+	      if (!override && !local) { this$1._localWrites[descendantPath] = this$1._writeSerial; }
 	    }
 	  });
 	  for (var i = 0, list = createdObjects; i < list.length; i += 1) {
@@ -3135,7 +3133,8 @@
 	    var createdObjects = [];
 	    var parent = this._scaffoldAncestors(snap.path, true, createdObjects);
 	    if (parent) {
-	      this._plantValue(snap.path, snap.key, snap.value, parent, true, false, createdObjects);
+	      this._plantValue(
+	        snap.path, snap.key, snap.value, parent, true, false, false, createdObjects);
 	    }
 	    for (var i = 0, list = createdObjects; i < list.length; i += 1) {
 	        var object = list[i];
@@ -3160,7 +3159,8 @@
 	    if (child) {
 	      if (remoteWrite && this$1._localWrites[ancestorPath]) { return; }
 	    } else {
-	      child = this$1._plantValue(ancestorPath, key, {}, object, remoteWrite, false, createdObjects);
+	      child = this$1._plantValue(
+	        ancestorPath, key, {}, object, remoteWrite, false, false, createdObjects);
 	      if (!child) { return; }
 	    }
 	    object = child;
@@ -3168,7 +3168,7 @@
 	  return object;
 	};
 
-	Tree.prototype._plantValue = function _plantValue (path, key, value, parent, remoteWrite, override, createdObjects) {
+	Tree.prototype._plantValue = function _plantValue (path, key, value, parent, remoteWrite, override, local, createdObjects) {
 	    var this$1 = this;
 
 	  if (remoteWrite && (value === null || value === undefined)) {
@@ -3177,7 +3177,7 @@
 	  if (remoteWrite && this._localWrites[path || '/']) { return; }
 	  if (value === SERVER_TIMESTAMP) { value = this._localWriteTimestamp; }
 	  var object = parent[key];
-	  if (!_.isArray(value) && !_.isPlainObject(value)) {
+	  if (!_.isArray(value) && !(local ? _.isPlainObject(value) : _.isObject(value))) {
 	    this._destroyObject(object);
 	    this._setFirebaseProperty(parent, key, value);
 	    return;
@@ -3202,7 +3202,7 @@
 	  _.each(value, function (item, escapedChildKey) {
 	    this$1._plantValue(
 	      joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite,
-	      override, createdObjects
+	      override, local, createdObjects
 	    );
 	  });
 	  if (objectCreated) {
@@ -3225,7 +3225,8 @@
 	    var key = unescapeKey(escapedKey);
 	    if (!object.hasOwnProperty(key)) {
 	      this$1._plantValue(
-	        joinPath(path, escapedKey), key, placeholder, object, false, false, createdObjects);
+	        joinPath(path, escapedKey), key, placeholder, object, false, false, false,
+	        createdObjects);
 	    }
 	  });
 	};
