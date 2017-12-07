@@ -48,7 +48,7 @@
 	    }
 	  };
 
-	  module.config(function($provide) {
+	  module.config(['$provide', function($provide) {
 	    $provide.decorator('$rootScope', ['$delegate', '$exceptionHandler',
 	      function($delegate, $exceptionHandler) {
 	        var rootScope = $delegate;
@@ -70,7 +70,7 @@
 	        return rootScope;
 	      }
 	    ]);
-	  });
+	  }]);
 	}
 
 	function noop() {}
