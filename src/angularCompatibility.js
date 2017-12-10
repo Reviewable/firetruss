@@ -42,7 +42,7 @@ function initAngular() {
     }
   };
 
-  module.config(function($provide) {
+  module.config(['$provide', function($provide) {
     $provide.decorator('$rootScope', ['$delegate', '$exceptionHandler',
       function($delegate, $exceptionHandler) {
         const rootScope = $delegate;
@@ -64,7 +64,7 @@ function initAngular() {
         return rootScope;
       }
     ]);
-  });
+  }]);
 }
 
 function noop() {}

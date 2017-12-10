@@ -3115,11 +3115,18 @@
 	Tree.prototype._destroyObject = function _destroyObject (object) {
 	    var this$1 = this;
 
-	  if (!(object && object.$truss)) { return; }
+	  if (!(object && object.$truss) || object.$destroyed) { return; }
 	  this._modeler.destroyObject(object);
-	  for (var key in object) {
-	    if (!object.hasOwnProperty(key)) { continue; }
-	    this$1._destroyObject(object[key]);
+	  // Normally we'd only destroy enumerable children, which are the Firebase properties.However,
+	  // clients have the option of creating hidden placeholders, so we need to scan non-enumerable
+	  // properties as well.To distinguish such placeholders from the myriad other non-enumerable
+	  // properties (that lead all over tree, e.g. $parent), we check that the property's parent is
+	  // ourselves before destroying.
+	  for (var i = 0, list = Object.getOwnPropertyNames(object); i < list.length; i += 1) {
+	    var key = list[i];
+
+	      var child = object[key];
+	    if (child && child.$parent === object) { this$1._destroyObject(child); }
 	  }
 	};
 
