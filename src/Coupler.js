@@ -235,10 +235,12 @@ export default class Coupler {
     this._dispatcher = dispatcher;
     this._applySnapshot = applySnapshot;
     this._prunePath = prunePath;
-    this._vue = new Vue({data: {root: new Node(this, '/'), queryHandlers: {}}});
+    this._vue = new Vue({data: {root: undefined, queryHandlers: {}}});
     this._nodeIndex = Object.create(null);
-    this._nodeIndex['/'] = this._root;
     Object.freeze(this);
+    // Set root node after freezing Coupler, otherwise it gets vue-ified too.
+    this._vue.$data.root = new Node(this, '/');
+    this._nodeIndex['/'] = this._root;
   }
 
   get _root() {

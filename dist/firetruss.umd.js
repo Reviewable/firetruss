@@ -314,6 +314,7 @@
 	  this._flushMessageQueue = this._flushMessageQueue.bind(this);
 	  this._port = webWorker.port || webWorker;
 	  this._shared = !!webWorker.port;
+	  Object.seal(this);
 	  this._port.onmessage = this._receive.bind(this);
 	  window.addEventListener('unload', function () {this$1._send({msg: 'destroy'});});
 	  setInterval(function () {this$1._send({msg: 'ping'});}, 60 * 1000);
@@ -645,7 +646,14 @@
 	};
 
 	Bridge.prototype.transaction = function transaction (url, oldValue, relativeUpdates, writeSerial) {
-	  return this._send({msg: 'transaction', url: url, oldValue: oldValue, relativeUpdates: relativeUpdates, writeSerial: writeSerial});
+	  return this._send(
+	    {msg: 'transaction', url: url, oldValue: oldValue, relativeUpdates: relativeUpdates, writeSerial: writeSerial}
+	  ).then(function (result) {
+	    if (result.snapshots) {
+	      result.snapshots = _.map(result.snapshots, function (jsonSnapshot) { return new Snapshot(jsonSnapshot); });
+	    }
+	    return result;
+	  });
 	};
 
 	Bridge.prototype.onDisconnect = function onDisconnect (url, method, value) {
@@ -1962,10 +1970,12 @@
 	  this._dispatcher = dispatcher;
 	  this._applySnapshot = applySnapshot;
 	  this._prunePath = prunePath;
-	  this._vue = new Vue({data: {root: new Node(this, '/'), queryHandlers: {}}});
+	  this._vue = new Vue({data: {root: undefined, queryHandlers: {}}});
 	  this._nodeIndex = Object.create(null);
-	  this._nodeIndex['/'] = this._root;
 	  Object.freeze(this);
+	  // Set root node after freezing Coupler, otherwise it gets vue-ified too.
+	  this._vue.$data.root = new Node(this, '/');
+	  this._nodeIndex['/'] = this._root;
 	};
 
 	var prototypeAccessors$1$3 = { _root: {},_queryHandlers: {} };
@@ -2766,14 +2776,15 @@
 	  }
 	}
 
-	var Transaction = function Transaction(path, currentValue) {
-	  this._path = path;
-	  this._currentValue = currentValue;
+	var Transaction = function Transaction(ref) {
+	  this._ref = ref;
+	  this._outcome = undefined;
+	  this._values = undefined;
 	};
 
 	var prototypeAccessors$7 = { currentValue: {},outcome: {},values: {} };
 
-	prototypeAccessors$7.currentValue.get = function () {return this._currentValue;};
+	prototypeAccessors$7.currentValue.get = function () {return this._ref.value;};
 	prototypeAccessors$7.outcome.get = function () {return this._outcome;};
 	prototypeAccessors$7.values.get = function () {return this._values;};
 
@@ -2949,11 +2960,12 @@
 	  var pathPrefix = extractCommonPathPrefix(values);
 	  relativizePaths(pathPrefix, values);
 	  var url = this._rootUrl + pathPrefix;
+	  var writeSerial = this._writeSerial;
 	  return this._dispatcher.execute('write', method, ref, function () {
 	    if (numValues === 1) {
-	      return this$1._bridge.set(url, values[''], this$1._writeSerial);
+	      return this$1._bridge.set(url, values[''], writeSerial);
 	    } else {
-	      return this$1._bridge.update(url, values, this$1._writeSerial);
+	      return this$1._bridge.update(url, values, writeSerial);
 	    }
 	  });
 	};
@@ -2965,17 +2977,20 @@
 	  updateFunction = wrapPromiseCallback(updateFunction);
 
 	  var attemptTransaction = function () {
-	    if (tries++ >= 25) { return Promise.reject(new Error('maxretry')); }
-	    var currentValue = ref.value;
-	    var txn = new Transaction(ref.path, currentValue);
-	    // Resolve an empty promise before running the update function to ensure that Vue's watcher
-	    // queue gets emptied (it's also scheduled as a microtask) and computed properties are up to
-	    // date.
-	    return Promise.resolve().then(function () { return updateFunction(txn); }).then(function () {
+	    if (tries++ >= 25) {
+	      return Promise.reject(new Error('Transaction needed too many retries, giving up'));
+	    }
+	    var txn = new Transaction(ref);
+	    var oldValue;
+	    // Ensure that Vue's watcher queue gets emptied and computed properties are up to date before
+	    // running the updateFunction.
+	    return Vue.nextTick().then(function () {
+	      oldValue = toFirebaseJson(txn.currentValue);
+	      return updateFunction(txn);
+	    }).then(function () {
+	      if (!_.isEqual(oldValue, toFirebaseJson(txn.currentValue))) { return attemptTransaction(); }
 	      if (txn.outcome === 'abort') { return txn; }// early return to save time
 	      var values = _.mapValues(txn.values, function (value) { return escapeKeys(value); });
-	      // Capture old value before applying local writes.
-	      var oldValue = toFirebaseJson(currentValue);
 	      switch (txn.outcome) {
 	        case 'cancel':
 	          break;
@@ -2994,13 +3009,8 @@
 	      return this$1._bridge.transaction(
 	        this$1._rootUrl + ref.path, oldValue, values, this$1._writeSerial
 	      ).then(function (result) {
-	        if (result.committed) {
-	          txn._currentValue = result.currentValue;
-	          return txn;
-	        } else {
-	          this$1._integrateSnapshot(result.snapshot);
-	          return attemptTransaction();
-	        }
+	        _.each(result.snapshots, function (snapshot) { return this$1._integrateSnapshot(snapshot); });
+	        return result.committed ? txn : attemptTransaction();
 	      });
 	    });
 	  };

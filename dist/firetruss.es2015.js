@@ -294,6 +294,7 @@ class Bridge {
     this._flushMessageQueue = this._flushMessageQueue.bind(this);
     this._port = webWorker.port || webWorker;
     this._shared = !!webWorker.port;
+    Object.seal(this);
     this._port.onmessage = this._receive.bind(this);
     window.addEventListener('unload', () => {this._send({msg: 'destroy'});});
     setInterval(() => {this._send({msg: 'ping'});}, 60 * 1000);
@@ -598,7 +599,14 @@ class Bridge {
   }
 
   transaction(url, oldValue, relativeUpdates, writeSerial) {
-    return this._send({msg: 'transaction', url, oldValue, relativeUpdates, writeSerial});
+    return this._send(
+      {msg: 'transaction', url, oldValue, relativeUpdates, writeSerial}
+    ).then(result => {
+      if (result.snapshots) {
+        result.snapshots = _.map(result.snapshots, jsonSnapshot => new Snapshot(jsonSnapshot));
+      }
+      return result;
+    });
   }
 
   onDisconnect(url, method, value) {
@@ -1760,10 +1768,12 @@ class Coupler {
     this._dispatcher = dispatcher;
     this._applySnapshot = applySnapshot;
     this._prunePath = prunePath;
-    this._vue = new Vue({data: {root: new Node(this, '/'), queryHandlers: {}}});
+    this._vue = new Vue({data: {root: undefined, queryHandlers: {}}});
     this._nodeIndex = Object.create(null);
-    this._nodeIndex['/'] = this._root;
     Object.freeze(this);
+    // Set root node after freezing Coupler, otherwise it gets vue-ified too.
+    this._vue.$data.root = new Node(this, '/');
+    this._nodeIndex['/'] = this._root;
   }
 
   get _root() {
@@ -2501,12 +2511,13 @@ function freeze(object) {
 }
 
 class Transaction {
-  constructor(path, currentValue) {
-    this._path = path;
-    this._currentValue = currentValue;
+  constructor(ref) {
+    this._ref = ref;
+    this._outcome = undefined;
+    this._values = undefined;
   }
 
-  get currentValue() {return this._currentValue;}
+  get currentValue() {return this._ref.value;}
   get outcome() {return this._outcome;}
   get values() {return this._values;}
 
@@ -2668,11 +2679,12 @@ class Tree {
     const pathPrefix = extractCommonPathPrefix(values);
     relativizePaths(pathPrefix, values);
     const url = this._rootUrl + pathPrefix;
+    const writeSerial = this._writeSerial;
     return this._dispatcher.execute('write', method, ref, () => {
       if (numValues === 1) {
-        return this._bridge.set(url, values[''], this._writeSerial);
+        return this._bridge.set(url, values[''], writeSerial);
       } else {
-        return this._bridge.update(url, values, this._writeSerial);
+        return this._bridge.update(url, values, writeSerial);
       }
     });
   }
@@ -2682,17 +2694,20 @@ class Tree {
     updateFunction = wrapPromiseCallback(updateFunction);
 
     const attemptTransaction = () => {
-      if (tries++ >= 25) return Promise.reject(new Error('maxretry'));
-      const currentValue = ref.value;
-      const txn = new Transaction(ref.path, currentValue);
-      // Resolve an empty promise before running the update function to ensure that Vue's watcher
-      // queue gets emptied (it's also scheduled as a microtask) and computed properties are up to
-      // date.
-      return Promise.resolve().then(() => updateFunction(txn)).then(() => {
+      if (tries++ >= 25) {
+        return Promise.reject(new Error('Transaction needed too many retries, giving up'));
+      }
+      const txn = new Transaction(ref);
+      let oldValue;
+      // Ensure that Vue's watcher queue gets emptied and computed properties are up to date before
+      // running the updateFunction.
+      return Vue.nextTick().then(() => {
+        oldValue = toFirebaseJson(txn.currentValue);
+        return updateFunction(txn);
+      }).then(() => {
+        if (!_.isEqual(oldValue, toFirebaseJson(txn.currentValue))) return attemptTransaction();
         if (txn.outcome === 'abort') return txn;  // early return to save time
         const values = _.mapValues(txn.values, value => escapeKeys(value));
-        // Capture old value before applying local writes.
-        const oldValue = toFirebaseJson(currentValue);
         switch (txn.outcome) {
           case 'cancel':
             break;
@@ -2710,13 +2725,8 @@ class Tree {
         return this._bridge.transaction(
           this._rootUrl + ref.path, oldValue, values, this._writeSerial
         ).then(result => {
-          if (result.committed) {
-            txn._currentValue = result.currentValue;
-            return txn;
-          } else {
-            this._integrateSnapshot(result.snapshot);
-            return attemptTransaction();
-          }
+          _.each(result.snapshots, snapshot => this._integrateSnapshot(snapshot));
+          return result.committed ? txn : attemptTransaction();
         });
       });
     };

@@ -60,6 +60,7 @@ export default class Bridge {
     this._flushMessageQueue = this._flushMessageQueue.bind(this);
     this._port = webWorker.port || webWorker;
     this._shared = !!webWorker.port;
+    Object.seal(this);
     this._port.onmessage = this._receive.bind(this);
     window.addEventListener('unload', () => {this._send({msg: 'destroy'});});
     setInterval(() => {this._send({msg: 'ping'});}, 60 * 1000);
@@ -364,7 +365,14 @@ export default class Bridge {
   }
 
   transaction(url, oldValue, relativeUpdates, writeSerial) {
-    return this._send({msg: 'transaction', url, oldValue, relativeUpdates, writeSerial});
+    return this._send(
+      {msg: 'transaction', url, oldValue, relativeUpdates, writeSerial}
+    ).then(result => {
+      if (result.snapshots) {
+        result.snapshots = _.map(result.snapshots, jsonSnapshot => new Snapshot(jsonSnapshot));
+      }
+      return result;
+    });
   }
 
   onDisconnect(url, method, value) {
