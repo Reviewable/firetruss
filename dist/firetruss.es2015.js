@@ -1487,8 +1487,10 @@ class KeyGenerator {
 }
 
 class MetaTree {
-  constructor(rootUrl, bridge) {
+  constructor(rootUrl, tree, bridge, dispatcher) {
     this._rootUrl = rootUrl;
+    this._tree = tree;
+    this._dispatcher = dispatcher;
     this._bridge = bridge;
     this._vue = new Vue({data: {$root: {
       connected: undefined, timeOffset: 0, user: undefined, userid: undefined,
@@ -1506,6 +1508,8 @@ class MetaTree {
       }
     }}});
 
+    this._authTokensInProgress = [];
+
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
     this._connectInfoProperty('serverTimeOffset', 'timeOffset');
@@ -1522,7 +1526,27 @@ class MetaTree {
     this._vue.$destroy();
   }
 
+  authenticate(token) {
+    this._authTokensInProgress.push(token);
+    return this._dispatcher.execute('auth', 'authenticate', new Reference(this._tree, '/'), () => {
+      return this._bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
+    }).catch(e => {
+      _.pull(this._authTokensInProgress, token);
+      return Promise.reject(e);
+    });
+  }
+
+  unauthenticate() {
+    return this._dispatcher.execute(
+      'auth', 'unauthenticate', new Reference(this._tree, '/'), () => {
+        return this._bridge.unauth(this._rootUrl);
+      }
+    );
+  }
+
   _handleAuthChange(user) {
+    if (user) _.pull(this._authTokensInProgress, user.token);
+    if (!user && this._authTokensInProgress.length) return;
     this.root.user = user;
     this.root.userid = user && user.uid;
     angularProxy.digest();
@@ -3196,8 +3220,8 @@ class Truss {
     this._vue = new Vue();
 
     bridge.trackServer(this._rootUrl);
-    this._metaTree = new MetaTree(this._rootUrl, bridge);
     this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher);
+    this._metaTree = new MetaTree(this._rootUrl, this._tree, bridge, this._dispatcher);
 
     Object.freeze(this);
   }
@@ -3229,17 +3253,11 @@ class Truss {
   newKey() {return this._keyGenerator.generateUniqueKey(this.now);}
 
   authenticate(token) {
-    return this._dispatcher.execute('auth', 'authenticate', new Reference(this._tree, '/'), () => {
-      return bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
-    });
+    return this._metaTree.authenticate(token);
   }
 
   unauthenticate() {
-    return this._dispatcher.execute(
-      'auth', 'unauthenticate', new Reference(this._tree, '/'), () => {
-        return bridge.unauth(this._rootUrl);
-      }
-    );
+    return this._metaTree.unauthenticate();
   }
 
   intercept(actionType, callbacks) {

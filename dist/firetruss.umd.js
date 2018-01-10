@@ -1643,8 +1643,10 @@
 	  return chars.join('');
 	};
 
-	var MetaTree = function MetaTree(rootUrl, bridge) {
+	var MetaTree = function MetaTree(rootUrl, tree, bridge, dispatcher) {
 	  this._rootUrl = rootUrl;
+	  this._tree = tree;
+	  this._dispatcher = dispatcher;
 	  this._bridge = bridge;
 	  this._vue = new Vue({data: {$root: {
 	    connected: undefined, timeOffset: 0, user: undefined, userid: undefined,
@@ -1664,6 +1666,8 @@
 	    }
 	  }}});
 
+	  this._authTokensInProgress = [];
+
 	  bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
 	  this._connectInfoProperty('serverTimeOffset', 'timeOffset');
@@ -1682,7 +1686,31 @@
 	  this._vue.$destroy();
 	};
 
+	MetaTree.prototype.authenticate = function authenticate (token) {
+	    var this$1 = this;
+
+	  this._authTokensInProgress.push(token);
+	  return this._dispatcher.execute('auth', 'authenticate', new Reference(this._tree, '/'), function () {
+	    return this$1._bridge.authWithCustomToken(this$1._rootUrl, token, {rememberMe: true});
+	  }).catch(function (e) {
+	    _.pull(this$1._authTokensInProgress, token);
+	    return Promise.reject(e);
+	  });
+	};
+
+	MetaTree.prototype.unauthenticate = function unauthenticate () {
+	    var this$1 = this;
+
+	  return this._dispatcher.execute(
+	    'auth', 'unauthenticate', new Reference(this._tree, '/'), function () {
+	      return this$1._bridge.unauth(this$1._rootUrl);
+	    }
+	  );
+	};
+
 	MetaTree.prototype._handleAuthChange = function _handleAuthChange (user) {
+	  if (user) { _.pull(this._authTokensInProgress, user.token); }
+	  if (!user && this._authTokensInProgress.length) { return; }
 	  this.root.user = user;
 	  this.root.userid = user && user.uid;
 	  angularProxy.digest();
@@ -3519,8 +3547,8 @@
 	  this._vue = new Vue();
 
 	  bridge.trackServer(this._rootUrl);
-	  this._metaTree = new MetaTree(this._rootUrl, bridge);
 	  this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher);
+	  this._metaTree = new MetaTree(this._rootUrl, this._tree, bridge, this._dispatcher);
 
 	  Object.freeze(this);
 	};
@@ -3555,21 +3583,11 @@
 	Truss.prototype.newKey = function newKey () {return this._keyGenerator.generateUniqueKey(this.now);};
 
 	Truss.prototype.authenticate = function authenticate (token) {
-	    var this$1 = this;
-
-	  return this._dispatcher.execute('auth', 'authenticate', new Reference(this._tree, '/'), function () {
-	    return bridge.authWithCustomToken(this$1._rootUrl, token, {rememberMe: true});
-	  });
+	  return this._metaTree.authenticate(token);
 	};
 
 	Truss.prototype.unauthenticate = function unauthenticate () {
-	    var this$1 = this;
-
-	  return this._dispatcher.execute(
-	    'auth', 'unauthenticate', new Reference(this._tree, '/'), function () {
-	      return bridge.unauth(this$1._rootUrl);
-	    }
-	  );
+	  return this._metaTree.unauthenticate();
 	};
 
 	Truss.prototype.intercept = function intercept (actionType, callbacks) {

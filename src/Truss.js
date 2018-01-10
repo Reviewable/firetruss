@@ -6,7 +6,7 @@ import Connector from './Connector.js';
 import Dispatcher from './Dispatcher.js';
 import KeyGenerator from './KeyGenerator.js';
 import MetaTree from './MetaTree.js';
-import {Handle, Reference} from './Reference.js';
+import {Handle} from './Reference.js';
 import Tree from './Tree.js';
 import stats from './utils/stats.js';
 import {escapeKey, unescapeKey} from './utils/paths.js';
@@ -39,8 +39,8 @@ export default class Truss {
     this._vue = new Vue();
 
     bridge.trackServer(this._rootUrl);
-    this._metaTree = new MetaTree(this._rootUrl, bridge);
     this._tree = new Tree(this, this._rootUrl, bridge, this._dispatcher);
+    this._metaTree = new MetaTree(this._rootUrl, this._tree, bridge, this._dispatcher);
 
     Object.freeze(this);
   }
@@ -72,17 +72,11 @@ export default class Truss {
   newKey() {return this._keyGenerator.generateUniqueKey(this.now);}
 
   authenticate(token) {
-    return this._dispatcher.execute('auth', 'authenticate', new Reference(this._tree, '/'), () => {
-      return bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
-    });
+    return this._metaTree.authenticate(token);
   }
 
   unauthenticate() {
-    return this._dispatcher.execute(
-      'auth', 'unauthenticate', new Reference(this._tree, '/'), () => {
-        return bridge.unauth(this._rootUrl);
-      }
-    );
+    return this._metaTree.unauthenticate();
   }
 
   intercept(actionType, callbacks) {
