@@ -1220,7 +1220,8 @@ function promiseFinally(promise, onFinally) {
 }
 
 const INTERCEPT_KEYS = [
-  'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'all'
+  'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'authenticate',
+  'unathenticate', 'certify', 'all'
 ];
 
 const EMPTY_ARRAY = [];
@@ -1252,10 +1253,11 @@ class SlowHandle {
 
 
 class Operation {
-  constructor(type, method, target) {
+  constructor(type, method, target, operand) {
     this._type = type;
     this._method = method;
     this._target = target;
+    this._operand = operand;
     this._ready = false;
     this._running = false;
     this._ended = false;
@@ -1267,6 +1269,7 @@ class Operation {
   get type() {return this._type;}
   get method() {return this._method;}
   get target() {return this._target;}
+  get operand() {return this._operand;}
   get ready() {return this._ready;}
   get running() {return this._running;}
   get ended() {return this._ended;}
@@ -1362,9 +1365,9 @@ class Dispatcher {
     return `${stage}_${interceptKey}`;
   }
 
-  execute(operationType, method, target, executor) {
+  execute(operationType, method, target, operand, executor) {
     executor = wrapPromiseCallback(executor);
-    const operation = this.createOperation(operationType, method, target);
+    const operation = this.createOperation(operationType, method, target, operand);
     return this.begin(operation).then(() => {
       const executeWithRetries = () => {
         return executor().catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
@@ -1373,8 +1376,8 @@ class Dispatcher {
     }).then(result => this.end(operation).then(() => result));
   }
 
-  createOperation(operationType, method, target) {
-    return new Operation(operationType, method, target);
+  createOperation(operationType, method, target, operand) {
+    return new Operation(operationType, method, target, operand);
   }
 
   begin(operation) {
@@ -1508,7 +1511,7 @@ class MetaTree {
       }
     }}});
 
-    this._authTokensInProgress = [];
+    this._authsInProgress = {};
 
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
@@ -1527,29 +1530,39 @@ class MetaTree {
   }
 
   authenticate(token) {
-    this._authTokensInProgress.push(token);
-    return this._dispatcher.execute('auth', 'authenticate', new Reference(this._tree, '/'), () => {
-      return this._bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
-    }).catch(e => {
-      _.pull(this._authTokensInProgress, token);
-      return Promise.reject(e);
-    });
+    this._authsInProgress[token] = true;
+    return promiseFinally(
+      this._dispatcher.execute(
+        'auth', 'authenticate', new Reference(this._tree, '/'), token, () => {
+          return this._bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
+        }
+      ),
+      () => {delete this._authsInProgress[token];}
+    );
   }
 
   unauthenticate() {
-    return this._dispatcher.execute(
-      'auth', 'unauthenticate', new Reference(this._tree, '/'), () => {
-        return this._bridge.unauth(this._rootUrl);
-      }
+    this._authsInProgress.null = true;
+    return promiseFinally(
+      this._dispatcher.execute(
+        'auth', 'unauthenticate', new Reference(this._tree, '/'), undefined, () => {
+          return this._bridge.unauth(this._rootUrl);
+        }
+      ),
+      () => {delete this._authsInProgress.null;}
     );
   }
 
   _handleAuthChange(user) {
-    if (user) _.pull(this._authTokensInProgress, user.token);
-    if (!user && this._authTokensInProgress.length) return;
-    this.root.user = user;
-    this.root.userid = user && user.uid;
-    angularProxy.digest();
+    delete this._authsInProgress[user ? user.token : null];
+    if (!_.isEmpty(this._authsInProgress)) return;
+    this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, () => {
+      if (!_.isEmpty(this._authsInProgress)) return;
+      Object.freeze(user);
+      this.root.user = user;
+      this.root.userid = user && user.uid;
+      angularProxy.digest();
+    });
   }
 
   _connectInfoProperty(property, attribute) {
@@ -2704,11 +2717,12 @@ class Tree {
     relativizePaths(pathPrefix, values);
     const url = this._rootUrl + pathPrefix;
     const writeSerial = this._writeSerial;
-    return this._dispatcher.execute('write', method, ref, () => {
+    const operand = numValues === 1 ? values[''] : values;
+    return this._dispatcher.execute('write', method, ref, operand, () => {
       if (numValues === 1) {
-        return this._bridge.set(url, values[''], writeSerial);
+        return this._bridge.set(url, operand, writeSerial);
       } else {
-        return this._bridge.update(url, values, writeSerial);
+        return this._bridge.update(url, operand, writeSerial);
       }
     });
   }
@@ -2756,7 +2770,7 @@ class Tree {
     };
 
     return this._truss.peek(ref, () => {
-      return this._dispatcher.execute('write', 'commit', ref, attemptTransaction);
+      return this._dispatcher.execute('write', 'commit', ref, undefined, attemptTransaction);
     });
   }
 

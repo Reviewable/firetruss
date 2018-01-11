@@ -1367,7 +1367,8 @@
 	}
 
 	var INTERCEPT_KEYS = [
-	  'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'all'
+	  'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'authenticate',
+	  'unathenticate', 'certify', 'all'
 	];
 
 	var EMPTY_ARRAY = [];
@@ -1398,10 +1399,11 @@
 	};
 
 
-	var Operation = function Operation(type, method, target) {
+	var Operation = function Operation(type, method, target, operand) {
 	  this._type = type;
 	  this._method = method;
 	  this._target = target;
+	  this._operand = operand;
 	  this._ready = false;
 	  this._running = false;
 	  this._ended = false;
@@ -1410,11 +1412,12 @@
 	  this._slowHandles = [];
 	};
 
-	var prototypeAccessors$5 = { type: {},method: {},target: {},ready: {},running: {},ended: {},tries: {},error: {} };
+	var prototypeAccessors$5 = { type: {},method: {},target: {},operand: {},ready: {},running: {},ended: {},tries: {},error: {} };
 
 	prototypeAccessors$5.type.get = function () {return this._type;};
 	prototypeAccessors$5.method.get = function () {return this._method;};
 	prototypeAccessors$5.target.get = function () {return this._target;};
+	prototypeAccessors$5.operand.get = function () {return this._operand;};
 	prototypeAccessors$5.ready.get = function () {return this._ready;};
 	prototypeAccessors$5.running.get = function () {return this._running;};
 	prototypeAccessors$5.ended.get = function () {return this._ended;};
@@ -1512,11 +1515,11 @@
 	  return (stage + "_" + interceptKey);
 	};
 
-	Dispatcher.prototype.execute = function execute (operationType, method, target, executor) {
+	Dispatcher.prototype.execute = function execute (operationType, method, target, operand, executor) {
 	    var this$1 = this;
 
 	  executor = wrapPromiseCallback(executor);
-	  var operation = this.createOperation(operationType, method, target);
+	  var operation = this.createOperation(operationType, method, target, operand);
 	  return this.begin(operation).then(function () {
 	    var executeWithRetries = function () {
 	      return executor().catch(function (e) { return this$1._retryOrEnd(operation, e).then(executeWithRetries); });
@@ -1525,8 +1528,8 @@
 	  }).then(function (result) { return this$1.end(operation).then(function () { return result; }); });
 	};
 
-	Dispatcher.prototype.createOperation = function createOperation (operationType, method, target) {
-	  return new Operation(operationType, method, target);
+	Dispatcher.prototype.createOperation = function createOperation (operationType, method, target, operand) {
+	  return new Operation(operationType, method, target, operand);
 	};
 
 	Dispatcher.prototype.begin = function begin (operation) {
@@ -1666,7 +1669,7 @@
 	    }
 	  }}});
 
-	  this._authTokensInProgress = [];
+	  this._authsInProgress = {};
 
 	  bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
@@ -1689,31 +1692,43 @@
 	MetaTree.prototype.authenticate = function authenticate (token) {
 	    var this$1 = this;
 
-	  this._authTokensInProgress.push(token);
-	  return this._dispatcher.execute('auth', 'authenticate', new Reference(this._tree, '/'), function () {
-	    return this$1._bridge.authWithCustomToken(this$1._rootUrl, token, {rememberMe: true});
-	  }).catch(function (e) {
-	    _.pull(this$1._authTokensInProgress, token);
-	    return Promise.reject(e);
-	  });
+	  this._authsInProgress[token] = true;
+	  return promiseFinally(
+	    this._dispatcher.execute(
+	      'auth', 'authenticate', new Reference(this._tree, '/'), token, function () {
+	        return this$1._bridge.authWithCustomToken(this$1._rootUrl, token, {rememberMe: true});
+	      }
+	    ),
+	    function () {delete this$1._authsInProgress[token];}
+	  );
 	};
 
 	MetaTree.prototype.unauthenticate = function unauthenticate () {
 	    var this$1 = this;
 
-	  return this._dispatcher.execute(
-	    'auth', 'unauthenticate', new Reference(this._tree, '/'), function () {
-	      return this$1._bridge.unauth(this$1._rootUrl);
-	    }
+	  this._authsInProgress.null = true;
+	  return promiseFinally(
+	    this._dispatcher.execute(
+	      'auth', 'unauthenticate', new Reference(this._tree, '/'), undefined, function () {
+	        return this$1._bridge.unauth(this$1._rootUrl);
+	      }
+	    ),
+	    function () {delete this$1._authsInProgress.null;}
 	  );
 	};
 
 	MetaTree.prototype._handleAuthChange = function _handleAuthChange (user) {
-	  if (user) { _.pull(this._authTokensInProgress, user.token); }
-	  if (!user && this._authTokensInProgress.length) { return; }
-	  this.root.user = user;
-	  this.root.userid = user && user.uid;
-	  angularProxy.digest();
+	    var this$1 = this;
+
+	  delete this._authsInProgress[user ? user.token : null];
+	  if (!_.isEmpty(this._authsInProgress)) { return; }
+	  this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, function () {
+	    if (!_.isEmpty(this$1._authsInProgress)) { return; }
+	    Object.freeze(user);
+	    this$1.root.user = user;
+	    this$1.root.userid = user && user.uid;
+	    angularProxy.digest();
+	  });
 	};
 
 	MetaTree.prototype._connectInfoProperty = function _connectInfoProperty (property, attribute) {
@@ -2989,11 +3004,12 @@
 	  relativizePaths(pathPrefix, values);
 	  var url = this._rootUrl + pathPrefix;
 	  var writeSerial = this._writeSerial;
-	  return this._dispatcher.execute('write', method, ref, function () {
+	  var operand = numValues === 1 ? values[''] : values;
+	  return this._dispatcher.execute('write', method, ref, operand, function () {
 	    if (numValues === 1) {
-	      return this$1._bridge.set(url, values[''], writeSerial);
+	      return this$1._bridge.set(url, operand, writeSerial);
 	    } else {
-	      return this$1._bridge.update(url, values, writeSerial);
+	      return this$1._bridge.update(url, operand, writeSerial);
 	    }
 	  });
 	};
@@ -3044,7 +3060,7 @@
 	  };
 
 	  return this._truss.peek(ref, function () {
-	    return this$1._dispatcher.execute('write', 'commit', ref, attemptTransaction);
+	    return this$1._dispatcher.execute('write', 'commit', ref, undefined, attemptTransaction);
 	  });
 	};
 

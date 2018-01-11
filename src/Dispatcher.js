@@ -3,7 +3,8 @@ import {wrapPromiseCallback} from './utils/promises.js';
 
 
 const INTERCEPT_KEYS = [
-  'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'all'
+  'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'authenticate',
+  'unathenticate', 'certify', 'all'
 ];
 
 const EMPTY_ARRAY = [];
@@ -35,10 +36,11 @@ class SlowHandle {
 
 
 class Operation {
-  constructor(type, method, target) {
+  constructor(type, method, target, operand) {
     this._type = type;
     this._method = method;
     this._target = target;
+    this._operand = operand;
     this._ready = false;
     this._running = false;
     this._ended = false;
@@ -50,6 +52,7 @@ class Operation {
   get type() {return this._type;}
   get method() {return this._method;}
   get target() {return this._target;}
+  get operand() {return this._operand;}
   get ready() {return this._ready;}
   get running() {return this._running;}
   get ended() {return this._ended;}
@@ -145,9 +148,9 @@ export default class Dispatcher {
     return `${stage}_${interceptKey}`;
   }
 
-  execute(operationType, method, target, executor) {
+  execute(operationType, method, target, operand, executor) {
     executor = wrapPromiseCallback(executor);
-    const operation = this.createOperation(operationType, method, target);
+    const operation = this.createOperation(operationType, method, target, operand);
     return this.begin(operation).then(() => {
       const executeWithRetries = () => {
         return executor().catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
@@ -156,8 +159,8 @@ export default class Dispatcher {
     }).then(result => this.end(operation).then(() => result));
   }
 
-  createOperation(operationType, method, target) {
-    return new Operation(operationType, method, target);
+  createOperation(operationType, method, target, operand) {
+    return new Operation(operationType, method, target, operand);
   }
 
   begin(operation) {

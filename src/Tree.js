@@ -179,11 +179,12 @@ export default class Tree {
     relativizePaths(pathPrefix, values);
     const url = this._rootUrl + pathPrefix;
     const writeSerial = this._writeSerial;
-    return this._dispatcher.execute('write', method, ref, () => {
+    const operand = numValues === 1 ? values[''] : values;
+    return this._dispatcher.execute('write', method, ref, operand, () => {
       if (numValues === 1) {
-        return this._bridge.set(url, values[''], writeSerial);
+        return this._bridge.set(url, operand, writeSerial);
       } else {
-        return this._bridge.update(url, values, writeSerial);
+        return this._bridge.update(url, operand, writeSerial);
       }
     });
   }
@@ -231,7 +232,7 @@ export default class Tree {
     };
 
     return this._truss.peek(ref, () => {
-      return this._dispatcher.execute('write', 'commit', ref, attemptTransaction);
+      return this._dispatcher.execute('write', 'commit', ref, undefined, attemptTransaction);
     });
   }
 

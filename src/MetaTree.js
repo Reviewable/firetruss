@@ -2,6 +2,7 @@ import angular from './angularCompatibility.js';
 import Vue from 'vue';
 import _ from 'lodash';
 import Reference from './Reference.js';
+import {promiseFinally} from './utils/promises.js';
 
 
 export default class MetaTree {
@@ -26,7 +27,7 @@ export default class MetaTree {
       }
     }}});
 
-    this._authTokensInProgress = [];
+    this._authsInProgress = {};
 
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
@@ -45,29 +46,39 @@ export default class MetaTree {
   }
 
   authenticate(token) {
-    this._authTokensInProgress.push(token);
-    return this._dispatcher.execute('auth', 'authenticate', new Reference(this._tree, '/'), () => {
-      return this._bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
-    }).catch(e => {
-      _.pull(this._authTokensInProgress, token);
-      return Promise.reject(e);
-    });
+    this._authsInProgress[token] = true;
+    return promiseFinally(
+      this._dispatcher.execute(
+        'auth', 'authenticate', new Reference(this._tree, '/'), token, () => {
+          return this._bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
+        }
+      ),
+      () => {delete this._authsInProgress[token];}
+    );
   }
 
   unauthenticate() {
-    return this._dispatcher.execute(
-      'auth', 'unauthenticate', new Reference(this._tree, '/'), () => {
-        return this._bridge.unauth(this._rootUrl);
-      }
+    this._authsInProgress.null = true;
+    return promiseFinally(
+      this._dispatcher.execute(
+        'auth', 'unauthenticate', new Reference(this._tree, '/'), undefined, () => {
+          return this._bridge.unauth(this._rootUrl);
+        }
+      ),
+      () => {delete this._authsInProgress.null;}
     );
   }
 
   _handleAuthChange(user) {
-    if (user) _.pull(this._authTokensInProgress, user.token);
-    if (!user && this._authTokensInProgress.length) return;
-    this.root.user = user;
-    this.root.userid = user && user.uid;
-    angular.digest();
+    delete this._authsInProgress[user ? user.token : null];
+    if (!_.isEmpty(this._authsInProgress)) return;
+    this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, () => {
+      if (!_.isEmpty(this._authsInProgress)) return;
+      Object.freeze(user);
+      this.root.user = user;
+      this.root.userid = user && user.uid;
+      angular.digest();
+    });
   }
 
   _connectInfoProperty(property, attribute) {
