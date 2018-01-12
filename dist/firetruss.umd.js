@@ -2771,6 +2771,7 @@
 	  // dependency.
 	  this.$$touchThis();
 
+	  var oldPropertyFrozen = currentPropertyFrozen;
 	  currentPropertyFrozen = false;
 	  var startTime = performanceNow();
 	  var value;
@@ -2786,7 +2787,7 @@
 	    if (currentPropertyFrozen) { value = new FrozenWrapper(value); }
 	    return value;
 	  } finally {
-	    currentPropertyFrozen = undefined;
+	    currentPropertyFrozen = oldPropertyFrozen;
 	  }
 	  // jshint validthis: false
 	}

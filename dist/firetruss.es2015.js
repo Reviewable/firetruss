@@ -2499,6 +2499,7 @@ function computeValue(prop, propertyStats) {
   // dependency.
   this.$$touchThis();
 
+  const oldPropertyFrozen = currentPropertyFrozen;
   currentPropertyFrozen = false;
   const startTime = performanceNow();
   let value;
@@ -2514,7 +2515,7 @@ function computeValue(prop, propertyStats) {
     if (currentPropertyFrozen) value = new FrozenWrapper(value);
     return value;
   } finally {
-    currentPropertyFrozen = undefined;
+    currentPropertyFrozen = oldPropertyFrozen;
   }
   // jshint validthis: false
 }
