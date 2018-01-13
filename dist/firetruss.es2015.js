@@ -2369,6 +2369,11 @@ class Modeler {
           if (newValue instanceof ErrorWrapper) throw newValue.error;
         }
       }, {immediate: true});  // use immediate:true since watcher will run computeValue anyway
+      // Hack to change order of computed property watchers.  By flipping their ids to be negative,
+      // we ensure that they will settle before all other watchers, and also that children
+      // properties will settle before their parents since values are often aggregated upwards.
+      const watcher = _.last(vue._watchers);
+      watcher.id = -watcher.id;
 
       function update(newValue) {
         if (newValue instanceof FrozenWrapper) {
