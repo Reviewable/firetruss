@@ -3366,6 +3366,7 @@
 	Tree.prototype._holdsConcreteData = function _holdsConcreteData (object, ghostObjects) {
 	    var this$1 = this;
 
+	  if (object === undefined || object === null) { return false; }
 	  if (ghostObjects && _.includes(ghostObjects, object)) { return false; }
 	  if (_.some(object, function (value) { return !value.$truss; })) { return true; }
 	  return _.some(object, function (value) { return this$1._holdsConcreteData(value, ghostObjects); });

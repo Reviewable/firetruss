@@ -3037,6 +3037,7 @@ class Tree {
   }
 
   _holdsConcreteData(object, ghostObjects) {
+    if (object === undefined || object === null) return false;
     if (ghostObjects && _.includes(ghostObjects, object)) return false;
     if (_.some(object, value => !value.$truss)) return true;
     return _.some(object, value => this._holdsConcreteData(value, ghostObjects));
