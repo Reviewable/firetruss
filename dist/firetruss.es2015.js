@@ -3361,7 +3361,7 @@ class Truss {
       if (!unwatch) {
         // Delay the immediate callback until we've had a chance to return the unwatch function.
         Promise.resolve().then(() => {
-          if (numCallbacks > 1 || subjectFn() !== newValue) return;
+          if (numCallbacks > 1) return;
           callbackFn(newValue, oldValue);
           // No need to digest since under Angular we'll be using $q as Promise.
         });
