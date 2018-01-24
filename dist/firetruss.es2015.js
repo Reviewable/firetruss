@@ -689,7 +689,7 @@ Object.freeze(EMPTY_ANNOTATIONS);
 class Handle {
   constructor(tree, path, annotations) {
     this._tree = tree;
-    this._path = path.replace(/^\/*/, '/').replace(/\/$/, '');
+    this._path = path.replace(/^\/*/, '/').replace(/\/$/, '') || '/';
     if (annotations) {
       this._annotations = annotations;
       Object.freeze(annotations);
