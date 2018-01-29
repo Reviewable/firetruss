@@ -1724,7 +1724,7 @@
 	  if (!_.isEmpty(this._authsInProgress)) { return; }
 	  this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, function () {
 	    if (!_.isEmpty(this$1._authsInProgress)) { return; }
-	    Object.freeze(user);
+	    if (user) { Object.freeze(user); }
 	    this$1.root.user = user;
 	    this$1.root.userid = user && user.uid;
 	    angularProxy.digest();
@@ -2815,7 +2815,7 @@
 	}
 
 	function freeze(object) {
-	  if (object === null || object === undefined || Object.isFrozen(object) || !_.isObject(object) ||
+	  if (object === null || object === undefined || !_.isObject(object) || Object.isFrozen(object) ||
 	      object.$truss) { return object; }
 	  object = Object.freeze(object);
 	  if (_.isArray(object)) {

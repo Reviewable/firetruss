@@ -74,7 +74,7 @@ export default class MetaTree {
     if (!_.isEmpty(this._authsInProgress)) return;
     this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, () => {
       if (!_.isEmpty(this._authsInProgress)) return;
-      Object.freeze(user);
+      if (user) Object.freeze(user);
       this.root.user = user;
       this.root.userid = user && user.uid;
       angular.digest();

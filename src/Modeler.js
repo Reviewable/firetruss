@@ -588,7 +588,7 @@ function wrapConnections(object, connections) {
 }
 
 function freeze(object) {
-  if (object === null || object === undefined || Object.isFrozen(object) || !_.isObject(object) ||
+  if (object === null || object === undefined || !_.isObject(object) || Object.isFrozen(object) ||
       object.$truss) return object;
   object = Object.freeze(object);
   if (_.isArray(object)) {
