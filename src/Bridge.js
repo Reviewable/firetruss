@@ -163,7 +163,7 @@ export default class Bridge {
     for (const message of messages) {
       this._log('recv:', message);
       const fn = this[message.msg];
-      if (typeof fn !== 'function') throw new Error('Unknown message: ' + message.msg);
+      if (!_.isFunction(fn)) throw new Error('Unknown message: ' + message.msg);
       fn.call(this, message);
     }
   }

@@ -155,7 +155,7 @@
 
 	function escapeKeys(object) {
 	  // isExtensible check avoids trying to escape references to Firetruss internals.
-	  if (!(typeof object === 'object' && Object.isExtensible(object))) { return object; }
+	  if (!(_.isObject(object) && Object.isExtensible(object))) { return object; }
 	  var result = object;
 	  for (var key in object) {
 	    if (!object.hasOwnProperty(key)) { continue; }
@@ -423,7 +423,7 @@
 
 	      this$1._log('recv:', message);
 	    var fn = this$1[message.msg];
-	    if (typeof fn !== 'function') { throw new Error('Unknown message: ' + message.msg); }
+	    if (!_.isFunction(fn)) { throw new Error('Unknown message: ' + message.msg); }
 	    fn.call(this$1, message);
 	  }
 	};
@@ -3544,7 +3544,7 @@
 	}
 
 	function toFirebaseJson(object) {
-	  if (typeof object !== 'object') { return object; }
+	  if (!_.isObject(object)) { return object; }
 	  var result = {};
 	  for (var key in object) {
 	    if (object.hasOwnProperty(key)) { result[escapeKey(key)] = toFirebaseJson(object[key]); }

@@ -663,7 +663,7 @@ export function relativizePaths(rootPath, values) {
 }
 
 export function toFirebaseJson(object) {
-  if (typeof object !== 'object') return object;
+  if (!_.isObject(object)) return object;
   const result = {};
   for (const key in object) {
     if (object.hasOwnProperty(key)) result[escapeKey(key)] = toFirebaseJson(object[key]);

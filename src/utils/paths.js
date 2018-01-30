@@ -23,7 +23,7 @@ export function unescapeKey(key) {
 
 export function escapeKeys(object) {
   // isExtensible check avoids trying to escape references to Firetruss internals.
-  if (!(typeof object === 'object' && Object.isExtensible(object))) return object;
+  if (!(_.isObject(object) && Object.isExtensible(object))) return object;
   let result = object;
   for (const key in object) {
     if (!object.hasOwnProperty(key)) continue;
