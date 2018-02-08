@@ -1,6 +1,7 @@
 import angular from './angularCompatibility.js';
 import Coupler from './Coupler.js';
 import Modeler from './Modeler.js';
+import Reference from './Reference.js';
 import {escapeKey, escapeKeys, unescapeKey, joinPath, splitPath} from './utils/paths.js';
 import {wrapPromiseCallback} from './utils/promises.js';
 import {SERVER_TIMESTAMP} from './utils/utils.js';
@@ -177,11 +178,13 @@ export default class Tree {
     if (this._applyLocalWrite(values, method === 'override')) return Promise.resolve();
     const pathPrefix = extractCommonPathPrefix(values);
     relativizePaths(pathPrefix, values);
+    if (pathPrefix !== ref.path) ref = new Reference(ref._tree, pathPrefix, ref._annotations);
     const url = this._rootUrl + pathPrefix;
     const writeSerial = this._writeSerial;
-    const operand = numValues === 1 ? values[''] : values;
-    return this._dispatcher.execute('write', method, ref, operand, () => {
-      if (numValues === 1) {
+    const set = numValues === 1;
+    const operand = set ? values[''] : values;
+    return this._dispatcher.execute('write', set ? 'set' : 'update', ref, operand, () => {
+      if (set) {
         return this._bridge.set(url, operand, writeSerial);
       } else {
         return this._bridge.update(url, operand, writeSerial);

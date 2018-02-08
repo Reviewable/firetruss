@@ -1412,11 +1412,21 @@
 	  this._slowHandles = [];
 	};
 
-	var prototypeAccessors$5 = { type: {},method: {},target: {},operand: {},ready: {},running: {},ended: {},tries: {},error: {} };
+	var prototypeAccessors$5 = { type: {},method: {},target: {},targets: {},operand: {},ready: {},running: {},ended: {},tries: {},error: {} };
 
 	prototypeAccessors$5.type.get = function () {return this._type;};
 	prototypeAccessors$5.method.get = function () {return this._method;};
 	prototypeAccessors$5.target.get = function () {return this._target;};
+	prototypeAccessors$5.targets.get = function () {
+	    var this$1 = this;
+
+	  if (this._method !== 'update') { return [this._target]; }
+	  return _.map(this._operand, function (value, escapedPathFragment) {
+	    return new Reference(
+	      this$1._target._tree, joinPath(this$1._target.path, escapedPathFragment),
+	      this$1._target._annotations);
+	  });
+	};
 	prototypeAccessors$5.operand.get = function () {return this._operand;};
 	prototypeAccessors$5.ready.get = function () {return this._ready;};
 	prototypeAccessors$5.running.get = function () {return this._running;};
@@ -3015,11 +3025,13 @@
 	  if (this._applyLocalWrite(values, method === 'override')) { return Promise.resolve(); }
 	  var pathPrefix = extractCommonPathPrefix(values);
 	  relativizePaths(pathPrefix, values);
+	  if (pathPrefix !== ref.path) { ref = new Reference(ref._tree, pathPrefix, ref._annotations); }
 	  var url = this._rootUrl + pathPrefix;
 	  var writeSerial = this._writeSerial;
-	  var operand = numValues === 1 ? values[''] : values;
-	  return this._dispatcher.execute('write', method, ref, operand, function () {
-	    if (numValues === 1) {
+	  var set = numValues === 1;
+	  var operand = set ? values[''] : values;
+	  return this._dispatcher.execute('write', set ? 'set' : 'update', ref, operand, function () {
+	    if (set) {
 	      return this$1._bridge.set(url, operand, writeSerial);
 	    } else {
 	      return this$1._bridge.update(url, operand, writeSerial);

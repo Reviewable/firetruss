@@ -1269,6 +1269,14 @@ class Operation {
   get type() {return this._type;}
   get method() {return this._method;}
   get target() {return this._target;}
+  get targets() {
+    if (this._method !== 'update') return [this._target];
+    return _.map(this._operand, (value, escapedPathFragment) => {
+      return new Reference(
+        this._target._tree, joinPath(this._target.path, escapedPathFragment),
+        this._target._annotations);
+    });
+  }
   get operand() {return this._operand;}
   get ready() {return this._ready;}
   get running() {return this._running;}
@@ -2728,11 +2736,13 @@ class Tree {
     if (this._applyLocalWrite(values, method === 'override')) return Promise.resolve();
     const pathPrefix = extractCommonPathPrefix(values);
     relativizePaths(pathPrefix, values);
+    if (pathPrefix !== ref.path) ref = new Reference(ref._tree, pathPrefix, ref._annotations);
     const url = this._rootUrl + pathPrefix;
     const writeSerial = this._writeSerial;
-    const operand = numValues === 1 ? values[''] : values;
-    return this._dispatcher.execute('write', method, ref, operand, () => {
-      if (numValues === 1) {
+    const set = numValues === 1;
+    const operand = set ? values[''] : values;
+    return this._dispatcher.execute('write', set ? 'set' : 'update', ref, operand, () => {
+      if (set) {
         return this._bridge.set(url, operand, writeSerial);
       } else {
         return this._bridge.update(url, operand, writeSerial);
