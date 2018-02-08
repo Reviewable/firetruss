@@ -2383,11 +2383,18 @@ class Modeler {
         }
         if (isTrussEqual(value, newValue)) return;
         // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
-        freeze(newValue);
         propertyStats.numUpdates += 1;
         writeAllowed = true;
         object[prop.name] = newValue;
         writeAllowed = false;
+        // Freeze the computed value so it can't be accidentally modified by a third party.  Ideally
+        // we'd freeze it before setting it so that Vue wouldn't instrument the object recursively
+        // (since it can't change anyway), but we actually need the instrumentation in case a client
+        // tries to access an inexistent property off a computed pointer to an unfrozen value (e.g.,
+        // a $truss-ified object).  When instrumented, Vue will add a dependency on the unfrozen
+        // value in case the property is later added.  If uninstrumented, the dependency won't be
+        // added and we won't be notified.  And Vue only instruments extensible objects...
+        freeze(newValue);
         return true;
       }
 
