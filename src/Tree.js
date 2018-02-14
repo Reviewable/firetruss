@@ -359,7 +359,8 @@ export default class Tree {
     let object;
     const segments = _.dropRight(splitPath(path, true));
     let ancestorPath = '/';
-    _.each(segments, (segment, i) => {
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
       const key = unescapeKey(segment);
       let child = segment ? object.$data[key] : this.root;
       if (segment) ancestorPath += (ancestorPath === '/' ? '' : '/') + segment;
@@ -371,7 +372,7 @@ export default class Tree {
         if (!child) return;
       }
       object = child;
-    });
+    }
     return object;
   }
 

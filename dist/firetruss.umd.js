@@ -3238,7 +3238,8 @@
 	  var object;
 	  var segments = _.dropRight(splitPath(path, true));
 	  var ancestorPath = '/';
-	  _.each(segments, function (segment, i) {
+	  for (var i = 0; i < segments.length; i++) {
+	    var segment = segments[i];
 	    var key = unescapeKey(segment);
 	    var child = segment ? object.$data[key] : this$1.root;
 	    if (segment) { ancestorPath += (ancestorPath === '/' ? '' : '/') + segment; }
@@ -3250,7 +3251,7 @@
 	      if (!child) { return; }
 	    }
 	    object = child;
-	  });
+	  }
 	  return object;
 	};
 
