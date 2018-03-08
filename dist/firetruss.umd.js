@@ -1956,7 +1956,7 @@
 	    angularProxy.digest();
 	    this.unlisten(true);
 	    this._forAllDescendants(function (node) {
-	      for (var i = 0, list = this$1.operations; i < list.length; i += 1) {
+	      for (var i = 0, list = node.operations; i < list.length; i += 1) {
 	          var op = list[i];
 
 	          this$1._coupler._dispatcher.markReady(op);
@@ -1975,7 +1975,7 @@
 	      node.ready = false;
 	      angularProxy.digest();
 	    }
-	    for (var i = 0, list = this$1.operations; i < list.length; i += 1) {
+	    for (var i = 0, list = node.operations; i < list.length; i += 1) {
 	        var op = list[i];
 
 	        this$1._coupler._dispatcher.clearReady(op);

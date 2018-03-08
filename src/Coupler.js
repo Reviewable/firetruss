@@ -182,7 +182,7 @@ class Node {
       angular.digest();
       this.unlisten(true);
       this._forAllDescendants(node => {
-        for (const op of this.operations) this._coupler._dispatcher.markReady(op);
+        for (const op of node.operations) this._coupler._dispatcher.markReady(op);
       });
     }
   }
@@ -195,7 +195,7 @@ class Node {
         node.ready = false;
         angular.digest();
       }
-      for (const op of this.operations) this._coupler._dispatcher.clearReady(op);
+      for (const op of node.operations) this._coupler._dispatcher.clearReady(op);
     });
     return Promise.all(_.map(this.operations, op => {
       return this._coupler._dispatcher.retry(op, error).catch(e => {
