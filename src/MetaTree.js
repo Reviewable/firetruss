@@ -17,11 +17,11 @@ export default class MetaTree {
         const key = 'now' + intervalMillis;
         if (!this.hasOwnProperty(key)) {
           const update = () => {
-            this[key] = Date.now() + this.timeOffset;
+            Vue.set(this, key, Date.now() + this.timeOffset);
             angular.digest();
           };
           update();
-          setInterval(() => update, intervalMillis);
+          setInterval(update, intervalMillis);
         }
         return this[key];
       }

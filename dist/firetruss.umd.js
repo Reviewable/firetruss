@@ -1669,11 +1669,11 @@
 	      var key = 'now' + intervalMillis;
 	      if (!this.hasOwnProperty(key)) {
 	        var update = function () {
-	          this$1[key] = Date.now() + this$1.timeOffset;
+	          Vue.set(this$1, key, Date.now() + this$1.timeOffset);
 	          angularProxy.digest();
 	        };
 	        update();
-	        setInterval(function () { return update; }, intervalMillis);
+	        setInterval(update, intervalMillis);
 	      }
 	      return this[key];
 	    }
