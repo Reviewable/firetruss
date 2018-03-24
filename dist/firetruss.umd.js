@@ -720,8 +720,8 @@
 	    try {
 	      error[propertyName] = json[propertyName];
 	    } catch (e) {
-	      e.extra = {propertyName: propertyName};
-	      throw e;
+	      error.extra = error.extra || {};
+	      error.extra[propertyName] = json[propertyName];
 	    }
 	  }
 	  return error;
