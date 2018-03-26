@@ -1425,7 +1425,7 @@ class Dispatcher {
   }
 
   end(operation, error) {
-    if (operation.ended) return;
+    if (operation.ended) return Promise.resolve();
     operation._setRunning(false);
     operation._setEnded(true);
     if (error) operation._error = error;
@@ -1443,17 +1443,16 @@ class Dispatcher {
 
   _afterEnd(operation) {
     operation._markReady(true);
-    if (operation.error) {
-      const onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
-      return this._bridge.probeError(operation.error).then(() => {
-        if (onFailureCallbacks) {
-          setTimeout(() => {
-            _.each(onFailureCallbacks, onFailure => onFailure(operation));
-          }, 0);
-        }
-        return Promise.reject(operation.error);
-      });
-    }
+    if (!operation.error) return Promise.resolve();
+    const onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
+    return this._bridge.probeError(operation.error).then(() => {
+      if (onFailureCallbacks) {
+        setTimeout(() => {
+          _.each(onFailureCallbacks, onFailure => onFailure(operation));
+        }, 0);
+      }
+      return Promise.reject(operation.error);
+    });
   }
 }
 

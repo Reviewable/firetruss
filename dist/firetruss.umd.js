@@ -1585,7 +1585,7 @@
 	Dispatcher.prototype.end = function end (operation, error) {
 	    var this$1 = this;
 
-	  if (operation.ended) { return; }
+	  if (operation.ended) { return Promise.resolve(); }
 	  operation._setRunning(false);
 	  operation._setEnded(true);
 	  if (error) { operation._error = error; }
@@ -1603,17 +1603,16 @@
 
 	Dispatcher.prototype._afterEnd = function _afterEnd (operation) {
 	  operation._markReady(true);
-	  if (operation.error) {
-	    var onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
-	    return this._bridge.probeError(operation.error).then(function () {
-	      if (onFailureCallbacks) {
-	        setTimeout(function () {
-	          _.each(onFailureCallbacks, function (onFailure) { return onFailure(operation); });
-	        }, 0);
-	      }
-	      return Promise.reject(operation.error);
-	    });
-	  }
+	  if (!operation.error) { return Promise.resolve(); }
+	  var onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
+	  return this._bridge.probeError(operation.error).then(function () {
+	    if (onFailureCallbacks) {
+	      setTimeout(function () {
+	        _.each(onFailureCallbacks, function (onFailure) { return onFailure(operation); });
+	      }, 0);
+	    }
+	    return Promise.reject(operation.error);
+	  });
 	};
 
 	var ALPHABET = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz';
