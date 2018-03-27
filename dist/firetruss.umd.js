@@ -1730,10 +1730,10 @@
 	  // Signal user change to null pre-emptively.This is what the Firebase SDK does as well, since
 	  // it lets the app tear down user-required connections before the user is actually deauthed,
 	  // which can prevent spurious permission denied errors.
-	  return this._handleAuthChange(null).then(function () {
+	  return this._handleAuthChange(null).then(function (approved) {
 	    // Bail if auth change callback initiated another authentication, since it will have already
 	    // sent the command to the bridge and sending our own now would incorrectly override it.
-	    if (!_.isEqual(this$1._authsInProgress, {null: true})) { return; }
+	    if (!approved || !_.isEqual(this$1._authsInProgress, {null: true})) { return; }
 	    return promiseFinally(
 	      this$1._dispatcher.execute(
 	        'auth', 'unauthenticate', new Reference(this$1._tree, '/'), undefined, function () {
@@ -1748,13 +1748,14 @@
 	MetaTree.prototype._handleAuthChange = function _handleAuthChange (user) {
 	    var this$1 = this;
 
-	  if (this._isAuthChangeStale(user)) { return; }
+	  if (this._isAuthChangeStale(user)) { return Promise.resolve(false); }
 	  return this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, function () {
-	    if (this$1._isAuthChangeStale(user)) { return; }
+	    if (this$1._isAuthChangeStale(user)) { return false; }
 	    if (user) { Object.freeze(user); }
 	    this$1.root.user = user;
 	    this$1.root.userid = user && user.uid;
 	    angularProxy.digest();
+	    return true;
 	  });
 	};
 

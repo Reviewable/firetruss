@@ -64,10 +64,10 @@ export default class MetaTree {
     // Signal user change to null pre-emptively.  This is what the Firebase SDK does as well, since
     // it lets the app tear down user-required connections before the user is actually deauthed,
     // which can prevent spurious permission denied errors.
-    return this._handleAuthChange(null).then(() => {
+    return this._handleAuthChange(null).then(approved => {
       // Bail if auth change callback initiated another authentication, since it will have already
       // sent the command to the bridge and sending our own now would incorrectly override it.
-      if (!_.isEqual(this._authsInProgress, {null: true})) return;
+      if (!approved || !_.isEqual(this._authsInProgress, {null: true})) return;
       return promiseFinally(
         this._dispatcher.execute(
           'auth', 'unauthenticate', new Reference(this._tree, '/'), undefined, () => {
@@ -80,13 +80,14 @@ export default class MetaTree {
   }
 
   _handleAuthChange(user) {
-    if (this._isAuthChangeStale(user)) return;
+    if (this._isAuthChangeStale(user)) return Promise.resolve(false);
     return this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, () => {
-      if (this._isAuthChangeStale(user)) return;
+      if (this._isAuthChangeStale(user)) return false;
       if (user) Object.freeze(user);
       this.root.user = user;
       this.root.userid = user && user.uid;
       angular.digest();
+      return true;
     });
   }
 
