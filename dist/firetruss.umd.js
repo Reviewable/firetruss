@@ -1724,32 +1724,46 @@
 	MetaTree.prototype.unauthenticate = function unauthenticate () {
 	    var this$1 = this;
 
+	  // Cancel any other auths in progress, since signing out should invalidate them.
+	  clear(this._authsInProgress);
 	  this._authsInProgress.null = true;
 	  // Signal user change to null pre-emptively.This is what the Firebase SDK does as well, since
 	  // it lets the app tear down user-required connections before the user is actually deauthed,
 	  // which can prevent spurious permission denied errors.
-	  return this._handleAuthChange(null).then(function () { return promiseFinally(
-	    this$1._dispatcher.execute(
-	      'auth', 'unauthenticate', new Reference(this$1._tree, '/'), undefined, function () {
-	        return this$1._bridge.unauth(this$1._rootUrl);
-	      }
-	    ),
-	    function () {delete this$1._authsInProgress.null;}
-	  ); });
+	  return this._handleAuthChange(null).then(function () {
+	    // Bail if auth change callback initiated another authentication, since it will have already
+	    // sent the command to the bridge and sending our own now would incorrectly override it.
+	    if (!_.isEqual(this$1._authsInProgress, {null: true})) { return; }
+	    return promiseFinally(
+	      this$1._dispatcher.execute(
+	        'auth', 'unauthenticate', new Reference(this$1._tree, '/'), undefined, function () {
+	          return this$1._bridge.unauth(this$1._rootUrl);
+	        }
+	      ),
+	      function () {delete this$1._authsInProgress.null;}
+	    );
+	  });
 	};
 
 	MetaTree.prototype._handleAuthChange = function _handleAuthChange (user) {
 	    var this$1 = this;
 
-	  delete this._authsInProgress[user ? user.token : null];
-	  if (this.root.user === user || !_.isEmpty(this._authsInProgress)) { return; }
+	  if (this._isAuthChangeStale(user)) { return; }
 	  return this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, function () {
-	    if (!_.isEmpty(this$1._authsInProgress)) { return; }
+	    if (this$1._isAuthChangeStale(user)) { return; }
 	    if (user) { Object.freeze(user); }
 	    this$1.root.user = user;
 	    this$1.root.userid = user && user.uid;
 	    angularProxy.digest();
 	  });
+	};
+
+	MetaTree.prototype._isAuthChangeStale = function _isAuthChangeStale (user) {
+	  return !(this.root.user === undefined && _.isEmpty(this._authsInProgress)) && (
+	    this.root.user === user ||
+	    user && !this._authsInProgress[user.token] ||
+	    _.size(this._authsInProgress) !== 1
+	  );
 	};
 
 	MetaTree.prototype._connectInfoProperty = function _connectInfoProperty (property, attribute) {
@@ -1763,6 +1777,13 @@
 	};
 
 	Object.defineProperties( MetaTree.prototype, prototypeAccessors$6 );
+
+	function clear(object) {
+	  for (var key in object) {
+	    if (object.hasOwnProperty(key)) { delete object[key]; }
+	  }
+	  return object;
+	}
 
 	var QueryHandler = function QueryHandler(coupler, query) {
 	  this._coupler = coupler;

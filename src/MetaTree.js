@@ -58,30 +58,44 @@ export default class MetaTree {
   }
 
   unauthenticate() {
+    // Cancel any other auths in progress, since signing out should invalidate them.
+    clear(this._authsInProgress);
     this._authsInProgress.null = true;
     // Signal user change to null pre-emptively.  This is what the Firebase SDK does as well, since
     // it lets the app tear down user-required connections before the user is actually deauthed,
     // which can prevent spurious permission denied errors.
-    return this._handleAuthChange(null).then(() => promiseFinally(
-      this._dispatcher.execute(
-        'auth', 'unauthenticate', new Reference(this._tree, '/'), undefined, () => {
-          return this._bridge.unauth(this._rootUrl);
-        }
-      ),
-      () => {delete this._authsInProgress.null;}
-    ));
+    return this._handleAuthChange(null).then(() => {
+      // Bail if auth change callback initiated another authentication, since it will have already
+      // sent the command to the bridge and sending our own now would incorrectly override it.
+      if (!_.isEqual(this._authsInProgress, {null: true})) return;
+      return promiseFinally(
+        this._dispatcher.execute(
+          'auth', 'unauthenticate', new Reference(this._tree, '/'), undefined, () => {
+            return this._bridge.unauth(this._rootUrl);
+          }
+        ),
+        () => {delete this._authsInProgress.null;}
+      );
+    });
   }
 
   _handleAuthChange(user) {
-    delete this._authsInProgress[user ? user.token : null];
-    if (this.root.user === user || !_.isEmpty(this._authsInProgress)) return;
+    if (this._isAuthChangeStale(user)) return;
     return this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, () => {
-      if (!_.isEmpty(this._authsInProgress)) return;
+      if (this._isAuthChangeStale(user)) return;
       if (user) Object.freeze(user);
       this.root.user = user;
       this.root.userid = user && user.uid;
       angular.digest();
     });
+  }
+
+  _isAuthChangeStale(user) {
+    return !(this.root.user === undefined && _.isEmpty(this._authsInProgress)) && (
+      this.root.user === user ||
+      user && !this._authsInProgress[user.token] ||
+      _.size(this._authsInProgress) !== 1
+    );
   }
 
   _connectInfoProperty(property, attribute) {
@@ -91,4 +105,11 @@ export default class MetaTree {
       angular.digest();
     });
   }
+}
+
+function clear(object) {
+  for (const key in object) {
+    if (object.hasOwnProperty(key)) delete object[key];
+  }
+  return object;
 }
