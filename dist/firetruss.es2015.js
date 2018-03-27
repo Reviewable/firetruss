@@ -1412,6 +1412,10 @@ class Dispatcher {
       this._getCallbacks('onError', operation.type, operation.method),
       onError => onError(operation, error)
     )).then(results => {
+      // If the operation ended in the meantime, bail.  This will cause the caller to attempt to
+      // fail the operation, but since it's already ended the call to end() with an error will be a
+      // no-op.
+      if (operation.ended) return;
       const retrying = _.some(results);
       if (retrying) delete operation._error;
       return retrying;
@@ -1428,7 +1432,12 @@ class Dispatcher {
     if (operation.ended) return Promise.resolve();
     operation._setRunning(false);
     operation._setEnded(true);
-    if (error) operation._error = error;
+    if (error) {
+      operation._error = error;
+    } else {
+      // In case we're racing with a retry(), wipe out the error.
+      delete operation._error;
+    }
     return Promise.all(_.map(
       this._getCallbacks('onAfter', operation.type, operation.method),
       onAfter => onAfter(operation)
