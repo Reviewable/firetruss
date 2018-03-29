@@ -861,7 +861,7 @@ class Reference extends Handle {
   }
 
   query(spec) {
-    return new Query(this._tree, this._path, spec);
+    return new Query(this._tree, this._path, spec, this._annotations);
   }
 
   set(value) {

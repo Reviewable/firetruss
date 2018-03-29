@@ -934,7 +934,7 @@
 	  };
 
 	  Reference.prototype.query = function query (spec) {
-	    return new Query(this._tree, this._path, spec);
+	    return new Query(this._tree, this._path, spec, this._annotations);
 	  };
 
 	  Reference.prototype.set = function set (value) {
