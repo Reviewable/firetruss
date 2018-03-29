@@ -501,7 +501,7 @@ export default class Modeler {
   forEachPlaceholderChild(path, iteratee) {
     const mount = this._getMount(path);
     _.each(mount && mount.children, child => {
-      if (child.placeholder) iteratee(child.escapedKey, child.placeholder);
+      if (child.placeholder) iteratee(child);
     });
   }
 

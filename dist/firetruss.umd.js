@@ -2765,7 +2765,7 @@
 	Modeler.prototype.forEachPlaceholderChild = function forEachPlaceholderChild (path, iteratee) {
 	  var mount = this._getMount(path);
 	  _.each(mount && mount.children, function (child) {
-	    if (child.placeholder) { iteratee(child.escapedKey, child.placeholder); }
+	    if (child.placeholder) { iteratee(child); }
 	  });
 	};
 
@@ -2961,7 +2961,7 @@
 	  this._initialized = true;
 	  this._modeler.init(classes, !this._vue.$data.$root);
 	  var createdObjects = [];
-	  this._plantPlaceholders(this.root, '/', createdObjects);
+	  this._plantPlaceholders(this.root, '/', undefined, createdObjects);
 	  for (var i = 0, list = createdObjects; i < list.length; i += 1) {
 	      var object = list[i];
 
@@ -3319,6 +3319,12 @@
 	  } else if (object.$overridden) {
 	    delete object.$overridden;
 	  }
+	  // Plant hidden placeholders first, so their computed watchers will have a similar precedence to
+	  // the parent object, and the parent object's other children will get computed first.This can
+	  // optimize updates when parts of a complex model are broken out into hidden sub-models, and
+	  // shouldn't risk being overwritten by actual Firebase data since that will rarely (never?) be
+	  // hidden.
+	  if (objectCreated) { this._plantPlaceholders(object, path, true, createdObjects); }
 	  _.each(value, function (item, escapedChildKey) {
 	    this$1._plantValue(
 	      joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite,
@@ -3326,7 +3332,7 @@
 	    );
 	  });
 	  if (objectCreated) {
-	    this._plantPlaceholders(object, path, createdObjects);
+	    this._plantPlaceholders(object, path, false, createdObjects);
 	  } else {
 	    _.each(object, function (item, childKey) {
 	      var escapedChildKey = escapeKey(childKey);
@@ -3338,14 +3344,15 @@
 	  return object;
 	};
 
-	Tree.prototype._plantPlaceholders = function _plantPlaceholders (object, path, createdObjects) {
+	Tree.prototype._plantPlaceholders = function _plantPlaceholders (object, path, hidden, createdObjects) {
 	    var this$1 = this;
 
-	  this._modeler.forEachPlaceholderChild(path, function (escapedKey, placeholder) {
-	    var key = unescapeKey(escapedKey);
+	  this._modeler.forEachPlaceholderChild(path, function (mount) {
+	    if (hidden !== undefined && hidden !== !!mount.hidden) { return; }
+	    var key = unescapeKey(mount.escapedKey);
 	    if (!object.hasOwnProperty(key)) {
 	      this$1._plantValue(
-	        joinPath(path, escapedKey), key, placeholder, object, false, false, false,
+	        joinPath(path, mount.escapedKey), key, mount.placeholder, object, false, false, false,
 	        createdObjects);
 	    }
 	  });

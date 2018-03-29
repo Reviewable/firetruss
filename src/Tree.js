@@ -91,7 +91,7 @@ export default class Tree {
     this._initialized = true;
     this._modeler.init(classes, !this._vue.$data.$root);
     const createdObjects = [];
-    this._plantPlaceholders(this.root, '/', createdObjects);
+    this._plantPlaceholders(this.root, '/', undefined, createdObjects);
     for (const object of createdObjects) this._completeCreateObject(object);
   }
 
@@ -405,6 +405,12 @@ export default class Tree {
     } else if (object.$overridden) {
       delete object.$overridden;
     }
+    // Plant hidden placeholders first, so their computed watchers will have a similar precedence to
+    // the parent object, and the parent object's other children will get computed first.  This can
+    // optimize updates when parts of a complex model are broken out into hidden sub-models, and
+    // shouldn't risk being overwritten by actual Firebase data since that will rarely (never?) be
+    // hidden.
+    if (objectCreated) this._plantPlaceholders(object, path, true, createdObjects);
     _.each(value, (item, escapedChildKey) => {
       this._plantValue(
         joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite,
@@ -412,7 +418,7 @@ export default class Tree {
       );
     });
     if (objectCreated) {
-      this._plantPlaceholders(object, path, createdObjects);
+      this._plantPlaceholders(object, path, false, createdObjects);
     } else {
       _.each(object, (item, childKey) => {
         const escapedChildKey = escapeKey(childKey);
@@ -424,12 +430,13 @@ export default class Tree {
     return object;
   }
 
-  _plantPlaceholders(object, path, createdObjects) {
-    this._modeler.forEachPlaceholderChild(path, (escapedKey, placeholder) => {
-      const key = unescapeKey(escapedKey);
+  _plantPlaceholders(object, path, hidden, createdObjects) {
+    this._modeler.forEachPlaceholderChild(path, mount => {
+      if (hidden !== undefined && hidden !== !!mount.hidden) return;
+      const key = unescapeKey(mount.escapedKey);
       if (!object.hasOwnProperty(key)) {
         this._plantValue(
-          joinPath(path, escapedKey), key, placeholder, object, false, false, false,
+          joinPath(path, mount.escapedKey), key, mount.placeholder, object, false, false, false,
           createdObjects);
       }
     });
