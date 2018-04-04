@@ -27,7 +27,7 @@ export default class MetaTree {
       }
     }}});
 
-    this._authsInProgress = {};
+    this._auth = {serial: 0};
 
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
@@ -46,43 +46,36 @@ export default class MetaTree {
   }
 
   authenticate(token) {
-    this._authsInProgress[token] = true;
-    return promiseFinally(
-      this._dispatcher.execute(
-        'auth', 'authenticate', new Reference(this._tree, '/'), token, () => {
-          return this._bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
-        }
-      ),
-      () => {delete this._authsInProgress[token];}
+    this._auth.serial++;
+    return this._dispatcher.execute(
+      'auth', 'authenticate', new Reference(this._tree, '/'), token, () => {
+        return this._bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
+      }
     );
   }
 
   unauthenticate() {
-    // Cancel any other auths in progress, since signing out should invalidate them.
-    clear(this._authsInProgress);
-    this._authsInProgress.null = true;
     // Signal user change to null pre-emptively.  This is what the Firebase SDK does as well, since
     // it lets the app tear down user-required connections before the user is actually deauthed,
     // which can prevent spurious permission denied errors.
+    this._auth.serial++;
     return this._handleAuthChange(null).then(approved => {
       // Bail if auth change callback initiated another authentication, since it will have already
       // sent the command to the bridge and sending our own now would incorrectly override it.
-      if (!approved || !_.isEqual(this._authsInProgress, {null: true})) return;
-      return promiseFinally(
-        this._dispatcher.execute(
-          'auth', 'unauthenticate', new Reference(this._tree, '/'), undefined, () => {
-            return this._bridge.unauth(this._rootUrl);
-          }
-        ),
-        () => {delete this._authsInProgress.null;}
+      if (!approved) return;
+      return this._dispatcher.execute(
+        'auth', 'unauthenticate', new Reference(this._tree, '/'), undefined, () => {
+          return this._bridge.unauth(this._rootUrl);
+        }
       );
     });
   }
 
   _handleAuthChange(user) {
-    if (this._isAuthChangeStale(user)) return Promise.resolve(false);
+    const authSerial = this._auth.serial;
+    if (this.root.user === user) return Promise.resolve(false);
     return this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, () => {
-      if (this._isAuthChangeStale(user)) return false;
+      if (this.root.user === user || authSerial !== this._auth.serial) return false;
       if (user) Object.freeze(user);
       this.root.user = user;
       this.root.userid = user && user.uid;
@@ -92,11 +85,7 @@ export default class MetaTree {
   }
 
   _isAuthChangeStale(user) {
-    return !(this.root.user === undefined && _.isEmpty(this._authsInProgress)) && (
-      this.root.user === user ||
-      user && !this._authsInProgress[user.token] ||
-      _.size(this._authsInProgress) !== 1
-    );
+    return this.root.user === user;
   }
 
   _connectInfoProperty(property, attribute) {

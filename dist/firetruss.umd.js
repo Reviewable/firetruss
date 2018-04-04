@@ -1687,7 +1687,7 @@
 	    }
 	  }}});
 
-	  this._authsInProgress = {};
+	  this._auth = {serial: 0};
 
 	  bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
@@ -1710,37 +1710,29 @@
 	MetaTree.prototype.authenticate = function authenticate (token) {
 	    var this$1 = this;
 
-	  this._authsInProgress[token] = true;
-	  return promiseFinally(
-	    this._dispatcher.execute(
-	      'auth', 'authenticate', new Reference(this._tree, '/'), token, function () {
-	        return this$1._bridge.authWithCustomToken(this$1._rootUrl, token, {rememberMe: true});
-	      }
-	    ),
-	    function () {delete this$1._authsInProgress[token];}
+	  this._auth.serial++;
+	  return this._dispatcher.execute(
+	    'auth', 'authenticate', new Reference(this._tree, '/'), token, function () {
+	      return this$1._bridge.authWithCustomToken(this$1._rootUrl, token, {rememberMe: true});
+	    }
 	  );
 	};
 
 	MetaTree.prototype.unauthenticate = function unauthenticate () {
 	    var this$1 = this;
 
-	  // Cancel any other auths in progress, since signing out should invalidate them.
-	  clear(this._authsInProgress);
-	  this._authsInProgress.null = true;
 	  // Signal user change to null pre-emptively.This is what the Firebase SDK does as well, since
 	  // it lets the app tear down user-required connections before the user is actually deauthed,
 	  // which can prevent spurious permission denied errors.
+	  this._auth.serial++;
 	  return this._handleAuthChange(null).then(function (approved) {
 	    // Bail if auth change callback initiated another authentication, since it will have already
 	    // sent the command to the bridge and sending our own now would incorrectly override it.
-	    if (!approved || !_.isEqual(this$1._authsInProgress, {null: true})) { return; }
-	    return promiseFinally(
-	      this$1._dispatcher.execute(
-	        'auth', 'unauthenticate', new Reference(this$1._tree, '/'), undefined, function () {
-	          return this$1._bridge.unauth(this$1._rootUrl);
-	        }
-	      ),
-	      function () {delete this$1._authsInProgress.null;}
+	    if (!approved) { return; }
+	    return this$1._dispatcher.execute(
+	      'auth', 'unauthenticate', new Reference(this$1._tree, '/'), undefined, function () {
+	        return this$1._bridge.unauth(this$1._rootUrl);
+	      }
 	    );
 	  });
 	};
@@ -1748,9 +1740,10 @@
 	MetaTree.prototype._handleAuthChange = function _handleAuthChange (user) {
 	    var this$1 = this;
 
-	  if (this._isAuthChangeStale(user)) { return Promise.resolve(false); }
+	  var authSerial = this._auth.serial;
+	  if (this.root.user === user) { return Promise.resolve(false); }
 	  return this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, function () {
-	    if (this$1._isAuthChangeStale(user)) { return false; }
+	    if (this$1.root.user === user || authSerial !== this$1._auth.serial) { return false; }
 	    if (user) { Object.freeze(user); }
 	    this$1.root.user = user;
 	    this$1.root.userid = user && user.uid;
@@ -1760,11 +1753,7 @@
 	};
 
 	MetaTree.prototype._isAuthChangeStale = function _isAuthChangeStale (user) {
-	  return !(this.root.user === undefined && _.isEmpty(this._authsInProgress)) && (
-	    this.root.user === user ||
-	    user && !this._authsInProgress[user.token] ||
-	    _.size(this._authsInProgress) !== 1
-	  );
+	  return this.root.user === user;
 	};
 
 	MetaTree.prototype._connectInfoProperty = function _connectInfoProperty (property, attribute) {
@@ -1778,13 +1767,6 @@
 	};
 
 	Object.defineProperties( MetaTree.prototype, prototypeAccessors$6 );
-
-	function clear(object) {
-	  for (var key in object) {
-	    if (object.hasOwnProperty(key)) { delete object[key]; }
-	  }
-	  return object;
-	}
 
 	var QueryHandler = function QueryHandler(coupler, query) {
 	  this._coupler = coupler;
