@@ -111,7 +111,7 @@ module.exports = function(grunt) {
     release: {
       options: {
         additionalFiles: ['bower.json'],
-        updateVars: 'ext',
+        updateVars: ['ext'],
         afterBump: ['replace'],
         beforeRelease: ['default']
       }
