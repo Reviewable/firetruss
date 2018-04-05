@@ -6,6 +6,7 @@ import Tree from './Tree.js';
 import Bridge from './Bridge.js';
 import Dispatcher from './Dispatcher.js';
 
+/* eslint-disable lodash/prefer-constant */
 
 class Root {
   static get $trussMount() {return '/';}

@@ -30,7 +30,7 @@ export default class Connector {
 
     this._linkScopeProperties();
 
-    _.each(connections, (descriptor, key) => {
+    _.forEach(connections, (descriptor, key) => {
       if (_.isFunction(descriptor)) {
         this._bindComputedConnection(key, descriptor);
       } else {
@@ -62,8 +62,8 @@ export default class Connector {
 
   destroy() {
     this._unlinkScopeProperties();
-    _.each(this._angularUnwatches, unwatch => {unwatch();});
-    _.each(this._connections, (descriptor, key) => {this._disconnect(key);});
+    _.forEach(this._angularUnwatches, unwatch => {unwatch();});
+    _.forEach(this._connections, (descriptor, key) => {this._disconnect(key);});
     this._vue.$destroy();
   }
 
@@ -85,7 +85,7 @@ export default class Connector {
 
   _unlinkScopeProperties() {
     if (!this._scope) return;
-    _.each(this._connections, (descriptor, key) => {
+    _.forEach(this._connections, (descriptor, key) => {
       delete this._scope[key];
     });
   }
@@ -135,10 +135,10 @@ export default class Connector {
   }
 
   _updateConnections(connections) {
-    _.each(connections, (descriptor, key) => {
+    _.forEach(connections, (descriptor, key) => {
       this._updateComputedConnection(key, descriptor);
     });
-    _.each(this._connections, (descriptor, key) => {
+    _.forEach(this._connections, (descriptor, key) => {
       if (!_.has(connections, key)) this._updateComputedConnection(key);
     });
     this._connections = connections;
@@ -205,7 +205,7 @@ export default class Connector {
     const subScope = this._vue.values[key];
     for (const childKey in subScope) {
       if (!subScope.hasOwnProperty(childKey)) continue;
-      if (!_.contains(childKeys, childKey)) {
+      if (!_.includes(childKeys, childKey)) {
         Vue.delete(subScope, childKey);
         angular.digest();
       }

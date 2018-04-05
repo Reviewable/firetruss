@@ -3,7 +3,7 @@ import _ from 'lodash';
 
 class StatItem {
   constructor(name) {
-    _.extend(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
+    _.assign(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
   }
 
   add(item) {
@@ -45,15 +45,15 @@ class Stats {
     let stats = this.list;
     if (!stats.length) return;
     const totals = new StatItem('=== Total');
-    _.each(stats, stat => {totals.add(stat);});
+    _.forEach(stats, stat => {totals.add(stat);});
     stats = _.take(stats, n);
     const above = new StatItem('--- Above');
-    _.each(stats, stat => {above.add(stat);});
+    _.forEach(stats, stat => {above.add(stat);});
     const lines = _.map(stats, item => item.toLogParts(totals));
     lines.push(above.toLogParts(totals));
     lines.push(totals.toLogParts(totals));
     const widths = _.map(_.range(lines[0].length), i => _(lines).map(line => line[i].length).max());
-    _.each(lines, line => {
+    _.forEach(lines, line => {
       console.log(_.map(line, (column, i) => _.padLeft(column, widths[i])).join(' '));
     });
   }

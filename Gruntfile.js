@@ -1,5 +1,5 @@
-// jshint node:true
 'use strict';
+/* eslint-env node */
 
 const buble = require('rollup-plugin-buble');
 const nodeResolve = require('rollup-plugin-node-resolve');
@@ -25,6 +25,15 @@ module.exports = function(grunt) {
           from: /const VERSION = '.*?';/,
           to: () => `const VERSION = '${grunt.config('ext.version')}';`
         }]
+      }
+    },
+
+    eslint: {
+      all: {
+        options: {
+          maxWarnings: 0
+        },
+        src: ['src/**/*.js'],
       }
     },
 
@@ -120,7 +129,7 @@ module.exports = function(grunt) {
   });
 
   grunt.registerTask('default', [
-    'clean:dist', 'rollup', 'uglify', 'gitadd'
+    'eslint', 'clean:dist', 'rollup', 'uglify', 'gitadd'
   ]);
 
 };

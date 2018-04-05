@@ -24,8 +24,8 @@
 	if (angularProxy.active) {
 	  initAngular();
 	} else {
-	  ['digest', 'watch', 'defineModule', 'debounceDigest'].forEach(function (method) {
-	    angularProxy[method] = noop;
+	  _.forEach(['digest', 'watch', 'defineModule', 'debounceDigest'], function (method) {
+	    angularProxy[method] = _.noop;
 	  });
 	}
 
@@ -72,8 +72,6 @@
 	    ]);
 	  }]);
 	}
-
-	function noop() {}
 
 	var LruCacheItem = function LruCacheItem(key, value) {
 	  this.key = key;
@@ -141,7 +139,7 @@
 
 	function escapeKey(key) {
 	  if (!key) { return key; }
-	  return key.toString().replace(/[\\\.\$\#\[\]\/]/g, function(char) {
+	  return key.toString().replace(/[\\.$#[\]/]/g, function(char) {
 	    return '\\' + char.charCodeAt(0).toString(16);
 	  });
 	}
@@ -202,15 +200,16 @@
 	  this.variables = [];
 	  var prefixMatch = _.endsWith(pattern, '/$*');
 	  if (prefixMatch) { pattern = pattern.slice(0, -3); }
-	  var pathTemplate = pattern.replace(/\/\$[^\/]*/g, function (match) {
+	  var pathTemplate = pattern.replace(/\/\$[^/]*/g, function (match) {
 	    if (match.length > 1) { this$1.variables.push(match.slice(1)); }
 	    return '\u0001';
 	  });
 	  Object.freeze(this.variables);
-	  if (/[.$#\[\]]|\\(?![0-9a-f][0-9a-f])/i.test(pathTemplate)) {
+	  if (/[.$#[\]]|\\(?![0-9a-f][0-9a-f])/i.test(pathTemplate)) {
 	    throw new Error('Path pattern has unescaped keys: ' + pattern);
 	  }
 	  this._regex = new RegExp(
+	    // eslint-disable-next-line no-control-regex
 	    '^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + (prefixMatch ? '($|/)' : '$'));
 	};
 
@@ -245,8 +244,6 @@
 	  }
 	  return matcher;
 	}
-
-	// jshint browser:true
 
 	var MIN_WORKER_VERSION = '0.4.0';
 
@@ -341,10 +338,12 @@
 	        workerVersion[2] > minVersion[2] ||
 	        workerVersion[2] === minVersion[2] && workerVersion[3] >= minVersion[3]
 	      );
-	      if (!sufficient) { return Promise.reject(new Error(
-	        "Incompatible Firetruss worker version: " + (response.version) + " " +
-	        "(" + MIN_WORKER_VERSION + " or better required)"
-	      )); }
+	      if (!sufficient) {
+	        return Promise.reject(new Error(
+	          "Incompatible Firetruss worker version: " + (response.version) + " " +
+	          "(" + MIN_WORKER_VERSION + " or better required)"
+	        ));
+	      }
 	    }
 	    return response;
 	  });
@@ -364,7 +363,7 @@
 	Bridge.prototype.debugPermissionDeniedErrors = function debugPermissionDeniedErrors (simulatedTokenGenerator, maxSimulationDuration, callFilter) {
 	  this._simulatedTokenGenerator = simulatedTokenGenerator;
 	  if (maxSimulationDuration !== undefined) { this._maxSimulationDuration = maxSimulationDuration; }
-	  this._simulatedCallFilter = callFilter || function() {return true;};
+	  this._simulatedCallFilter = callFilter || _.constant(true);
 	};
 
 	Bridge.prototype.enableLogging = function enableLogging (fn) {
@@ -454,9 +453,8 @@
 	    return this._simulateCall(error.params).then(function (securityTrace) {
 	      if (securityTrace) { error.permissionDeniedDetails = securityTrace; }
 	    });
-	  } else {
-	    return Promise.resolve();
 	  }
+	  return Promise.resolve();
 	};
 
 	Bridge.prototype._simulateCall = function _simulateCall (props) {
@@ -486,16 +484,16 @@
 	  }
 	  var auth = this.getAuth(getUrlRoot(props.url));
 	  var simulationPromise = this._simulatedTokenGenerator(auth && auth.uid).then(function (token) {
-	    return Promise.all(simulatedCalls.map(function (message) {
+	    return Promise.all(_.map(simulatedCalls, function (message) {
 	      message.msg = 'simulate';
 	      message.token = token;
 	      return this$1._send(message);
 	    }));
 	  }).then(function (securityTraces) {
-	    if (securityTraces.every(function (trace) { return trace === null; })) {
+	    if (_.every(securityTraces, function (trace) { return trace === null; })) {
 	      return 'Unable to reproduce error in simulation';
 	    }
-	    return securityTraces.filter(function (trace) { return trace; }).join('\n\n');
+	    return _.compact(securityTraces).join('\n\n');
 	  }).catch(function (e) {
 	    return 'Error running simulation: ' + e;
 	  });
@@ -598,14 +596,12 @@
 	  var callbackId;
 	  if (snapshotCallback) {
 	    callbackId = this._findAndRemoveCallbackId(
-	      snapshotCallback,
-	      function (handle) { return handle.listenerKey === listenerKey && handle.eventType === eventType &&
-	        handle.context === context; }
+	      snapshotCallback, function (handle) { return _.isMatch(handle, {listenerKey: listenerKey, eventType: eventType, context: context}); }
 	    );
 	    if (!callbackId) { return Promise.resolve(); }// no-op, never registered or already deregistered
 	    idsToDeregister.push(callbackId);
 	  } else {
-	    for (var i = 0, list = Object.keys(this._callbacks); i < list.length; i += 1) {
+	    for (var i = 0, list = _.keys(this$1._callbacks); i < list.length; i += 1) {
 	      var id = list[i];
 
 	        var handle = this$1._callbacks[id];
@@ -682,7 +678,7 @@
 	};
 
 	Bridge.prototype._nullifyCallback = function _nullifyCallback (id) {
-	  this._callbacks[id].callback = noop$1;
+	  this._callbacks[id].callback = _.noop;
 	};
 
 	Bridge.prototype._deregisterCallback = function _deregisterCallback (id) {
@@ -709,10 +705,8 @@
 	  }
 	};
 
-	function noop$1() {}
-
 	function errorFromJson(json, params) {
-	  if (!json || json instanceof Error) { return json; }
+	  if (!json || _.isError(json)) { return json; }
 	  var error = new Error(json.message);
 	  error.params = params;
 	  for (var propertyName in json) {
@@ -731,6 +725,8 @@
 	  var k = url.indexOf('/', 8);
 	  return k >= 8 ? url.slice(0, k) : url;
 	}
+
+	/* eslint-disable no-use-before-define */
 
 	var EMPTY_ANNOTATIONS = {};
 	Object.freeze(EMPTY_ANNOTATIONS);
@@ -799,10 +795,9 @@
 	      }
 	      if (_.isEmpty(mapping)) { return; }
 	      return mapping;
-	    } else {
-	      if (arg === undefined || arg === null) { return; }
-	      escapedKeys.push(escapeKey(arg));
 	    }
+	    if (arg === undefined || arg === null) { return; }
+	    escapedKeys.push(escapeKey(arg));
 	  }
 	  return new Reference(
 	    this._tree, ((this._pathPrefix) + "/" + (escapedKeys.join('/'))), this._annotations);
@@ -862,7 +857,7 @@
 
 	  Query.prototype.annotate = function annotate (annotations) {
 	    return new Query(
-	      this._tree, this._path, this._spec, _.extend({}, this._annotations, annotations));
+	      this._tree, this._path, this._spec, _.assign({}, this._annotations, annotations));
 	  };
 
 	  Query.prototype._copyAndValidateSpec = function _copyAndValidateSpec (spec) {
@@ -891,7 +886,7 @@
 	          'Query "by" value must be a descendant of target reference: ' + spec.by);
 	      }
 	      childPath = childPath.slice(this._path.length).replace(/^\/?/, '');
-	      if (childPath.indexOf('/') === -1) {
+	      if (!_.includes(childPath, '/')) {
 	        throw new Error(
 	          'Query "by" value must not be a direct child of target reference: ' + spec.by);
 	      }
@@ -912,7 +907,6 @@
 	}(Handle));
 
 
-	// jshint latedef:false
 	var Reference = (function (Handle) {
 	  function Reference(tree, path, annotations) {
 	    Handle.call(this, tree, path, annotations);
@@ -930,7 +924,7 @@
 	  Reference.prototype.toString = function toString () {return this._path;};
 
 	  Reference.prototype.annotate = function annotate (annotations) {
-	    return new Reference(this._tree, this._path, _.extend({}, this._annotations, annotations));
+	    return new Reference(this._tree, this._path, _.assign({}, this._annotations, annotations));
 	  };
 
 	  Reference.prototype.query = function query (spec) {
@@ -961,7 +955,7 @@
 	}(Handle));
 
 	var StatItem = function StatItem(name) {
-	  _.extend(this, {name: name, numRecomputes: 0, numUpdates: 0, runtime: 0});
+	  _.assign(this, {name: name, numRecomputes: 0, numUpdates: 0, runtime: 0});
 	};
 
 	var prototypeAccessors$4 = { runtimePerRecompute: {} };
@@ -1009,15 +1003,15 @@
 	  var stats = this.list;
 	  if (!stats.length) { return; }
 	  var totals = new StatItem('=== Total');
-	  _.each(stats, function (stat) {totals.add(stat);});
+	  _.forEach(stats, function (stat) {totals.add(stat);});
 	  stats = _.take(stats, n);
 	  var above = new StatItem('--- Above');
-	  _.each(stats, function (stat) {above.add(stat);});
+	  _.forEach(stats, function (stat) {above.add(stat);});
 	  var lines = _.map(stats, function (item) { return item.toLogParts(totals); });
 	  lines.push(above.toLogParts(totals));
 	  lines.push(totals.toLogParts(totals));
 	  var widths = _.map(_.range(lines[0].length), function (i) { return _(lines).map(function (line) { return line[i].length; }).max(); });
-	  _.each(lines, function (line) {
+	  _.forEach(lines, function (line) {
 	    console.log(_.map(line, function (column, i) { return _.padLeft(column, widths[i]); }).join(' '));
 	  });
 	};
@@ -1106,7 +1100,7 @@
 
 	  this._linkScopeProperties();
 
-	  _.each(connections, function (descriptor, key) {
+	  _.forEach(connections, function (descriptor, key) {
 	    if (_.isFunction(descriptor)) {
 	      this$1._bindComputedConnection(key, descriptor);
 	    } else {
@@ -1144,8 +1138,8 @@
 	    var this$1 = this;
 
 	  this._unlinkScopeProperties();
-	  _.each(this._angularUnwatches, function (unwatch) {unwatch();});
-	  _.each(this._connections, function (descriptor, key) {this$1._disconnect(key);});
+	  _.forEach(this._angularUnwatches, function (unwatch) {unwatch();});
+	  _.forEach(this._connections, function (descriptor, key) {this$1._disconnect(key);});
 	  this._vue.$destroy();
 	};
 
@@ -1157,7 +1151,7 @@
 	  }); });
 	  Object.defineProperties(this._data, dataProperties);
 	  if (this._scope) {
-	    for (var key in this._connections) {
+	    for (var key in this$1._connections) {
 	      if (key in this$1._scope) {
 	        throw new Error(("Property already defined on connection target: " + key));
 	      }
@@ -1171,7 +1165,7 @@
 	    var this$1 = this;
 
 	  if (!this._scope) { return; }
-	  _.each(this._connections, function (descriptor, key) {
+	  _.forEach(this._connections, function (descriptor, key) {
 	    delete this$1._scope[key];
 	  });
 	};
@@ -1223,10 +1217,10 @@
 	Connector.prototype._updateConnections = function _updateConnections (connections) {
 	    var this$1 = this;
 
-	  _.each(connections, function (descriptor, key) {
+	  _.forEach(connections, function (descriptor, key) {
 	    this$1._updateComputedConnection(key, descriptor);
 	  });
-	  _.each(this._connections, function (descriptor, key) {
+	  _.forEach(this._connections, function (descriptor, key) {
 	    if (!_.has(connections, key)) { this$1._updateComputedConnection(key); }
 	  });
 	  this._connections = connections;
@@ -1295,7 +1289,7 @@
 	  var subScope = this._vue.values[key];
 	  for (var childKey in subScope) {
 	    if (!subScope.hasOwnProperty(childKey)) { continue; }
-	    if (!_.contains(childKeys, childKey)) {
+	    if (!_.includes(childKeys, childKey)) {
 	      Vue.delete(subScope, childKey);
 	      angularProxy.digest();
 	    }
@@ -1321,6 +1315,7 @@
 	function wrapPromiseCallback(callback) {
 	  return function() {
 	    try {
+	      // eslint-disable-next-line no-invalid-this
 	      return Promise.resolve(callback.apply(this, arguments));
 	    } catch (e) {
 	      return Promise.reject(e);
@@ -1451,13 +1446,13 @@
 	Operation.prototype._markReady = function _markReady (ending) {
 	  this._ready = true;
 	  if (!ending) { this._tries = 0; }
-	  _.each(this._slowHandles, function (handle) { return handle.cancel(); });
+	  _.forEach(this._slowHandles, function (handle) { return handle.cancel(); });
 	};
 
 	Operation.prototype._clearReady = function _clearReady () {
 	  this._ready = false;
 	  this._startTimestamp = Date.now();
-	  _.each(this._slowHandles, function (handle) { return handle.initiate(); });
+	  _.forEach(this._slowHandles, function (handle) { return handle.initiate(); });
 	};
 
 	Operation.prototype._incrementTries = function _incrementTries () {
@@ -1474,7 +1469,7 @@
 	};
 
 	Dispatcher.prototype.intercept = function intercept (interceptKey, callbacks) {
-	  if (!_.contains(INTERCEPT_KEYS, interceptKey)) {
+	  if (!_.includes(INTERCEPT_KEYS, interceptKey)) {
 	    throw new Error('Unknown intercept operation type: ' + interceptKey);
 	  }
 	  var badCallbackKeys =
@@ -1508,7 +1503,7 @@
 	Dispatcher.prototype._removeCallbacks = function _removeCallbacks (interceptKey, wrappedCallbacks) {
 	    var this$1 = this;
 
-	  _.each(wrappedCallbacks, function (wrappedCallback, stage) {
+	  _.forEach(wrappedCallbacks, function (wrappedCallback, stage) {
 	    this$1._removeCallback(stage, interceptKey, wrappedCallback);
 	  });
 	};
@@ -1617,7 +1612,7 @@
 	  return this._bridge.probeError(operation.error).then(function () {
 	    if (onFailureCallbacks) {
 	      setTimeout(function () {
-	        _.each(onFailureCallbacks, function (onFailure) { return onFailure(operation); });
+	        _.forEach(onFailureCallbacks, function (onFailure) { return onFailure(operation); });
 	      }, 0);
 	    }
 	    return Promise.reject(operation.error);
@@ -1638,7 +1633,7 @@
 	  var chars = new Array(20);
 	  var prefix = now;
 	  for (var i = 7; i >= 0; i--) {
-	    chars[i] = ALPHABET.charAt(prefix & 0x3f);
+	    chars[i] = ALPHABET.charAt(prefix & 0x3f);// eslint-disable-line no-bitwise
 	    prefix = Math.floor(prefix / 64);
 	  }
 	  if (now === this._lastUniqueKeyTime) {
@@ -1808,7 +1803,7 @@
 	  this._listening = false;
 	  this.ready = false;
 	  angularProxy.digest();
-	  for (var i = 0, list = this._keys; i < list.length; i += 1) {
+	  for (var i = 0, list = this$1._keys; i < list.length; i += 1) {
 	    var key = list[i];
 
 	      this$1._coupler._decoupleSegments(this$1._segments.concat(key));
@@ -1826,14 +1821,14 @@
 	  if (!this.ready) {
 	    this.ready = true;
 	    angularProxy.digest();
-	    for (var i = 0, list = this._listeners; i < list.length; i += 1) {
+	    for (var i = 0, list = this$1._listeners; i < list.length; i += 1) {
 	      var listener = list[i];
 
 	        this$1._coupler._dispatcher.markReady(listener.operation);
 	    }
 	  }
 	  if (updatedKeys) {
-	    for (var i$1 = 0, list$1 = this._listeners; i$1 < list$1.length; i$1 += 1) {
+	    for (var i$1 = 0, list$1 = this$1._listeners; i$1 < list$1.length; i$1 += 1) {
 	      var listener$1 = list$1[i$1];
 
 	        if (listener$1.keysCallback) { listener$1.keysCallback(updatedKeys); }
@@ -1851,12 +1846,12 @@
 	    if (_.isEqual(this._keys, updatedKeys)) {
 	      updatedKeys = null;
 	    } else {
-	      for (var i = 0, list = _.difference(updatedKeys, this._keys); i < list.length; i += 1) {
+	      for (var i = 0, list = _.difference(updatedKeys, this$1._keys); i < list.length; i += 1) {
 	        var key = list[i];
 
 	          this$1._coupler._coupleSegments(this$1._segments.concat(key));
 	      }
-	      for (var i$1 = 0, list$1 = _.difference(this._keys, updatedKeys); i$1 < list$1.length; i$1 += 1) {
+	      for (var i$1 = 0, list$1 = _.difference(this$1._keys, updatedKeys); i$1 < list$1.length; i$1 += 1) {
 	        var key$1 = list$1[i$1];
 
 	          this$1._coupler._decoupleSegments(this$1._segments.concat(key$1));
@@ -1864,7 +1859,7 @@
 	      this._keys = updatedKeys;
 	    }
 	  } else if (snap.path.replace(/\/[^/]+/, '') === this._query.path) {
-	    var hasKey = _.contains(this._keys, snap.key);
+	    var hasKey = _.includes(this._keys, snap.key);
 	    if (snap.value) {
 	      if (!hasKey) {
 	        this._coupler._coupleSegments(this._segments.concat(snap.key));
@@ -1872,13 +1867,11 @@
 	        this._keys.sort();
 	        updatedKeys = this._keys;
 	      }
-	    } else {
-	      if (hasKey) {
-	        this._coupler._decoupleSegments(this._segments.concat(snap.key));
-	        _.pull(this._keys, snap.key);
-	        this._keys.sort();
-	        updatedKeys = this._keys;
-	      }
+	    } else if (hasKey) {
+	      this._coupler._decoupleSegments(this._segments.concat(snap.key));
+	      _.pull(this._keys, snap.key);
+	      this._keys.sort();
+	      updatedKeys = this._keys;
 	    }
 	  }
 	  return updatedKeys;
@@ -1936,13 +1929,13 @@
 
 	  if (!skip && this.count) {
 	    if (this.listening) { return; }
-	    _.each(this.operations, function (op) {this$1._coupler._dispatcher.clearReady(op);});
+	    _.forEach(this.operations, function (op) {this$1._coupler._dispatcher.clearReady(op);});
 	    this._coupler._bridge.on(
 	      this.url, this.url, null, 'value', this._handleSnapshot, this._handleError, this,
 	      {sync: true});
 	    this.listening = true;
 	  } else {
-	    _.each(this.children, function (child) {child.listen();});
+	    _.forEach(this.children, function (child) {child.listen();});
 	  }
 	};
 
@@ -1957,7 +1950,7 @@
 	      }
 	    });
 	  } else {
-	    _.each(this.children, function (child) {child.unlisten();});
+	    _.forEach(this.children, function (child) {child.unlisten();});
 	  }
 	};
 
@@ -2017,14 +2010,14 @@
 
 	Node.prototype._forAllDescendants = function _forAllDescendants (iteratee) {
 	  iteratee(this);
-	  _.each(this.children, function (child) { return child._forAllDescendants(iteratee); });
+	  _.forEach(this.children, function (child) { return child._forAllDescendants(iteratee); });
 	};
 
 	Node.prototype.collectCoupledDescendantPaths = function collectCoupledDescendantPaths (paths) {
 	  if (!paths) { paths = {}; }
 	  paths[this.path] = this.active;
 	  if (!this.active) {
-	    _.each(this.children, function (child) {child.collectCoupledDescendantPaths(paths);});
+	    _.forEach(this.children, function (child) {child.collectCoupledDescendantPaths(paths);});
 	  }
 	  return paths;
 	};
@@ -2057,7 +2050,7 @@
 	};
 
 	Coupler.prototype.destroy = function destroy () {
-	  _.each(this._queryHandlers, function (queryHandler) {queryHandler.destroy();});
+	  _.forEach(this._queryHandlers, function (queryHandler) {queryHandler.destroy();});
 	  this._root.unlisten();
 	  this._vue.$destroy();
 	};
@@ -2150,7 +2143,7 @@
 	    Vue.set(this._queryHandlers, query.toString(), queryHandler);
 	  }
 	  queryHandler.attach(operation, keysCallback);
-	 };
+	};
 
 	Coupler.prototype.unsubscribe = function unsubscribe (query, operation) {
 	  var queryHandler = this._queryHandlers[query.toString()];
@@ -2247,7 +2240,7 @@
 	  return this.$key;
 	};
 	prototypeAccessors$9.$data.get = function () {return this;};
-	prototypeAccessors$9.$hidden.get = function () {return false;};
+	prototypeAccessors$9.$hidden.get = function () {return false;};// eslint-disable-line lodash/prefer-constant
 	prototypeAccessors$9.$empty.get = function () {return _.isEmpty(this.$data);};
 	prototypeAccessors$9.$keys.get = function () {return _.keys(this.$data);};
 	prototypeAccessors$9.$values.get = function () {return _.values(this.$data);};
@@ -2255,7 +2248,7 @@
 	prototypeAccessors$9.$root.get = function () {return this.$truss.root;};// access indirectly to leave dependency trace
 	prototypeAccessors$9.$now.get = function () {return this.$truss.now;};
 	prototypeAccessors$9.$ready.get = function () {return this.$ref.ready;};
-	prototypeAccessors$9.$overridden.get = function () {return false;};
+	prototypeAccessors$9.$overridden.get = function () {return false;};// eslint-disable-line lodash/prefer-constant
 
 	Value.prototype.$newKey = function $newKey () {return this.$truss.newKey();};
 
@@ -2313,7 +2306,7 @@
 	    return subjectFn.call(this$1);
 	  }, callbackFn.bind(this), options);
 
-	  unwatchAndRemoveFinalizer = function () {
+	  unwatchAndRemoveFinalizer = function () {// eslint-disable-line prefer-const
 	    unwatch();
 	    _.pull(this$1.$$finalizers, unwatchAndRemoveFinalizer);
 	  };
@@ -2357,7 +2350,7 @@
 	Value.prototype.$commit = function $commit (options, updateFn) {return this.$ref.commit(options, updateFn);};
 
 	Value.prototype.$$touchThis = function $$touchThis () {
-	  // jshint expr:true
+	  /* eslint-disable no-unused-expressions */
 	  if (this.__ob__) {
 	    this.__ob__.dep.depend();
 	  } else if (this.$parent) {
@@ -2365,7 +2358,7 @@
 	  } else {
 	    this.$root;
 	  }
-	  // jshint expr:false
+	  /* eslint-enable no-unused-expressions */
 	};
 
 	prototypeAccessors$9.$$initializers.get = function () {
@@ -2380,14 +2373,14 @@
 	  return this.$$finalizers;
 	};
 
-	prototypeAccessors$9.$destroyed.get = function () {
+	prototypeAccessors$9.$destroyed.get = function () {// eslint-disable-line lodash/prefer-constant
 	  return false;
 	};
 
 	Object.defineProperties( Value.prototype, prototypeAccessors$9 );
 
 
-	_.each(Value.prototype, function (prop, name) {
+	_.forEach(Value.prototype, function (prop, name) {
 	  Object.defineProperty(
 	    Value.prototype, name, {value: prop, enumerable: false, configurable: false, writable: false});
 	});
@@ -2413,13 +2406,13 @@
 	    var this$1 = this;
 
 	  if (_.isPlainObject(classes)) {
-	    _.each(classes, function (Class, path) {
+	    _.forEach(classes, function (Class, path) {
 	      if (Class.$trussMount) { return; }
 	      Class.$$trussMount = Class.$$trussMount || [];
 	      Class.$$trussMount.push(path);
 	    });
 	    classes = _.values(classes);
-	    _.each(classes, function (Class) {
+	    _.forEach(classes, function (Class) {
 	      if (!Class.$trussMount && Class.$$trussMount) {
 	        Class.$trussMount = Class.$$trussMount;
 	        delete Class.$$trussMount;
@@ -2427,11 +2420,11 @@
 	    });
 	  }
 	  classes = _.uniq(classes);
-	  _.each(classes, function (Class) { return this$1._mountClass(Class, rootAcceptable); });
+	  _.forEach(classes, function (Class) { return this$1._mountClass(Class, rootAcceptable); });
 	  this._decorateTrie(this._trie);
 	};
 
-	Modeler.prototype.destroy = function destroy () {
+	Modeler.prototype.destroy = function destroy () {// eslint-disable-line no-empty-function
 	};
 
 	Modeler.prototype._getMount = function _getMount (path, scaffold, predicate) {
@@ -2471,7 +2464,7 @@
 	Modeler.prototype._decorateTrie = function _decorateTrie (node) {
 	    var this$1 = this;
 
-	  _.each(node.children, function (child) {
+	  _.forEach(node.children, function (child) {
 	    this$1._decorateTrie(child);
 	    if (child.local || child.localDescendants) { node.localDescendants = true; }
 	  });
@@ -2521,7 +2514,7 @@
 	  var mounts = Class.$trussMount;
 	  if (!mounts) { throw new Error(("Class " + (Class.name) + " lacks a $trussMount static property")); }
 	  if (!_.isArray(mounts)) { mounts = [mounts]; }
-	  _.each(mounts, function (mount) {
+	  _.forEach(mounts, function (mount) {
 	    if (_.isString(mount)) { mount = {path: mount}; }
 	    if (!rootAcceptable && mount.path === '/') {
 	      throw new Error('Data root already accessed, too late to mount class');
@@ -2534,7 +2527,7 @@
 	        throw new Error(("Invalid variable name: " + variable));
 	      }
 	      if (variable.charAt(0) === '$' && (
-	          _.has(Value.prototype, variable) || RESERVED_VALUE_PROPERTY_NAMES[variable]
+	        _.has(Value.prototype, variable) || RESERVED_VALUE_PROPERTY_NAMES[variable]
 	      )) {
 	        throw new Error(("Variable name conflicts with built-in property or method: " + variable));
 	      }
@@ -2546,23 +2539,24 @@
 	        throw new Error(
 	          ("Class " + (Class.name) + " mounted at wildcard " + escapedKey + " cannot be a placeholder"));
 	      }
-	    } else {
-	      if (!_.has(mount, 'placeholder')) { mount.placeholder = {}; }
+	    } else if (!_.has(mount, 'placeholder')) {
+	      mount.placeholder = {};
 	    }
 	    var targetMount = this$1._getMount(mount.path.replace(/\$[^/]*/g, '$'), true);
 	    if (targetMount.matcher && (
-	          targetMount.escapedKey === escapedKey ||
-	          targetMount.escapedKey.charAt(0) === '$' && escapedKey.charAt(0) === '$')) {
+	      targetMount.escapedKey === escapedKey ||
+	      targetMount.escapedKey.charAt(0) === '$' && escapedKey.charAt(0) === '$'
+	    )) {
 	      throw new Error(
 	        ("Multiple classes mounted at " + (mount.path) + ": " + (targetMount.Class.name) + ", " + (Class.name)));
 	    }
-	    _.extend(
+	    _.assign(
 	      targetMount, {Class: Class, matcher: matcher, computedProperties: computedProperties, escapedKey: escapedKey},
 	      _.pick(mount, 'placeholder', 'local', 'keysUnsafe', 'hidden'));
 	  });
-	  _.each(allVariables, function (variable) {
+	  _.forEach(allVariables, function (variable) {
 	    if (!Class.prototype[variable]) {
-	      Object.defineProperty(Class.prototype, variable, {get: function() {
+	      Object.defineProperty(Class.prototype, variable, {get: function get() {
 	        return creatingObjectProperties ?
 	          creatingObjectProperties[variable] && creatingObjectProperties[variable].value :
 	          undefined;
@@ -2599,7 +2593,7 @@
 	  if (mount.hidden) { properties.$hidden = {value: true}; }
 	  if (mount.computedProperties) {
 	    properties.$$computedPropertyWatchers = {value: [], configurable: true, enumerable: false};
-	    _.each(mount.computedProperties, function (prop) {
+	    _.forEach(mount.computedProperties, function (prop) {
 	      properties[prop.name] = this$1._buildComputedPropertyDescriptor(object, prop);
 	    });
 	    // Hack to change order of computed property watchers.By flipping their ids to be negative,
@@ -2620,11 +2614,11 @@
 	};
 
 	Modeler.prototype._wrapProperties = function _wrapProperties (object) {
-	  _.each(object, function (value, key) {
+	  _.forEach(object, function (value, key) {
 	    var valueKey = '$_' + key;
 	    Object.defineProperties(object, ( obj = {}, obj[valueKey] = {value: value, writable: true}, obj[key] = {
 	        get: function () { return object[valueKey]; },
-	        set: function (value) {object[valueKey] = value; angularProxy.digest();},
+	        set: function (arg) {object[valueKey] = arg; angularProxy.digest();},
 	        enumerable: true, configurable: true
 	      }, obj ));
 	      var obj;
@@ -2700,11 +2694,11 @@
 	  });
 	  return {
 	    enumerable: true, configurable: true,
-	    get: function() {
+	    get: function get() {
 	      if (value instanceof ErrorWrapper) { throw value.error; }
 	      return value;
 	    },
-	    set: function(newValue) {
+	    set: function set(newValue) {
 	      if (!writeAllowed) { throw new Error(("You cannot set a computed property: " + (prop.name))); }
 	      value = newValue;
 	    }
@@ -2731,6 +2725,7 @@
 	};
 
 	Modeler.prototype.isLocal = function isLocal (path, value) {
+	  // eslint-disable-next-line no-shadow
 	  var mount = this._getMount(path, false, function (mount) { return mount.local; });
 	  if (mount && mount.local) { return true; }
 	  if (this._hasLocalProperties(mount, value)) {
@@ -2755,7 +2750,7 @@
 
 	Modeler.prototype.forEachPlaceholderChild = function forEachPlaceholderChild (path, iteratee) {
 	  var mount = this._getMount(path);
-	  _.each(mount && mount.children, function (child) {
+	  _.forEach(mount && mount.children, function (child) {
 	    if (child.placeholder) { iteratee(child); }
 	  });
 	};
@@ -2771,11 +2766,10 @@
 
 	        if (RESERVED_VALUE_PROPERTY_NAMES[key] || Value.prototype.hasOwnProperty(key) ||
 	          /^\$_/.test(key)) { continue; }
-	      // jshint loopfunc:true
+	      // eslint-disable-next-line no-shadow
 	      var mount = this$1._findMount(function (mount) { return mount.Class === object.constructor; });
-	      // jshint loopfunc:false
 	      if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) { continue; }
-	      if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
+	      if (!(_.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
 	        var descriptor = Object.getOwnPropertyDescriptor(object, key);
 	        if ('value' in descriptor || !descriptor.get) {
 	          throw new Error(
@@ -2793,7 +2787,7 @@
 	      }
 	      var value = object[key];
 	      if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
-	          !(value instanceof Function || value instanceof Promise)) {
+	          !(_.isFunction(value) || value instanceof Promise)) {
 	        value.$$$trussCheck = true;
 	        checkedObjects.push(value);
 	        this$1.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
@@ -2811,7 +2805,7 @@
 	};
 
 	function computeValue(prop, propertyStats) {
-	  // jshint validthis: true
+	  /* eslint-disable no-invalid-this */
 	  if (this.$destroyed) { return; }
 	  // Touch this object, since a failed access to a missing property doesn't get captured as a
 	  // dependency.
@@ -2835,7 +2829,7 @@
 	  } finally {
 	    currentPropertyFrozen = oldPropertyFrozen;
 	  }
-	  // jshint validthis: false
+	  /* eslint-enable no-invalid-this */
 	}
 
 	function wrapConnections(object, connections) {
@@ -2844,14 +2838,15 @@
 	    if (descriptor instanceof Handle) { return descriptor; }
 	    if (_.isFunction(descriptor)) {
 	      var fn = function() {
+	        /* eslint-disable no-invalid-this */
 	        object.$$touchThis();
 	        return wrapConnections(object, descriptor.call(this));
+	        /* eslint-enable no-invalid-this */
 	      };
 	      fn.angularWatchSuppressed = true;
 	      return fn;
-	    } else {
-	      return wrapConnections(object, descriptor);
 	    }
+	    return wrapConnections(object, descriptor);
 	  });
 	}
 
@@ -2859,11 +2854,8 @@
 	  if (object === null || object === undefined || !_.isObject(object) || Object.isFrozen(object) ||
 	      object.$truss) { return object; }
 	  object = Object.freeze(object);
-	  if (_.isArray(object)) {
-	    return _.map(object, function (value) { return freeze(value); });
-	  } else {
-	    return _.mapValues(object, function (value) { return freeze(value); });
-	  }
+	  if (_.isArray(object)) { return _.map(object, function (value) { return freeze(value); }); }
+	  return _.mapValues(object, function (value) { return freeze(value); });
 	}
 
 	var Transaction = function Transaction(ref) {
@@ -2982,7 +2974,7 @@
 	      this$1._coupler.couple(ref.path, operation);
 	      operation._coupled = true;
 	    }
-	  }).catch(function (e) {});// ignore exception, let onFailure handlers deal with it
+	  }).catch(_.noop);// ignore exception, let onFailure handlers deal with it
 	  return operation._disconnect;
 	};
 
@@ -2994,7 +2986,7 @@
 	    this._coupler.decouple(ref.path, operation);// will call back to _prune if necessary
 	    operation._coupled = false;
 	  }
-	  this._dispatcher.end(operation, error).catch(function (e) {});
+	  this._dispatcher.end(operation, error).catch(_.noop);
 	};
 
 	Tree.prototype.isReferenceReady = function isReferenceReady (ref) {
@@ -3013,7 +3005,7 @@
 	      this$1._coupler.subscribe(query, operation, keysCallback);
 	      operation._coupled = true;
 	    }
-	  }).catch(function (e) {});// ignore exception, let onFailure handlers deal with it
+	  }).catch(_.noop);// ignore exception, let onFailure handlers deal with it
 	  return operation._disconnect;
 	};
 
@@ -3024,7 +3016,7 @@
 	    this._coupler.unsubscribe(query, operation);// will call back to _prune if necessary
 	    operation._coupled = false;
 	  }
-	  this._dispatcher.end(operation, error).catch(function (e) {});
+	  this._dispatcher.end(operation, error).catch(_.noop);
 	};
 
 	Tree.prototype.isQueryReady = function isQueryReady (query) {
@@ -3055,11 +3047,8 @@
 	  var set = numValues === 1;
 	  var operand = set ? values[''] : values;
 	  return this._dispatcher.execute('write', set ? 'set' : 'update', ref, operand, function () {
-	    if (set) {
-	      return this$1._bridge.set(url, operand, writeSerial);
-	    } else {
-	      return this$1._bridge.update(url, operand, writeSerial);
-	    }
+	    if (set) { return this$1._bridge.set(url, operand, writeSerial); }
+	    return this$1._bridge.update(url, operand, writeSerial);
 	  });
 	};
 
@@ -3102,7 +3091,7 @@
 	      return this$1._bridge.transaction(
 	        this$1._rootUrl + ref.path, oldValue, values, this$1._writeSerial
 	      ).then(function (result) {
-	        _.each(result.snapshots, function (snapshot) { return this$1._integrateSnapshot(snapshot); });
+	        _.forEach(result.snapshots, function (snapshot) { return this$1._integrateSnapshot(snapshot); });
 	        return result.committed ? txn : attemptTransaction();
 	      });
 	    });
@@ -3122,7 +3111,7 @@
 	  this._localWriteTimestamp = this._truss.now;
 	  var createdObjects = [];
 	  var numLocal = 0;
-	  _.each(values, function (value, path) {
+	  _.forEach(values, function (value, path) {
 	    var local = this$1._modeler.isLocal(path, value);
 	    if (local) { numLocal++; }
 	    var coupledDescendantPaths =
@@ -3236,7 +3225,7 @@
 	Tree.prototype._integrateSnapshot = function _integrateSnapshot (snap) {
 	    var this$1 = this;
 
-	  _.each(this._localWrites, function (writeSerial, path) {
+	  _.forEach(this._localWrites, function (writeSerial, path) {
 	    if (snap.writeSerial >= writeSerial) { delete this$1._localWrites[path]; }
 	  });
 	  if (snap.exists) {
@@ -3316,7 +3305,7 @@
 	  // shouldn't risk being overwritten by actual Firebase data since that will rarely (never?) be
 	  // hidden.
 	  if (objectCreated) { this._plantPlaceholders(object, path, true, createdObjects); }
-	  _.each(value, function (item, escapedChildKey) {
+	  _.forEach(value, function (item, escapedChildKey) {
 	    this$1._plantValue(
 	      joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite,
 	      override, local, createdObjects
@@ -3325,7 +3314,7 @@
 	  if (objectCreated) {
 	    this._plantPlaceholders(object, path, false, createdObjects);
 	  } else {
-	    _.each(object, function (item, childKey) {
+	    _.forEach(object, function (item, childKey) {
 	      var escapedChildKey = escapeKey(childKey);
 	      if (!value.hasOwnProperty(escapedChildKey)) {
 	        this$1._prune(joinPath(path, escapedChildKey), null, remoteWrite);
@@ -3365,7 +3354,7 @@
 	Tree.prototype._avoidLocalWritePaths = function _avoidLocalWritePaths (path, lockedDescendantPaths) {
 	    var this$1 = this;
 
-	  for (var localWritePath in this._localWrites) {
+	  for (var localWritePath in this$1._localWrites) {
 	    if (!this$1._localWrites.hasOwnProperty(localWritePath)) { continue; }
 	    if (path === localWritePath || localWritePath === '/' ||
 	        _.startsWith(path, localWritePath + '/')) { return true; }
@@ -3429,7 +3418,7 @@
 	  if (lockedDescendantPaths[object.$path]) { return true; }
 	  if (object.$overridden) { delete object.$overridden; }
 	  var coupledDescendantFound = false;
-	  _.each(object, function (value, key) {
+	  _.forEach(object, function (value, key) {
 	    var shouldDelete = true;
 	    var valueLocked;
 	    if (lockedDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
@@ -3534,14 +3523,14 @@
 	function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
 	  // First, check all paths for correctness and absolutize them, since there could be a mix of
 	  // absolute paths and relative keys.
-	  _.each(_.keys(values), function (path) {
+	  _.forEach(_.keys(values), function (path) {
 	    if (path.charAt(0) === '/') {
 	      if (!(path === rootPath || rootPath === '/' ||
 	            _.startsWith(path, rootPath + '/') && path.length > rootPath.length + 1)) {
 	        throw new Error(("Update item is not a descendant of target ref: " + path));
 	      }
 	    } else {
-	      if (path.indexOf('/') >= 0) {
+	      if (_.includes(path, '/')) {
 	        throw new Error(("Update item deep path must be absolute, taken from a reference: " + path));
 	      }
 	      var absolutePath = joinPath(rootPath, escapeKey(path));
@@ -3554,7 +3543,7 @@
 	  });
 	  // Then check for overlaps;
 	  var allPaths = _(values).keys().map(function (path) { return joinPath(path, ''); }).sortBy('length').value();
-	  _.each(values, function (value, path) {
+	  _.forEach(values, function (value, path) {
 	    for (var i = 0, list = allPaths; i < list.length; i += 1) {
 	      var otherPath = list[i];
 
@@ -3568,7 +3557,7 @@
 
 	function extractCommonPathPrefix(values) {
 	  var prefixSegments;
-	  _.each(values, function (value, path) {
+	  _.forEach(values, function (value, path) {
 	    var segments = path === '/' ? [''] : splitPath(path, true);
 	    if (prefixSegments) {
 	      var firstMismatchIndex = 0;
@@ -3588,7 +3577,7 @@
 
 	function relativizePaths(rootPath, values) {
 	  var offset = rootPath === '/' ? 1 : rootPath.length + 1;
-	  _.each(_.keys(values), function (path) {
+	  _.forEach(_.keys(values), function (path) {
 	    values[path.slice(offset)] = values[path];
 	    delete values[path];
 	  });
@@ -3859,8 +3848,8 @@
 	  angularProxy.debounceDigest(wait);
 	};
 
-	Truss.escapeKey = function escapeKey (key) {return escapeKey(key);};
-	Truss.unescapeKey = function unescapeKey (escapedKey) {return unescapeKey(escapedKey);};
+	Truss.escapeKey = function escapeKey$1 (key) {return escapeKey(key);};
+	Truss.unescapeKey = function unescapeKey$1 (escapedKey) {return unescapeKey(escapedKey);};
 
 	Truss.enableLogging = function enableLogging (fn) {
 	  logging = fn;

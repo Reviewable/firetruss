@@ -85,7 +85,7 @@ class QueryHandler {
         this._keys = updatedKeys;
       }
     } else if (snap.path.replace(/\/[^/]+/, '') === this._query.path) {
-      const hasKey = _.contains(this._keys, snap.key);
+      const hasKey = _.includes(this._keys, snap.key);
       if (snap.value) {
         if (!hasKey) {
           this._coupler._coupleSegments(this._segments.concat(snap.key));
@@ -93,13 +93,11 @@ class QueryHandler {
           this._keys.sort();
           updatedKeys = this._keys;
         }
-      } else {
-        if (hasKey) {
-          this._coupler._decoupleSegments(this._segments.concat(snap.key));
-          _.pull(this._keys, snap.key);
-          this._keys.sort();
-          updatedKeys = this._keys;
-        }
+      } else if (hasKey) {
+        this._coupler._decoupleSegments(this._segments.concat(snap.key));
+        _.pull(this._keys, snap.key);
+        this._keys.sort();
+        updatedKeys = this._keys;
       }
     }
     return updatedKeys;
@@ -149,13 +147,13 @@ class Node {
   listen(skip) {
     if (!skip && this.count) {
       if (this.listening) return;
-      _.each(this.operations, op => {this._coupler._dispatcher.clearReady(op);});
+      _.forEach(this.operations, op => {this._coupler._dispatcher.clearReady(op);});
       this._coupler._bridge.on(
         this.url, this.url, null, 'value', this._handleSnapshot, this._handleError, this,
         {sync: true});
       this.listening = true;
     } else {
-      _.each(this.children, child => {child.listen();});
+      _.forEach(this.children, child => {child.listen();});
     }
   }
 
@@ -170,7 +168,7 @@ class Node {
         }
       });
     } else {
-      _.each(this.children, child => {child.unlisten();});
+      _.forEach(this.children, child => {child.unlisten();});
     }
   }
 
@@ -214,14 +212,14 @@ class Node {
 
   _forAllDescendants(iteratee) {
     iteratee(this);
-    _.each(this.children, child => child._forAllDescendants(iteratee));
+    _.forEach(this.children, child => child._forAllDescendants(iteratee));
   }
 
   collectCoupledDescendantPaths(paths) {
     if (!paths) paths = {};
     paths[this.path] = this.active;
     if (!this.active) {
-      _.each(this.children, child => {child.collectCoupledDescendantPaths(paths);});
+      _.forEach(this.children, child => {child.collectCoupledDescendantPaths(paths);});
     }
     return paths;
   }
@@ -252,7 +250,7 @@ export default class Coupler {
   }
 
   destroy() {
-    _.each(this._queryHandlers, queryHandler => {queryHandler.destroy();});
+    _.forEach(this._queryHandlers, queryHandler => {queryHandler.destroy();});
     this._root.unlisten();
     this._vue.$destroy();
   }
@@ -337,7 +335,7 @@ export default class Coupler {
       Vue.set(this._queryHandlers, query.toString(), queryHandler);
     }
     queryHandler.attach(operation, keysCallback);
- }
+  }
 
   unsubscribe(query, operation) {
     const queryHandler = this._queryHandlers[query.toString()];

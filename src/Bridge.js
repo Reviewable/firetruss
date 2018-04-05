@@ -1,8 +1,6 @@
 import {unescapeKey} from './utils/paths.js';
 import _ from 'lodash';
 
-// jshint browser:true
-
 const MIN_WORKER_VERSION = '0.4.0';
 
 
@@ -87,10 +85,12 @@ export default class Bridge {
           workerVersion[2] > minVersion[2] ||
           workerVersion[2] === minVersion[2] && workerVersion[3] >= minVersion[3]
         );
-        if (!sufficient) return Promise.reject(new Error(
-          `Incompatible Firetruss worker version: ${response.version} ` +
-          `(${MIN_WORKER_VERSION} or better required)`
-        ));
+        if (!sufficient) {
+          return Promise.reject(new Error(
+            `Incompatible Firetruss worker version: ${response.version} ` +
+            `(${MIN_WORKER_VERSION} or better required)`
+          ));
+        }
       }
       return response;
     });
@@ -110,7 +110,7 @@ export default class Bridge {
   debugPermissionDeniedErrors(simulatedTokenGenerator, maxSimulationDuration, callFilter) {
     this._simulatedTokenGenerator = simulatedTokenGenerator;
     if (maxSimulationDuration !== undefined) this._maxSimulationDuration = maxSimulationDuration;
-    this._simulatedCallFilter = callFilter || function() {return true;};
+    this._simulatedCallFilter = callFilter || _.constant(true);
   }
 
   enableLogging(fn) {
@@ -194,16 +194,15 @@ export default class Bridge {
       return this._simulateCall(error.params).then(securityTrace => {
         if (securityTrace) error.permissionDeniedDetails = securityTrace;
       });
-    } else {
-      return Promise.resolve();
     }
+    return Promise.resolve();
   }
 
   _simulateCall(props) {
     if (!(this._simulatedTokenGenerator && this._maxSimulationDuration > 0)) {
       return Promise.resolve();
     }
-    let simulatedCalls = [];
+    const simulatedCalls = [];
     switch (props.msg) {
       case 'set':
         simulatedCalls.push({method: 'set', url: props.url, args: [props.value]});
@@ -224,16 +223,16 @@ export default class Bridge {
     }
     const auth = this.getAuth(getUrlRoot(props.url));
     const simulationPromise = this._simulatedTokenGenerator(auth && auth.uid).then(token => {
-      return Promise.all(simulatedCalls.map(message => {
+      return Promise.all(_.map(simulatedCalls, message => {
         message.msg = 'simulate';
         message.token = token;
         return this._send(message);
       }));
     }).then(securityTraces => {
-      if (securityTraces.every(trace => trace === null)) {
+      if (_.every(securityTraces, trace => trace === null)) {
         return 'Unable to reproduce error in simulation';
       }
-      return securityTraces.filter(trace => trace).join('\n\n');
+      return _.compact(securityTraces).join('\n\n');
     }).catch(e => {
       return 'Error running simulation: ' + e;
     });
@@ -326,15 +325,12 @@ export default class Bridge {
     let callbackId;
     if (snapshotCallback) {
       callbackId = this._findAndRemoveCallbackId(
-        snapshotCallback,
-        handle =>
-          handle.listenerKey === listenerKey && handle.eventType === eventType &&
-          handle.context === context
+        snapshotCallback, handle => _.isMatch(handle, {listenerKey, eventType, context})
       );
       if (!callbackId) return Promise.resolve();  // no-op, never registered or already deregistered
       idsToDeregister.push(callbackId);
     } else {
-      for (const id of Object.keys(this._callbacks)) {
+      for (const id of _.keys(this._callbacks)) {
         const handle = this._callbacks[id];
         if (handle.listenerKey === listenerKey && (!eventType || handle.eventType === eventType)) {
           idsToDeregister.push(id);
@@ -398,7 +394,7 @@ export default class Bridge {
   }
 
   _nullifyCallback(id) {
-    this._callbacks[id].callback = noop;
+    this._callbacks[id].callback = _.noop;
   }
 
   _deregisterCallback(id) {
@@ -425,10 +421,8 @@ export default class Bridge {
 }
 
 
-function noop() {}
-
 function errorFromJson(json, params) {
-  if (!json || json instanceof Error) return json;
+  if (!json || _.isError(json)) return json;
   const error = new Error(json.message);
   error.params = params;
   for (const propertyName in json) {

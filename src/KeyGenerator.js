@@ -11,7 +11,7 @@ export default class KeyGenerator {
     const chars = new Array(20);
     let prefix = now;
     for (let i = 7; i >= 0; i--) {
-      chars[i] = ALPHABET.charAt(prefix & 0x3f);
+      chars[i] = ALPHABET.charAt(prefix & 0x3f);  // eslint-disable-line no-bitwise
       prefix = Math.floor(prefix / 64);
     }
     if (now === this._lastUniqueKeyTime) {

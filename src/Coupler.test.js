@@ -20,16 +20,16 @@ test.beforeEach(t => {
     t.context.rootUrl, t.context.bridge, t.context.dispatcher, t.context.applySnapshot,
     t.context.prunePath
   );
-  t.context.op1 = td.object({_disconnect() {}});
+  t.context.op1 = td.object({_disconnect: _.noop});
   t.context.op2 = td.object({});
   t.context.op3 = td.object({});
   t.context.verifyOn = (url, times = 1) => td.verify(t.context.bridge.on(
     url, url, null, 'value', td.matchers.isA(Function), td.matchers.isA(Function),
     td.matchers.anything(), {sync: true}
-  ), {times: times});
+  ), {times});
   t.context.verifyOff = (url, times = 1) => td.verify(t.context.bridge.off(
     url, url, null, 'value', td.matchers.isA(Function), td.matchers.anything()
-  ), {times: times});
+  ), {times});
 });
 
 test.afterEach(t => {
@@ -219,7 +219,7 @@ test('handle error', t => {
   t.falsy(baz.listening);
 
   td.when(t.context.dispatcher.retry(t.context.op1, error), {times: 1}).thenResolve(true);
-  let handlerPromise = bar._handleError(error);
+  const handlerPromise = bar._handleError(error);
   t.false(bar.ready);
   t.false(baz.ready);
   t.false(bar.listening);

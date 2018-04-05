@@ -26,10 +26,13 @@
   "devDependencies": {
     "ava": "^0.17.0",
     "compose-source-map": "^1.0.0",
+    "eslint": "^4.0.0",
+    "eslint-plugin-lodash": "^2.5.0",
     "grunt": "^1.0.0",
     "grunt-contrib-clean": "^1.0.0",
     "grunt-contrib-uglify": "^2.0.0",
     "grunt-contrib-watch": "^1.0.0",
+    "grunt-eslint": "^20.1.0",
     "grunt-git": "^1.0.1",
     "grunt-release": "geddski/grunt-release#master",
     "grunt-rollup": "^1.0.1",
@@ -39,6 +42,9 @@
     "rollup-plugin-commonjs": "^5.0.5",
     "rollup-plugin-node-resolve": "^2.0.0",
     "testdouble": "^1.10.2"
+  },
+  "resolutions": {
+    "grunt-rollup/rollup": "0.37.x"
   },
   "ava": {
     "files": [
@@ -59,7 +65,7 @@
   "main": "dist/firetruss.umd.js",
   "module": "dist/firetruss.es2015.js",
   "dependencies": {
-    "lodash": "^4.17.2",
+    "lodash": "^3.0.0",
     "performance-now": "^0.2.0",
     "vue": "^2.1.6"
   }

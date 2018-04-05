@@ -19,8 +19,8 @@ const angularProxy = {
 if (angularProxy.active) {
   initAngular();
 } else {
-  ['digest', 'watch', 'defineModule', 'debounceDigest'].forEach(method => {
-    angularProxy[method] = noop;
+  _.forEach(['digest', 'watch', 'defineModule', 'debounceDigest'], method => {
+    angularProxy[method] = _.noop;
   });
 }
 
@@ -67,8 +67,6 @@ function initAngular() {
     ]);
   }]);
 }
-
-function noop() {}
 
 class LruCacheItem {
   constructor(key, value) {
@@ -134,7 +132,7 @@ const maxNumPathMatchers = 1000;
 
 function escapeKey(key) {
   if (!key) return key;
-  return key.toString().replace(/[\\\.\$\#\[\]\/]/g, function(char) {
+  return key.toString().replace(/[\\.$#[\]/]/g, function(char) {
     return '\\' + char.charCodeAt(0).toString(16);
   });
 }
@@ -192,15 +190,16 @@ class PathMatcher {
     this.variables = [];
     const prefixMatch = _.endsWith(pattern, '/$*');
     if (prefixMatch) pattern = pattern.slice(0, -3);
-    const pathTemplate = pattern.replace(/\/\$[^\/]*/g, match => {
+    const pathTemplate = pattern.replace(/\/\$[^/]*/g, match => {
       if (match.length > 1) this.variables.push(match.slice(1));
       return '\u0001';
     });
     Object.freeze(this.variables);
-    if (/[.$#\[\]]|\\(?![0-9a-f][0-9a-f])/i.test(pathTemplate)) {
+    if (/[.$#[\]]|\\(?![0-9a-f][0-9a-f])/i.test(pathTemplate)) {
       throw new Error('Path pattern has unescaped keys: ' + pattern);
     }
     this._regex = new RegExp(
+      // eslint-disable-next-line no-control-regex
       '^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + (prefixMatch ? '($|/)' : '$'));
   }
 
@@ -234,8 +233,6 @@ function makePathMatcher(pattern) {
   }
   return matcher;
 }
-
-// jshint browser:true
 
 const MIN_WORKER_VERSION = '0.4.0';
 
@@ -321,10 +318,12 @@ class Bridge {
           workerVersion[2] > minVersion[2] ||
           workerVersion[2] === minVersion[2] && workerVersion[3] >= minVersion[3]
         );
-        if (!sufficient) return Promise.reject(new Error(
-          `Incompatible Firetruss worker version: ${response.version} ` +
-          `(${MIN_WORKER_VERSION} or better required)`
-        ));
+        if (!sufficient) {
+          return Promise.reject(new Error(
+            `Incompatible Firetruss worker version: ${response.version} ` +
+            `(${MIN_WORKER_VERSION} or better required)`
+          ));
+        }
       }
       return response;
     });
@@ -344,7 +343,7 @@ class Bridge {
   debugPermissionDeniedErrors(simulatedTokenGenerator, maxSimulationDuration, callFilter) {
     this._simulatedTokenGenerator = simulatedTokenGenerator;
     if (maxSimulationDuration !== undefined) this._maxSimulationDuration = maxSimulationDuration;
-    this._simulatedCallFilter = callFilter || function() {return true;};
+    this._simulatedCallFilter = callFilter || _.constant(true);
   }
 
   enableLogging(fn) {
@@ -428,16 +427,15 @@ class Bridge {
       return this._simulateCall(error.params).then(securityTrace => {
         if (securityTrace) error.permissionDeniedDetails = securityTrace;
       });
-    } else {
-      return Promise.resolve();
     }
+    return Promise.resolve();
   }
 
   _simulateCall(props) {
     if (!(this._simulatedTokenGenerator && this._maxSimulationDuration > 0)) {
       return Promise.resolve();
     }
-    let simulatedCalls = [];
+    const simulatedCalls = [];
     switch (props.msg) {
       case 'set':
         simulatedCalls.push({method: 'set', url: props.url, args: [props.value]});
@@ -458,16 +456,16 @@ class Bridge {
     }
     const auth = this.getAuth(getUrlRoot(props.url));
     const simulationPromise = this._simulatedTokenGenerator(auth && auth.uid).then(token => {
-      return Promise.all(simulatedCalls.map(message => {
+      return Promise.all(_.map(simulatedCalls, message => {
         message.msg = 'simulate';
         message.token = token;
         return this._send(message);
       }));
     }).then(securityTraces => {
-      if (securityTraces.every(trace => trace === null)) {
+      if (_.every(securityTraces, trace => trace === null)) {
         return 'Unable to reproduce error in simulation';
       }
-      return securityTraces.filter(trace => trace).join('\n\n');
+      return _.compact(securityTraces).join('\n\n');
     }).catch(e => {
       return 'Error running simulation: ' + e;
     });
@@ -560,15 +558,12 @@ class Bridge {
     let callbackId;
     if (snapshotCallback) {
       callbackId = this._findAndRemoveCallbackId(
-        snapshotCallback,
-        handle =>
-          handle.listenerKey === listenerKey && handle.eventType === eventType &&
-          handle.context === context
+        snapshotCallback, handle => _.isMatch(handle, {listenerKey, eventType, context})
       );
       if (!callbackId) return Promise.resolve();  // no-op, never registered or already deregistered
       idsToDeregister.push(callbackId);
     } else {
-      for (const id of Object.keys(this._callbacks)) {
+      for (const id of _.keys(this._callbacks)) {
         const handle = this._callbacks[id];
         if (handle.listenerKey === listenerKey && (!eventType || handle.eventType === eventType)) {
           idsToDeregister.push(id);
@@ -632,7 +627,7 @@ class Bridge {
   }
 
   _nullifyCallback(id) {
-    this._callbacks[id].callback = noop$1;
+    this._callbacks[id].callback = _.noop;
   }
 
   _deregisterCallback(id) {
@@ -659,10 +654,8 @@ class Bridge {
 }
 
 
-function noop$1() {}
-
 function errorFromJson(json, params) {
-  if (!json || json instanceof Error) return json;
+  if (!json || _.isError(json)) return json;
   const error = new Error(json.message);
   error.params = params;
   for (const propertyName in json) {
@@ -681,6 +674,8 @@ function getUrlRoot(url) {
   const k = url.indexOf('/', 8);
   return k >= 8 ? url.slice(0, k) : url;
 }
+
+/* eslint-disable no-use-before-define */
 
 const EMPTY_ANNOTATIONS = {};
 Object.freeze(EMPTY_ANNOTATIONS);
@@ -741,10 +736,9 @@ class Handle {
         }
         if (_.isEmpty(mapping)) return;
         return mapping;
-      } else {
-        if (arg === undefined || arg === null) return;
-        escapedKeys.push(escapeKey(arg));
       }
+      if (arg === undefined || arg === null) return;
+      escapedKeys.push(escapeKey(arg));
     }
     return new Reference(
       this._tree, `${this._pathPrefix}/${escapedKeys.join('/')}`, this._annotations);
@@ -797,7 +791,7 @@ class Query extends Handle {
 
   annotate(annotations) {
     return new Query(
-      this._tree, this._path, this._spec, _.extend({}, this._annotations, annotations));
+      this._tree, this._path, this._spec, _.assign({}, this._annotations, annotations));
   }
 
   _copyAndValidateSpec(spec) {
@@ -826,7 +820,7 @@ class Query extends Handle {
           'Query "by" value must be a descendant of target reference: ' + spec.by);
       }
       childPath = childPath.slice(this._path.length).replace(/^\/?/, '');
-      if (childPath.indexOf('/') === -1) {
+      if (!_.includes(childPath, '/')) {
         throw new Error(
           'Query "by" value must not be a direct child of target reference: ' + spec.by);
       }
@@ -843,9 +837,7 @@ class Query extends Handle {
 }
 
 
-// jshint latedef:false
 class Reference extends Handle {
-// jshint latedef:nofunc
 
   constructor(tree, path, annotations) {
     super(tree, path, annotations);
@@ -857,7 +849,7 @@ class Reference extends Handle {
   toString() {return this._path;}
 
   annotate(annotations) {
-    return new Reference(this._tree, this._path, _.extend({}, this._annotations, annotations));
+    return new Reference(this._tree, this._path, _.assign({}, this._annotations, annotations));
   }
 
   query(spec) {
@@ -883,7 +875,7 @@ class Reference extends Handle {
 
 class StatItem {
   constructor(name) {
-    _.extend(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
+    _.assign(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
   }
 
   add(item) {
@@ -925,15 +917,15 @@ class Stats {
     let stats = this.list;
     if (!stats.length) return;
     const totals = new StatItem('=== Total');
-    _.each(stats, stat => {totals.add(stat);});
+    _.forEach(stats, stat => {totals.add(stat);});
     stats = _.take(stats, n);
     const above = new StatItem('--- Above');
-    _.each(stats, stat => {above.add(stat);});
+    _.forEach(stats, stat => {above.add(stat);});
     const lines = _.map(stats, item => item.toLogParts(totals));
     lines.push(above.toLogParts(totals));
     lines.push(totals.toLogParts(totals));
     const widths = _.map(_.range(lines[0].length), i => _(lines).map(line => line[i].length).max());
-    _.each(lines, line => {
+    _.forEach(lines, line => {
       console.log(_.map(line, (column, i) => _.padLeft(column, widths[i])).join(' '));
     });
   }
@@ -975,7 +967,7 @@ class Connector {
 
     this._linkScopeProperties();
 
-    _.each(connections, (descriptor, key) => {
+    _.forEach(connections, (descriptor, key) => {
       if (_.isFunction(descriptor)) {
         this._bindComputedConnection(key, descriptor);
       } else {
@@ -1007,8 +999,8 @@ class Connector {
 
   destroy() {
     this._unlinkScopeProperties();
-    _.each(this._angularUnwatches, unwatch => {unwatch();});
-    _.each(this._connections, (descriptor, key) => {this._disconnect(key);});
+    _.forEach(this._angularUnwatches, unwatch => {unwatch();});
+    _.forEach(this._connections, (descriptor, key) => {this._disconnect(key);});
     this._vue.$destroy();
   }
 
@@ -1030,7 +1022,7 @@ class Connector {
 
   _unlinkScopeProperties() {
     if (!this._scope) return;
-    _.each(this._connections, (descriptor, key) => {
+    _.forEach(this._connections, (descriptor, key) => {
       delete this._scope[key];
     });
   }
@@ -1080,10 +1072,10 @@ class Connector {
   }
 
   _updateConnections(connections) {
-    _.each(connections, (descriptor, key) => {
+    _.forEach(connections, (descriptor, key) => {
       this._updateComputedConnection(key, descriptor);
     });
-    _.each(this._connections, (descriptor, key) => {
+    _.forEach(this._connections, (descriptor, key) => {
       if (!_.has(connections, key)) this._updateComputedConnection(key);
     });
     this._connections = connections;
@@ -1150,7 +1142,7 @@ class Connector {
     const subScope = this._vue.values[key];
     for (const childKey in subScope) {
       if (!subScope.hasOwnProperty(childKey)) continue;
-      if (!_.contains(childKeys, childKey)) {
+      if (!_.includes(childKeys, childKey)) {
         Vue.delete(subScope, childKey);
         angularProxy.digest();
       }
@@ -1174,6 +1166,7 @@ function flattenRefs(refs) {
 function wrapPromiseCallback(callback) {
   return function() {
     try {
+      // eslint-disable-next-line no-invalid-this
       return Promise.resolve(callback.apply(this, arguments));
     } catch (e) {
       return Promise.reject(e);
@@ -1301,13 +1294,13 @@ class Operation {
   _markReady(ending) {
     this._ready = true;
     if (!ending) this._tries = 0;
-    _.each(this._slowHandles, handle => handle.cancel());
+    _.forEach(this._slowHandles, handle => handle.cancel());
   }
 
   _clearReady() {
     this._ready = false;
     this._startTimestamp = Date.now();
-    _.each(this._slowHandles, handle => handle.initiate());
+    _.forEach(this._slowHandles, handle => handle.initiate());
   }
 
   _incrementTries() {
@@ -1324,7 +1317,7 @@ class Dispatcher {
   }
 
   intercept(interceptKey, callbacks) {
-    if (!_.contains(INTERCEPT_KEYS, interceptKey)) {
+    if (!_.includes(INTERCEPT_KEYS, interceptKey)) {
       throw new Error('Unknown intercept operation type: ' + interceptKey);
     }
     const badCallbackKeys =
@@ -1356,7 +1349,7 @@ class Dispatcher {
   }
 
   _removeCallbacks(interceptKey, wrappedCallbacks) {
-    _.each(wrappedCallbacks, (wrappedCallback, stage) => {
+    _.forEach(wrappedCallbacks, (wrappedCallback, stage) => {
       this._removeCallback(stage, interceptKey, wrappedCallback);
     });
   }
@@ -1457,7 +1450,7 @@ class Dispatcher {
     return this._bridge.probeError(operation.error).then(() => {
       if (onFailureCallbacks) {
         setTimeout(() => {
-          _.each(onFailureCallbacks, onFailure => onFailure(operation));
+          _.forEach(onFailureCallbacks, onFailure => onFailure(operation));
         }, 0);
       }
       return Promise.reject(operation.error);
@@ -1478,7 +1471,7 @@ class KeyGenerator {
     const chars = new Array(20);
     let prefix = now;
     for (let i = 7; i >= 0; i--) {
-      chars[i] = ALPHABET.charAt(prefix & 0x3f);
+      chars[i] = ALPHABET.charAt(prefix & 0x3f);  // eslint-disable-line no-bitwise
       prefix = Math.floor(prefix / 64);
     }
     if (now === this._lastUniqueKeyTime) {
@@ -1678,7 +1671,7 @@ class QueryHandler {
         this._keys = updatedKeys;
       }
     } else if (snap.path.replace(/\/[^/]+/, '') === this._query.path) {
-      const hasKey = _.contains(this._keys, snap.key);
+      const hasKey = _.includes(this._keys, snap.key);
       if (snap.value) {
         if (!hasKey) {
           this._coupler._coupleSegments(this._segments.concat(snap.key));
@@ -1686,13 +1679,11 @@ class QueryHandler {
           this._keys.sort();
           updatedKeys = this._keys;
         }
-      } else {
-        if (hasKey) {
-          this._coupler._decoupleSegments(this._segments.concat(snap.key));
-          _.pull(this._keys, snap.key);
-          this._keys.sort();
-          updatedKeys = this._keys;
-        }
+      } else if (hasKey) {
+        this._coupler._decoupleSegments(this._segments.concat(snap.key));
+        _.pull(this._keys, snap.key);
+        this._keys.sort();
+        updatedKeys = this._keys;
       }
     }
     return updatedKeys;
@@ -1742,13 +1733,13 @@ class Node {
   listen(skip) {
     if (!skip && this.count) {
       if (this.listening) return;
-      _.each(this.operations, op => {this._coupler._dispatcher.clearReady(op);});
+      _.forEach(this.operations, op => {this._coupler._dispatcher.clearReady(op);});
       this._coupler._bridge.on(
         this.url, this.url, null, 'value', this._handleSnapshot, this._handleError, this,
         {sync: true});
       this.listening = true;
     } else {
-      _.each(this.children, child => {child.listen();});
+      _.forEach(this.children, child => {child.listen();});
     }
   }
 
@@ -1763,7 +1754,7 @@ class Node {
         }
       });
     } else {
-      _.each(this.children, child => {child.unlisten();});
+      _.forEach(this.children, child => {child.unlisten();});
     }
   }
 
@@ -1807,14 +1798,14 @@ class Node {
 
   _forAllDescendants(iteratee) {
     iteratee(this);
-    _.each(this.children, child => child._forAllDescendants(iteratee));
+    _.forEach(this.children, child => child._forAllDescendants(iteratee));
   }
 
   collectCoupledDescendantPaths(paths) {
     if (!paths) paths = {};
     paths[this.path] = this.active;
     if (!this.active) {
-      _.each(this.children, child => {child.collectCoupledDescendantPaths(paths);});
+      _.forEach(this.children, child => {child.collectCoupledDescendantPaths(paths);});
     }
     return paths;
   }
@@ -1845,7 +1836,7 @@ class Coupler {
   }
 
   destroy() {
-    _.each(this._queryHandlers, queryHandler => {queryHandler.destroy();});
+    _.forEach(this._queryHandlers, queryHandler => {queryHandler.destroy();});
     this._root.unlisten();
     this._vue.$destroy();
   }
@@ -1930,7 +1921,7 @@ class Coupler {
       Vue.set(this._queryHandlers, query.toString(), queryHandler);
     }
     queryHandler.attach(operation, keysCallback);
- }
+  }
 
   unsubscribe(query, operation) {
     const queryHandler = this._queryHandlers[query.toString()];
@@ -2015,7 +2006,7 @@ class Value {
     return this.$key;
   }
   get $data() {return this;}
-  get $hidden() {return false;}
+  get $hidden() {return false;}  // eslint-disable-line lodash/prefer-constant
   get $empty() {return _.isEmpty(this.$data);}
   get $keys() {return _.keys(this.$data);}
   get $values() {return _.values(this.$data);}
@@ -2023,7 +2014,7 @@ class Value {
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
   get $now() {return this.$truss.now;}
   get $ready() {return this.$ref.ready;}
-  get $overridden() {return false;}
+  get $overridden() {return false;}  // eslint-disable-line lodash/prefer-constant
 
   $newKey() {return this.$truss.newKey();}
 
@@ -2073,7 +2064,7 @@ class Value {
       return subjectFn.call(this);
     }, callbackFn.bind(this), options);
 
-    unwatchAndRemoveFinalizer = () => {
+    unwatchAndRemoveFinalizer = () => {  // eslint-disable-line prefer-const
       unwatch();
       _.pull(this.$$finalizers, unwatchAndRemoveFinalizer);
     };
@@ -2113,7 +2104,7 @@ class Value {
   $commit(options, updateFn) {return this.$ref.commit(options, updateFn);}
 
   $$touchThis() {
-    // jshint expr:true
+    /* eslint-disable no-unused-expressions */
     if (this.__ob__) {
       this.__ob__.dep.depend();
     } else if (this.$parent) {
@@ -2121,7 +2112,7 @@ class Value {
     } else {
       this.$root;
     }
-    // jshint expr:false
+    /* eslint-enable no-unused-expressions */
   }
 
   get $$initializers() {
@@ -2136,13 +2127,13 @@ class Value {
     return this.$$finalizers;
   }
 
-  get $destroyed() {
+  get $destroyed() {  // eslint-disable-line lodash/prefer-constant
     return false;
   }
 }
 
 
-_.each(Value.prototype, (prop, name) => {
+_.forEach(Value.prototype, (prop, name) => {
   Object.defineProperty(
     Value.prototype, name, {value: prop, enumerable: false, configurable: false, writable: false});
 });
@@ -2171,13 +2162,13 @@ class Modeler {
 
   init(classes, rootAcceptable) {
     if (_.isPlainObject(classes)) {
-      _.each(classes, (Class, path) => {
+      _.forEach(classes, (Class, path) => {
         if (Class.$trussMount) return;
         Class.$$trussMount = Class.$$trussMount || [];
         Class.$$trussMount.push(path);
       });
       classes = _.values(classes);
-      _.each(classes, Class => {
+      _.forEach(classes, Class => {
         if (!Class.$trussMount && Class.$$trussMount) {
           Class.$trussMount = Class.$$trussMount;
           delete Class.$$trussMount;
@@ -2185,11 +2176,11 @@ class Modeler {
       });
     }
     classes = _.uniq(classes);
-    _.each(classes, Class => this._mountClass(Class, rootAcceptable));
+    _.forEach(classes, Class => this._mountClass(Class, rootAcceptable));
     this._decorateTrie(this._trie);
   }
 
-  destroy() {
+  destroy() {  // eslint-disable-line no-empty-function
   }
 
   _getMount(path, scaffold, predicate) {
@@ -2219,7 +2210,7 @@ class Modeler {
   }
 
   _decorateTrie(node) {
-    _.each(node.children, child => {
+    _.forEach(node.children, child => {
       this._decorateTrie(child);
       if (child.local || child.localDescendants) node.localDescendants = true;
     });
@@ -2263,7 +2254,7 @@ class Modeler {
     let mounts = Class.$trussMount;
     if (!mounts) throw new Error(`Class ${Class.name} lacks a $trussMount static property`);
     if (!_.isArray(mounts)) mounts = [mounts];
-    _.each(mounts, mount => {
+    _.forEach(mounts, mount => {
       if (_.isString(mount)) mount = {path: mount};
       if (!rootAcceptable && mount.path === '/') {
         throw new Error('Data root already accessed, too late to mount class');
@@ -2274,7 +2265,7 @@ class Modeler {
           throw new Error(`Invalid variable name: ${variable}`);
         }
         if (variable.charAt(0) === '$' && (
-            _.has(Value.prototype, variable) || RESERVED_VALUE_PROPERTY_NAMES[variable]
+          _.has(Value.prototype, variable) || RESERVED_VALUE_PROPERTY_NAMES[variable]
         )) {
           throw new Error(`Variable name conflicts with built-in property or method: ${variable}`);
         }
@@ -2286,23 +2277,24 @@ class Modeler {
           throw new Error(
             `Class ${Class.name} mounted at wildcard ${escapedKey} cannot be a placeholder`);
         }
-      } else {
-        if (!_.has(mount, 'placeholder')) mount.placeholder = {};
+      } else if (!_.has(mount, 'placeholder')) {
+        mount.placeholder = {};
       }
       const targetMount = this._getMount(mount.path.replace(/\$[^/]*/g, '$'), true);
       if (targetMount.matcher && (
-            targetMount.escapedKey === escapedKey ||
-            targetMount.escapedKey.charAt(0) === '$' && escapedKey.charAt(0) === '$')) {
+        targetMount.escapedKey === escapedKey ||
+        targetMount.escapedKey.charAt(0) === '$' && escapedKey.charAt(0) === '$'
+      )) {
         throw new Error(
           `Multiple classes mounted at ${mount.path}: ${targetMount.Class.name}, ${Class.name}`);
       }
-      _.extend(
+      _.assign(
         targetMount, {Class, matcher, computedProperties, escapedKey},
         _.pick(mount, 'placeholder', 'local', 'keysUnsafe', 'hidden'));
     });
-    _.each(allVariables, variable => {
+    _.forEach(allVariables, variable => {
       if (!Class.prototype[variable]) {
-        Object.defineProperty(Class.prototype, variable, {get: function() {
+        Object.defineProperty(Class.prototype, variable, {get() {
           return creatingObjectProperties ?
             creatingObjectProperties[variable] && creatingObjectProperties[variable].value :
             undefined;
@@ -2337,7 +2329,7 @@ class Modeler {
     if (mount.hidden) properties.$hidden = {value: true};
     if (mount.computedProperties) {
       properties.$$computedPropertyWatchers = {value: [], configurable: true, enumerable: false};
-      _.each(mount.computedProperties, prop => {
+      _.forEach(mount.computedProperties, prop => {
         properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop);
       });
       // Hack to change order of computed property watchers.  By flipping their ids to be negative,
@@ -2358,13 +2350,13 @@ class Modeler {
   }
 
   _wrapProperties(object) {
-    _.each(object, (value, key) => {
+    _.forEach(object, (value, key) => {
       const valueKey = '$_' + key;
       Object.defineProperties(object, {
         [valueKey]: {value, writable: true},
         [key]: {
           get: () => object[valueKey],
-          set: value => {object[valueKey] = value; angularProxy.digest();},
+          set: arg => {object[valueKey] = arg; angularProxy.digest();},
           enumerable: true, configurable: true
         }
       });
@@ -2438,11 +2430,11 @@ class Modeler {
     });
     return {
       enumerable: true, configurable: true,
-      get: function() {
+      get() {
         if (value instanceof ErrorWrapper) throw value.error;
         return value;
       },
-      set: function(newValue) {
+      set(newValue) {
         if (!writeAllowed) throw new Error(`You cannot set a computed property: ${prop.name}`);
         value = newValue;
       }
@@ -2465,6 +2457,7 @@ class Modeler {
   }
 
   isLocal(path, value) {
+    // eslint-disable-next-line no-shadow
     const mount = this._getMount(path, false, mount => mount.local);
     if (mount && mount.local) return true;
     if (this._hasLocalProperties(mount, value)) {
@@ -2487,7 +2480,7 @@ class Modeler {
 
   forEachPlaceholderChild(path, iteratee) {
     const mount = this._getMount(path);
-    _.each(mount && mount.children, child => {
+    _.forEach(mount && mount.children, child => {
       if (child.placeholder) iteratee(child);
     });
   }
@@ -2499,11 +2492,10 @@ class Modeler {
       for (const key of Object.getOwnPropertyNames(object)) {
         if (RESERVED_VALUE_PROPERTY_NAMES[key] || Value.prototype.hasOwnProperty(key) ||
             /^\$_/.test(key)) continue;
-        // jshint loopfunc:true
+        // eslint-disable-next-line no-shadow
         const mount = this._findMount(mount => mount.Class === object.constructor);
-        // jshint loopfunc:false
         if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) continue;
-        if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
+        if (!(_.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
           const descriptor = Object.getOwnPropertyDescriptor(object, key);
           if ('value' in descriptor || !descriptor.get) {
             throw new Error(
@@ -2521,7 +2513,7 @@ class Modeler {
         }
         const value = object[key];
         if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
-            !(value instanceof Function || value instanceof Promise)) {
+            !(_.isFunction(value) || value instanceof Promise)) {
           value.$$$trussCheck = true;
           checkedObjects.push(value);
           this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
@@ -2537,7 +2529,7 @@ class Modeler {
 
 
 function computeValue(prop, propertyStats) {
-  // jshint validthis: true
+  /* eslint-disable no-invalid-this */
   if (this.$destroyed) return;
   // Touch this object, since a failed access to a missing property doesn't get captured as a
   // dependency.
@@ -2561,7 +2553,7 @@ function computeValue(prop, propertyStats) {
   } finally {
     currentPropertyFrozen = oldPropertyFrozen;
   }
-  // jshint validthis: false
+  /* eslint-enable no-invalid-this */
 }
 
 function wrapConnections(object, connections) {
@@ -2570,14 +2562,15 @@ function wrapConnections(object, connections) {
     if (descriptor instanceof Handle) return descriptor;
     if (_.isFunction(descriptor)) {
       const fn = function() {
+        /* eslint-disable no-invalid-this */
         object.$$touchThis();
         return wrapConnections(object, descriptor.call(this));
+        /* eslint-enable no-invalid-this */
       };
       fn.angularWatchSuppressed = true;
       return fn;
-    } else {
-      return wrapConnections(object, descriptor);
     }
+    return wrapConnections(object, descriptor);
   });
 }
 
@@ -2585,11 +2578,8 @@ function freeze(object) {
   if (object === null || object === undefined || !_.isObject(object) || Object.isFrozen(object) ||
       object.$truss) return object;
   object = Object.freeze(object);
-  if (_.isArray(object)) {
-    return _.map(object, value => freeze(value));
-  } else {
-    return _.mapValues(object, value => freeze(value));
-  }
+  if (_.isArray(object)) return _.map(object, value => freeze(value));
+  return _.mapValues(object, value => freeze(value));
 }
 
 class Transaction {
@@ -2697,7 +2687,7 @@ class Tree {
         this._coupler.couple(ref.path, operation);
         operation._coupled = true;
       }
-    }).catch(e => {});  // ignore exception, let onFailure handlers deal with it
+    }).catch(_.noop);  // ignore exception, let onFailure handlers deal with it
     return operation._disconnect;
   }
 
@@ -2709,7 +2699,7 @@ class Tree {
       this._coupler.decouple(ref.path, operation);  // will call back to _prune if necessary
       operation._coupled = false;
     }
-    this._dispatcher.end(operation, error).catch(e => {});
+    this._dispatcher.end(operation, error).catch(_.noop);
   }
 
   isReferenceReady(ref) {
@@ -2726,7 +2716,7 @@ class Tree {
         this._coupler.subscribe(query, operation, keysCallback);
         operation._coupled = true;
       }
-    }).catch(e => {});  // ignore exception, let onFailure handlers deal with it
+    }).catch(_.noop);  // ignore exception, let onFailure handlers deal with it
     return operation._disconnect;
   }
 
@@ -2737,7 +2727,7 @@ class Tree {
       this._coupler.unsubscribe(query, operation);  // will call back to _prune if necessary
       operation._coupled = false;
     }
-    this._dispatcher.end(operation, error).catch(e => {});
+    this._dispatcher.end(operation, error).catch(_.noop);
   }
 
   isQueryReady(query) {
@@ -2752,7 +2742,7 @@ class Tree {
 
   update(ref, method, values) {
     values = _.mapValues(values, value => escapeKeys(value));
-    let numValues = _.size(values);
+    const numValues = _.size(values);
     if (!numValues) return Promise.resolve();
     if (method === 'update' || method === 'override') {
       checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
@@ -2766,11 +2756,8 @@ class Tree {
     const set = numValues === 1;
     const operand = set ? values[''] : values;
     return this._dispatcher.execute('write', set ? 'set' : 'update', ref, operand, () => {
-      if (set) {
-        return this._bridge.set(url, operand, writeSerial);
-      } else {
-        return this._bridge.update(url, operand, writeSerial);
-      }
+      if (set) return this._bridge.set(url, operand, writeSerial);
+      return this._bridge.update(url, operand, writeSerial);
     });
   }
 
@@ -2810,7 +2797,7 @@ class Tree {
         return this._bridge.transaction(
           this._rootUrl + ref.path, oldValue, values, this._writeSerial
         ).then(result => {
-          _.each(result.snapshots, snapshot => this._integrateSnapshot(snapshot));
+          _.forEach(result.snapshots, snapshot => this._integrateSnapshot(snapshot));
           return result.committed ? txn : attemptTransaction();
         });
       });
@@ -2828,7 +2815,7 @@ class Tree {
     this._localWriteTimestamp = this._truss.now;
     const createdObjects = [];
     let numLocal = 0;
-    _.each(values, (value, path) => {
+    _.forEach(values, (value, path) => {
       const local = this._modeler.isLocal(path, value);
       if (local) numLocal++;
       const coupledDescendantPaths =
@@ -2872,7 +2859,7 @@ class Tree {
    */
   _createObject(path, key, parent) {
     if (!this._initialized && path !== '/') this.init();
-    let properties = {
+    const properties = {
       // We want Vue to wrap this; we'll make it non-enumerable in _fixObject.
       $parent: {value: parent, configurable: true, enumerable: true},
       $path: {value: path}
@@ -2921,7 +2908,7 @@ class Tree {
   }
 
   _integrateSnapshot(snap) {
-    _.each(this._localWrites, (writeSerial, path) => {
+    _.forEach(this._localWrites, (writeSerial, path) => {
       if (snap.writeSerial >= writeSerial) delete this._localWrites[path];
     });
     if (snap.exists) {
@@ -2993,7 +2980,7 @@ class Tree {
     // shouldn't risk being overwritten by actual Firebase data since that will rarely (never?) be
     // hidden.
     if (objectCreated) this._plantPlaceholders(object, path, true, createdObjects);
-    _.each(value, (item, escapedChildKey) => {
+    _.forEach(value, (item, escapedChildKey) => {
       this._plantValue(
         joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite,
         override, local, createdObjects
@@ -3002,7 +2989,7 @@ class Tree {
     if (objectCreated) {
       this._plantPlaceholders(object, path, false, createdObjects);
     } else {
-      _.each(object, (item, childKey) => {
+      _.forEach(object, (item, childKey) => {
         const escapedChildKey = escapeKey(childKey);
         if (!value.hasOwnProperty(escapedChildKey)) {
           this._prune(joinPath(path, escapedChildKey), null, remoteWrite);
@@ -3096,7 +3083,7 @@ class Tree {
     if (lockedDescendantPaths[object.$path]) return true;
     if (object.$overridden) delete object.$overridden;
     let coupledDescendantFound = false;
-    _.each(object, (value, key) => {
+    _.forEach(object, (value, key) => {
       let shouldDelete = true;
       let valueLocked;
       if (lockedDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
@@ -3126,7 +3113,7 @@ class Tree {
   }
 
   _getFirebasePropertyDescriptor(object, data, key) {
-    let descriptor = Object.getOwnPropertyDescriptor(data, key);
+    const descriptor = Object.getOwnPropertyDescriptor(data, key);
     if (descriptor) {
       if (!descriptor.enumerable) {
         throw new Error(
@@ -3197,14 +3184,14 @@ class Tree {
 function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
   // First, check all paths for correctness and absolutize them, since there could be a mix of
   // absolute paths and relative keys.
-  _.each(_.keys(values), path => {
+  _.forEach(_.keys(values), path => {
     if (path.charAt(0) === '/') {
       if (!(path === rootPath || rootPath === '/' ||
             _.startsWith(path, rootPath + '/') && path.length > rootPath.length + 1)) {
         throw new Error(`Update item is not a descendant of target ref: ${path}`);
       }
     } else {
-      if (path.indexOf('/') >= 0) {
+      if (_.includes(path, '/')) {
         throw new Error(`Update item deep path must be absolute, taken from a reference: ${path}`);
       }
       const absolutePath = joinPath(rootPath, escapeKey(path));
@@ -3217,7 +3204,7 @@ function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
   });
   // Then check for overlaps;
   const allPaths = _(values).keys().map(path => joinPath(path, '')).sortBy('length').value();
-  _.each(values, (value, path) => {
+  _.forEach(values, (value, path) => {
     for (const otherPath of allPaths) {
       if (otherPath.length > path.length) break;
       if (path !== otherPath && _.startsWith(path, otherPath)) {
@@ -3229,7 +3216,7 @@ function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
 
 function extractCommonPathPrefix(values) {
   let prefixSegments;
-  _.each(values, (value, path) => {
+  _.forEach(values, (value, path) => {
     const segments = path === '/' ? [''] : splitPath(path, true);
     if (prefixSegments) {
       let firstMismatchIndex = 0;
@@ -3249,7 +3236,7 @@ function extractCommonPathPrefix(values) {
 
 function relativizePaths(rootPath, values) {
   const offset = rootPath === '/' ? 1 : rootPath.length + 1;
-  _.each(_.keys(values), path => {
+  _.forEach(_.keys(values), path => {
     values[path.slice(offset)] = values[path];
     delete values[path];
   });

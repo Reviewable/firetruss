@@ -1,6 +1,7 @@
 export function wrapPromiseCallback(callback) {
   return function() {
     try {
+      // eslint-disable-next-line no-invalid-this
       return Promise.resolve(callback.apply(this, arguments));
     } catch (e) {
       return Promise.reject(e);

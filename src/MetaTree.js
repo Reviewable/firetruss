@@ -1,8 +1,6 @@
 import angular from './angularCompatibility.js';
 import Vue from 'vue';
-import _ from 'lodash';
 import Reference from './Reference.js';
-import {promiseFinally} from './utils/promises.js';
 
 
 export default class MetaTree {
@@ -95,11 +93,4 @@ export default class MetaTree {
       angular.digest();
     });
   }
-}
-
-function clear(object) {
-  for (const key in object) {
-    if (object.hasOwnProperty(key)) delete object[key];
-  }
-  return object;
 }

@@ -2,6 +2,7 @@ import {escapeKey, unescapeKey, makePathMatcher} from './utils/paths.js';
 
 import _ from 'lodash';
 
+/* eslint-disable no-use-before-define */
 
 const EMPTY_ANNOTATIONS = {};
 Object.freeze(EMPTY_ANNOTATIONS);
@@ -62,10 +63,9 @@ export class Handle {
         }
         if (_.isEmpty(mapping)) return;
         return mapping;
-      } else {
-        if (arg === undefined || arg === null) return;
-        escapedKeys.push(escapeKey(arg));
       }
+      if (arg === undefined || arg === null) return;
+      escapedKeys.push(escapeKey(arg));
     }
     return new Reference(
       this._tree, `${this._pathPrefix}/${escapedKeys.join('/')}`, this._annotations);
@@ -118,7 +118,7 @@ export class Query extends Handle {
 
   annotate(annotations) {
     return new Query(
-      this._tree, this._path, this._spec, _.extend({}, this._annotations, annotations));
+      this._tree, this._path, this._spec, _.assign({}, this._annotations, annotations));
   }
 
   _copyAndValidateSpec(spec) {
@@ -147,7 +147,7 @@ export class Query extends Handle {
           'Query "by" value must be a descendant of target reference: ' + spec.by);
       }
       childPath = childPath.slice(this._path.length).replace(/^\/?/, '');
-      if (childPath.indexOf('/') === -1) {
+      if (!_.includes(childPath, '/')) {
         throw new Error(
           'Query "by" value must not be a direct child of target reference: ' + spec.by);
       }
@@ -164,9 +164,7 @@ export class Query extends Handle {
 }
 
 
-// jshint latedef:false
 export class Reference extends Handle {
-// jshint latedef:nofunc
 
   constructor(tree, path, annotations) {
     super(tree, path, annotations);
@@ -178,7 +176,7 @@ export class Reference extends Handle {
   toString() {return this._path;}
 
   annotate(annotations) {
-    return new Reference(this._tree, this._path, _.extend({}, this._annotations, annotations));
+    return new Reference(this._tree, this._path, _.assign({}, this._annotations, annotations));
   }
 
   query(spec) {

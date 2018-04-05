@@ -37,7 +37,7 @@ class Value {
     return this.$key;
   }
   get $data() {return this;}
-  get $hidden() {return false;}
+  get $hidden() {return false;}  // eslint-disable-line lodash/prefer-constant
   get $empty() {return _.isEmpty(this.$data);}
   get $keys() {return _.keys(this.$data);}
   get $values() {return _.values(this.$data);}
@@ -45,7 +45,7 @@ class Value {
   get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
   get $now() {return this.$truss.now;}
   get $ready() {return this.$ref.ready;}
-  get $overridden() {return false;}
+  get $overridden() {return false;}  // eslint-disable-line lodash/prefer-constant
 
   $newKey() {return this.$truss.newKey();}
 
@@ -95,7 +95,7 @@ class Value {
       return subjectFn.call(this);
     }, callbackFn.bind(this), options);
 
-    unwatchAndRemoveFinalizer = () => {
+    unwatchAndRemoveFinalizer = () => {  // eslint-disable-line prefer-const
       unwatch();
       _.pull(this.$$finalizers, unwatchAndRemoveFinalizer);
     };
@@ -135,7 +135,7 @@ class Value {
   $commit(options, updateFn) {return this.$ref.commit(options, updateFn);}
 
   $$touchThis() {
-    // jshint expr:true
+    /* eslint-disable no-unused-expressions */
     if (this.__ob__) {
       this.__ob__.dep.depend();
     } else if (this.$parent) {
@@ -143,7 +143,7 @@ class Value {
     } else {
       this.$root;
     }
-    // jshint expr:false
+    /* eslint-enable no-unused-expressions */
   }
 
   get $$initializers() {
@@ -158,13 +158,13 @@ class Value {
     return this.$$finalizers;
   }
 
-  get $destroyed() {
+  get $destroyed() {  // eslint-disable-line lodash/prefer-constant
     return false;
   }
 }
 
 
-_.each(Value.prototype, (prop, name) => {
+_.forEach(Value.prototype, (prop, name) => {
   Object.defineProperty(
     Value.prototype, name, {value: prop, enumerable: false, configurable: false, writable: false});
 });
@@ -193,13 +193,13 @@ export default class Modeler {
 
   init(classes, rootAcceptable) {
     if (_.isPlainObject(classes)) {
-      _.each(classes, (Class, path) => {
+      _.forEach(classes, (Class, path) => {
         if (Class.$trussMount) return;
         Class.$$trussMount = Class.$$trussMount || [];
         Class.$$trussMount.push(path);
       });
       classes = _.values(classes);
-      _.each(classes, Class => {
+      _.forEach(classes, Class => {
         if (!Class.$trussMount && Class.$$trussMount) {
           Class.$trussMount = Class.$$trussMount;
           delete Class.$$trussMount;
@@ -207,11 +207,11 @@ export default class Modeler {
       });
     }
     classes = _.uniq(classes);
-    _.each(classes, Class => this._mountClass(Class, rootAcceptable));
+    _.forEach(classes, Class => this._mountClass(Class, rootAcceptable));
     this._decorateTrie(this._trie);
   }
 
-  destroy() {
+  destroy() {  // eslint-disable-line no-empty-function
   }
 
   _getMount(path, scaffold, predicate) {
@@ -241,7 +241,7 @@ export default class Modeler {
   }
 
   _decorateTrie(node) {
-    _.each(node.children, child => {
+    _.forEach(node.children, child => {
       this._decorateTrie(child);
       if (child.local || child.localDescendants) node.localDescendants = true;
     });
@@ -285,7 +285,7 @@ export default class Modeler {
     let mounts = Class.$trussMount;
     if (!mounts) throw new Error(`Class ${Class.name} lacks a $trussMount static property`);
     if (!_.isArray(mounts)) mounts = [mounts];
-    _.each(mounts, mount => {
+    _.forEach(mounts, mount => {
       if (_.isString(mount)) mount = {path: mount};
       if (!rootAcceptable && mount.path === '/') {
         throw new Error('Data root already accessed, too late to mount class');
@@ -296,7 +296,7 @@ export default class Modeler {
           throw new Error(`Invalid variable name: ${variable}`);
         }
         if (variable.charAt(0) === '$' && (
-            _.has(Value.prototype, variable) || RESERVED_VALUE_PROPERTY_NAMES[variable]
+          _.has(Value.prototype, variable) || RESERVED_VALUE_PROPERTY_NAMES[variable]
         )) {
           throw new Error(`Variable name conflicts with built-in property or method: ${variable}`);
         }
@@ -308,23 +308,24 @@ export default class Modeler {
           throw new Error(
             `Class ${Class.name} mounted at wildcard ${escapedKey} cannot be a placeholder`);
         }
-      } else {
-        if (!_.has(mount, 'placeholder')) mount.placeholder = {};
+      } else if (!_.has(mount, 'placeholder')) {
+        mount.placeholder = {};
       }
       const targetMount = this._getMount(mount.path.replace(/\$[^/]*/g, '$'), true);
       if (targetMount.matcher && (
-            targetMount.escapedKey === escapedKey ||
-            targetMount.escapedKey.charAt(0) === '$' && escapedKey.charAt(0) === '$')) {
+        targetMount.escapedKey === escapedKey ||
+        targetMount.escapedKey.charAt(0) === '$' && escapedKey.charAt(0) === '$'
+      )) {
         throw new Error(
           `Multiple classes mounted at ${mount.path}: ${targetMount.Class.name}, ${Class.name}`);
       }
-      _.extend(
+      _.assign(
         targetMount, {Class, matcher, computedProperties, escapedKey},
         _.pick(mount, 'placeholder', 'local', 'keysUnsafe', 'hidden'));
     });
-    _.each(allVariables, variable => {
+    _.forEach(allVariables, variable => {
       if (!Class.prototype[variable]) {
-        Object.defineProperty(Class.prototype, variable, {get: function() {
+        Object.defineProperty(Class.prototype, variable, {get() {
           return creatingObjectProperties ?
             creatingObjectProperties[variable] && creatingObjectProperties[variable].value :
             undefined;
@@ -359,7 +360,7 @@ export default class Modeler {
     if (mount.hidden) properties.$hidden = {value: true};
     if (mount.computedProperties) {
       properties.$$computedPropertyWatchers = {value: [], configurable: true, enumerable: false};
-      _.each(mount.computedProperties, prop => {
+      _.forEach(mount.computedProperties, prop => {
         properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop);
       });
       // Hack to change order of computed property watchers.  By flipping their ids to be negative,
@@ -380,13 +381,13 @@ export default class Modeler {
   }
 
   _wrapProperties(object) {
-    _.each(object, (value, key) => {
+    _.forEach(object, (value, key) => {
       const valueKey = '$_' + key;
       Object.defineProperties(object, {
         [valueKey]: {value, writable: true},
         [key]: {
           get: () => object[valueKey],
-          set: value => {object[valueKey] = value; angular.digest();},
+          set: arg => {object[valueKey] = arg; angular.digest();},
           enumerable: true, configurable: true
         }
       });
@@ -460,11 +461,11 @@ export default class Modeler {
     });
     return {
       enumerable: true, configurable: true,
-      get: function() {
+      get() {
         if (value instanceof ErrorWrapper) throw value.error;
         return value;
       },
-      set: function(newValue) {
+      set(newValue) {
         if (!writeAllowed) throw new Error(`You cannot set a computed property: ${prop.name}`);
         value = newValue;
       }
@@ -487,6 +488,7 @@ export default class Modeler {
   }
 
   isLocal(path, value) {
+    // eslint-disable-next-line no-shadow
     const mount = this._getMount(path, false, mount => mount.local);
     if (mount && mount.local) return true;
     if (this._hasLocalProperties(mount, value)) {
@@ -509,7 +511,7 @@ export default class Modeler {
 
   forEachPlaceholderChild(path, iteratee) {
     const mount = this._getMount(path);
-    _.each(mount && mount.children, child => {
+    _.forEach(mount && mount.children, child => {
       if (child.placeholder) iteratee(child);
     });
   }
@@ -521,11 +523,10 @@ export default class Modeler {
       for (const key of Object.getOwnPropertyNames(object)) {
         if (RESERVED_VALUE_PROPERTY_NAMES[key] || Value.prototype.hasOwnProperty(key) ||
             /^\$_/.test(key)) continue;
-        // jshint loopfunc:true
+        // eslint-disable-next-line no-shadow
         const mount = this._findMount(mount => mount.Class === object.constructor);
-        // jshint loopfunc:false
         if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) continue;
-        if (!(Array.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
+        if (!(_.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
           const descriptor = Object.getOwnPropertyDescriptor(object, key);
           if ('value' in descriptor || !descriptor.get) {
             throw new Error(
@@ -543,7 +544,7 @@ export default class Modeler {
         }
         const value = object[key];
         if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
-            !(value instanceof Function || value instanceof Promise)) {
+            !(_.isFunction(value) || value instanceof Promise)) {
           value.$$$trussCheck = true;
           checkedObjects.push(value);
           this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
@@ -559,7 +560,7 @@ export default class Modeler {
 
 
 function computeValue(prop, propertyStats) {
-  // jshint validthis: true
+  /* eslint-disable no-invalid-this */
   if (this.$destroyed) return;
   // Touch this object, since a failed access to a missing property doesn't get captured as a
   // dependency.
@@ -583,7 +584,7 @@ function computeValue(prop, propertyStats) {
   } finally {
     currentPropertyFrozen = oldPropertyFrozen;
   }
-  // jshint validthis: false
+  /* eslint-enable no-invalid-this */
 }
 
 function wrapConnections(object, connections) {
@@ -592,14 +593,15 @@ function wrapConnections(object, connections) {
     if (descriptor instanceof Handle) return descriptor;
     if (_.isFunction(descriptor)) {
       const fn = function() {
+        /* eslint-disable no-invalid-this */
         object.$$touchThis();
         return wrapConnections(object, descriptor.call(this));
+        /* eslint-enable no-invalid-this */
       };
       fn.angularWatchSuppressed = true;
       return fn;
-    } else {
-      return wrapConnections(object, descriptor);
     }
+    return wrapConnections(object, descriptor);
   });
 }
 
@@ -607,9 +609,6 @@ function freeze(object) {
   if (object === null || object === undefined || !_.isObject(object) || Object.isFrozen(object) ||
       object.$truss) return object;
   object = Object.freeze(object);
-  if (_.isArray(object)) {
-    return _.map(object, value => freeze(value));
-  } else {
-    return _.mapValues(object, value => freeze(value));
-  }
+  if (_.isArray(object)) return _.map(object, value => freeze(value));
+  return _.mapValues(object, value => freeze(value));
 }

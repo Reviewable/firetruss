@@ -86,13 +86,13 @@ class Operation {
   _markReady(ending) {
     this._ready = true;
     if (!ending) this._tries = 0;
-    _.each(this._slowHandles, handle => handle.cancel());
+    _.forEach(this._slowHandles, handle => handle.cancel());
   }
 
   _clearReady() {
     this._ready = false;
     this._startTimestamp = Date.now();
-    _.each(this._slowHandles, handle => handle.initiate());
+    _.forEach(this._slowHandles, handle => handle.initiate());
   }
 
   _incrementTries() {
@@ -109,7 +109,7 @@ export default class Dispatcher {
   }
 
   intercept(interceptKey, callbacks) {
-    if (!_.contains(INTERCEPT_KEYS, interceptKey)) {
+    if (!_.includes(INTERCEPT_KEYS, interceptKey)) {
       throw new Error('Unknown intercept operation type: ' + interceptKey);
     }
     const badCallbackKeys =
@@ -141,7 +141,7 @@ export default class Dispatcher {
   }
 
   _removeCallbacks(interceptKey, wrappedCallbacks) {
-    _.each(wrappedCallbacks, (wrappedCallback, stage) => {
+    _.forEach(wrappedCallbacks, (wrappedCallback, stage) => {
       this._removeCallback(stage, interceptKey, wrappedCallback);
     });
   }
@@ -242,7 +242,7 @@ export default class Dispatcher {
     return this._bridge.probeError(operation.error).then(() => {
       if (onFailureCallbacks) {
         setTimeout(() => {
-          _.each(onFailureCallbacks, onFailure => onFailure(operation));
+          _.forEach(onFailureCallbacks, onFailure => onFailure(operation));
         }, 0);
       }
       return Promise.reject(operation.error);

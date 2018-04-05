@@ -6,6 +6,7 @@ const path = require('path');
 
 module.exports = function(grunt) {
   grunt.registerMultiTask('buble', function() {
+    /* eslint-disable no-invalid-this */
     this.files.forEach(file => {
       const options = this.options();
       if (file.src.length > 1) grunt.log.fatal('only one src file accepted per dest');
@@ -24,7 +25,7 @@ module.exports = function(grunt) {
           map = composeSourceMap(grunt.file.readJSON(mapSrc), map);
         }
         const mapDest = (grunt.util.kindOf(options.sourceMapName) === 'function' ?
-            options.sourceMapName(src) : options.sourceMapName) || (dest + '.map');
+          options.sourceMapName(src) : options.sourceMapName) || (dest + '.map');
         grunt.file.write(mapDest, JSON.stringify(map));
       }
     });

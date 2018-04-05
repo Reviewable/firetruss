@@ -115,7 +115,7 @@ export default class Tree {
         this._coupler.couple(ref.path, operation);
         operation._coupled = true;
       }
-    }).catch(e => {});  // ignore exception, let onFailure handlers deal with it
+    }).catch(_.noop);  // ignore exception, let onFailure handlers deal with it
     return operation._disconnect;
   }
 
@@ -127,7 +127,7 @@ export default class Tree {
       this._coupler.decouple(ref.path, operation);  // will call back to _prune if necessary
       operation._coupled = false;
     }
-    this._dispatcher.end(operation, error).catch(e => {});
+    this._dispatcher.end(operation, error).catch(_.noop);
   }
 
   isReferenceReady(ref) {
@@ -144,7 +144,7 @@ export default class Tree {
         this._coupler.subscribe(query, operation, keysCallback);
         operation._coupled = true;
       }
-    }).catch(e => {});  // ignore exception, let onFailure handlers deal with it
+    }).catch(_.noop);  // ignore exception, let onFailure handlers deal with it
     return operation._disconnect;
   }
 
@@ -155,7 +155,7 @@ export default class Tree {
       this._coupler.unsubscribe(query, operation);  // will call back to _prune if necessary
       operation._coupled = false;
     }
-    this._dispatcher.end(operation, error).catch(e => {});
+    this._dispatcher.end(operation, error).catch(_.noop);
   }
 
   isQueryReady(query) {
@@ -170,7 +170,7 @@ export default class Tree {
 
   update(ref, method, values) {
     values = _.mapValues(values, value => escapeKeys(value));
-    let numValues = _.size(values);
+    const numValues = _.size(values);
     if (!numValues) return Promise.resolve();
     if (method === 'update' || method === 'override') {
       checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
@@ -184,11 +184,8 @@ export default class Tree {
     const set = numValues === 1;
     const operand = set ? values[''] : values;
     return this._dispatcher.execute('write', set ? 'set' : 'update', ref, operand, () => {
-      if (set) {
-        return this._bridge.set(url, operand, writeSerial);
-      } else {
-        return this._bridge.update(url, operand, writeSerial);
-      }
+      if (set) return this._bridge.set(url, operand, writeSerial);
+      return this._bridge.update(url, operand, writeSerial);
     });
   }
 
@@ -228,7 +225,7 @@ export default class Tree {
         return this._bridge.transaction(
           this._rootUrl + ref.path, oldValue, values, this._writeSerial
         ).then(result => {
-          _.each(result.snapshots, snapshot => this._integrateSnapshot(snapshot));
+          _.forEach(result.snapshots, snapshot => this._integrateSnapshot(snapshot));
           return result.committed ? txn : attemptTransaction();
         });
       });
@@ -246,7 +243,7 @@ export default class Tree {
     this._localWriteTimestamp = this._truss.now;
     const createdObjects = [];
     let numLocal = 0;
-    _.each(values, (value, path) => {
+    _.forEach(values, (value, path) => {
       const local = this._modeler.isLocal(path, value);
       if (local) numLocal++;
       const coupledDescendantPaths =
@@ -290,7 +287,7 @@ export default class Tree {
    */
   _createObject(path, key, parent) {
     if (!this._initialized && path !== '/') this.init();
-    let properties = {
+    const properties = {
       // We want Vue to wrap this; we'll make it non-enumerable in _fixObject.
       $parent: {value: parent, configurable: true, enumerable: true},
       $path: {value: path}
@@ -339,7 +336,7 @@ export default class Tree {
   }
 
   _integrateSnapshot(snap) {
-    _.each(this._localWrites, (writeSerial, path) => {
+    _.forEach(this._localWrites, (writeSerial, path) => {
       if (snap.writeSerial >= writeSerial) delete this._localWrites[path];
     });
     if (snap.exists) {
@@ -411,7 +408,7 @@ export default class Tree {
     // shouldn't risk being overwritten by actual Firebase data since that will rarely (never?) be
     // hidden.
     if (objectCreated) this._plantPlaceholders(object, path, true, createdObjects);
-    _.each(value, (item, escapedChildKey) => {
+    _.forEach(value, (item, escapedChildKey) => {
       this._plantValue(
         joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite,
         override, local, createdObjects
@@ -420,7 +417,7 @@ export default class Tree {
     if (objectCreated) {
       this._plantPlaceholders(object, path, false, createdObjects);
     } else {
-      _.each(object, (item, childKey) => {
+      _.forEach(object, (item, childKey) => {
         const escapedChildKey = escapeKey(childKey);
         if (!value.hasOwnProperty(escapedChildKey)) {
           this._prune(joinPath(path, escapedChildKey), null, remoteWrite);
@@ -514,7 +511,7 @@ export default class Tree {
     if (lockedDescendantPaths[object.$path]) return true;
     if (object.$overridden) delete object.$overridden;
     let coupledDescendantFound = false;
-    _.each(object, (value, key) => {
+    _.forEach(object, (value, key) => {
       let shouldDelete = true;
       let valueLocked;
       if (lockedDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
@@ -544,7 +541,7 @@ export default class Tree {
   }
 
   _getFirebasePropertyDescriptor(object, data, key) {
-    let descriptor = Object.getOwnPropertyDescriptor(data, key);
+    const descriptor = Object.getOwnPropertyDescriptor(data, key);
     if (descriptor) {
       if (!descriptor.enumerable) {
         throw new Error(
@@ -615,14 +612,14 @@ export default class Tree {
 export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
   // First, check all paths for correctness and absolutize them, since there could be a mix of
   // absolute paths and relative keys.
-  _.each(_.keys(values), path => {
+  _.forEach(_.keys(values), path => {
     if (path.charAt(0) === '/') {
       if (!(path === rootPath || rootPath === '/' ||
             _.startsWith(path, rootPath + '/') && path.length > rootPath.length + 1)) {
         throw new Error(`Update item is not a descendant of target ref: ${path}`);
       }
     } else {
-      if (path.indexOf('/') >= 0) {
+      if (_.includes(path, '/')) {
         throw new Error(`Update item deep path must be absolute, taken from a reference: ${path}`);
       }
       const absolutePath = joinPath(rootPath, escapeKey(path));
@@ -635,7 +632,7 @@ export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
   });
   // Then check for overlaps;
   const allPaths = _(values).keys().map(path => joinPath(path, '')).sortBy('length').value();
-  _.each(values, (value, path) => {
+  _.forEach(values, (value, path) => {
     for (const otherPath of allPaths) {
       if (otherPath.length > path.length) break;
       if (path !== otherPath && _.startsWith(path, otherPath)) {
@@ -647,7 +644,7 @@ export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
 
 export function extractCommonPathPrefix(values) {
   let prefixSegments;
-  _.each(values, (value, path) => {
+  _.forEach(values, (value, path) => {
     const segments = path === '/' ? [''] : splitPath(path, true);
     if (prefixSegments) {
       let firstMismatchIndex = 0;
@@ -667,7 +664,7 @@ export function extractCommonPathPrefix(values) {
 
 export function relativizePaths(rootPath, values) {
   const offset = rootPath === '/' ? 1 : rootPath.length + 1;
-  _.each(_.keys(values), path => {
+  _.forEach(_.keys(values), path => {
     values[path.slice(offset)] = values[path];
     delete values[path];
   });

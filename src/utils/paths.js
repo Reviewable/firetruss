@@ -9,7 +9,7 @@ const maxNumPathMatchers = 1000;
 
 export function escapeKey(key) {
   if (!key) return key;
-  return key.toString().replace(/[\\\.\$\#\[\]\/]/g, function(char) {
+  return key.toString().replace(/[\\.$#[\]/]/g, function(char) {
     return '\\' + char.charCodeAt(0).toString(16);
   });
 }
@@ -67,15 +67,16 @@ class PathMatcher {
     this.variables = [];
     const prefixMatch = _.endsWith(pattern, '/$*');
     if (prefixMatch) pattern = pattern.slice(0, -3);
-    const pathTemplate = pattern.replace(/\/\$[^\/]*/g, match => {
+    const pathTemplate = pattern.replace(/\/\$[^/]*/g, match => {
       if (match.length > 1) this.variables.push(match.slice(1));
       return '\u0001';
     });
     Object.freeze(this.variables);
-    if (/[.$#\[\]]|\\(?![0-9a-f][0-9a-f])/i.test(pathTemplate)) {
+    if (/[.$#[\]]|\\(?![0-9a-f][0-9a-f])/i.test(pathTemplate)) {
       throw new Error('Path pattern has unescaped keys: ' + pattern);
     }
     this._regex = new RegExp(
+      // eslint-disable-next-line no-control-regex
       '^' + pathTemplate.replace(/\u0001/g, '/([^/]+)') + (prefixMatch ? '($|/)' : '$'));
   }
 

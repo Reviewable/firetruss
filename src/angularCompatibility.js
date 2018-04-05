@@ -18,8 +18,8 @@ const angularProxy = {
 if (angularProxy.active) {
   initAngular();
 } else {
-  ['digest', 'watch', 'defineModule', 'debounceDigest'].forEach(method => {
-    angularProxy[method] = noop;
+  _.forEach(['digest', 'watch', 'defineModule', 'debounceDigest'], method => {
+    angularProxy[method] = _.noop;
   });
 }
 
@@ -66,7 +66,5 @@ function initAngular() {
     ]);
   }]);
 }
-
-function noop() {}
 
 export default angularProxy;
