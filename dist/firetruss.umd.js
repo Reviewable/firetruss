@@ -2503,7 +2503,7 @@
 	    Object.defineProperty(
 	      Class.prototype, name$1, Object.getOwnPropertyDescriptor(Value.prototype, name$1));
 	  }
-	  return computedProperties && _.values(computedProperties);
+	  return computedProperties;
 	};
 
 	Modeler.prototype._mountClass = function _mountClass (Class, rootAcceptable) {
@@ -2592,21 +2592,8 @@
 	  }
 	  if (mount.hidden) { properties.$hidden = {value: true}; }
 	  if (mount.computedProperties) {
-	    properties.$$computedPropertyWatchers = {value: [], configurable: true, enumerable: false};
 	    _.forEach(mount.computedProperties, function (prop) {
 	      properties[prop.name] = this$1._buildComputedPropertyDescriptor(object, prop);
-	    });
-	    // Hack to change order of computed property watchers.By flipping their ids to be negative,
-	    // we ensure that they will settle before all other watchers, and also that children
-	    // properties will settle before their parents since values are often aggregated upwards.
-	    // By reversing the order of the assigned IDs, we maintain the intra-class declaration order
-	    // when recomputing, which often follows dependency order and reduces recomputation.
-	    object.$$initializers.push(function (vue) {
-	      var watcherIds = _.pluck(object.$$computedPropertyWatchers, 'id');
-	      _.forEach(object.$$computedPropertyWatchers, function (watcher) {
-	        watcher.id = -watcherIds.pop();
-	      });
-	      delete object.$$computedPropertyWatchers;
 	    });
 	  }
 
@@ -2661,7 +2648,11 @@
 	        if (newValue instanceof ErrorWrapper) { throw newValue.error; }
 	      }
 	    }, {immediate: true});// use immediate:true since watcher will run computeValue anyway
-	    object.$$computedPropertyWatchers.push(_.last(vue._watchers));
+	    // Hack to change order of computed property watchers.By flipping their ids to be negative,
+	    // we ensure that they will settle before all other watchers, and also that children
+	    // properties will settle before their parents since values are often aggregated upwards.
+	    var watcher = _.last(vue._watchers);
+	    watcher.id = -watcher.id;
 
 	    function update(newValue) {
 	      if (newValue instanceof FrozenWrapper) {

@@ -276,7 +276,7 @@ export default class Modeler {
       Object.defineProperty(
         Class.prototype, name, Object.getOwnPropertyDescriptor(Value.prototype, name));
     }
-    return computedProperties && _.values(computedProperties);
+    return computedProperties;
   }
 
   _mountClass(Class, rootAcceptable) {
@@ -359,21 +359,8 @@ export default class Modeler {
     }
     if (mount.hidden) properties.$hidden = {value: true};
     if (mount.computedProperties) {
-      properties.$$computedPropertyWatchers = {value: [], configurable: true, enumerable: false};
       _.forEach(mount.computedProperties, prop => {
         properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop);
-      });
-      // Hack to change order of computed property watchers.  By flipping their ids to be negative,
-      // we ensure that they will settle before all other watchers, and also that children
-      // properties will settle before their parents since values are often aggregated upwards.
-      // By reversing the order of the assigned IDs, we maintain the intra-class declaration order
-      // when recomputing, which often follows dependency order and reduces recomputation.
-      object.$$initializers.push(vue => {
-        const watcherIds = _.pluck(object.$$computedPropertyWatchers, 'id');
-        _.forEach(object.$$computedPropertyWatchers, watcher => {
-          watcher.id = -watcherIds.pop();
-        });
-        delete object.$$computedPropertyWatchers;
       });
     }
 
@@ -428,7 +415,11 @@ export default class Modeler {
           if (newValue instanceof ErrorWrapper) throw newValue.error;
         }
       }, {immediate: true});  // use immediate:true since watcher will run computeValue anyway
-      object.$$computedPropertyWatchers.push(_.last(vue._watchers));
+      // Hack to change order of computed property watchers.  By flipping their ids to be negative,
+      // we ensure that they will settle before all other watchers, and also that children
+      // properties will settle before their parents since values are often aggregated upwards.
+      const watcher = _.last(vue._watchers);
+      watcher.id = -watcher.id;
 
       function update(newValue) {
         if (newValue instanceof FrozenWrapper) {
