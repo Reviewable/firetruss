@@ -734,7 +734,6 @@ class Handle {
           const subMapping = subRef.children.apply(subRef, rest);
           if (subMapping) mapping[key] = subMapping;
         }
-        if (_.isEmpty(mapping)) return;
         return mapping;
       }
       if (arg === undefined || arg === null) return;
