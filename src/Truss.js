@@ -216,6 +216,10 @@ export default class Truss {
     return promise;
   }
 
+  throttleRemoteDataUpdates(delay) {
+    this._tree.throttleRemoteDataUpdates(delay);
+  }
+
   checkObjectsForRogueProperties() {
     this._tree.checkVueObject(this._tree.root, '/');
   }

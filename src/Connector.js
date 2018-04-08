@@ -68,8 +68,12 @@ export default class Connector {
   }
 
   _linkScopeProperties() {
-    const dataProperties = _.mapValues(this._connections, (descriptor, key) => ({
-      configurable: true, enumerable: false, get: () => this._vue.values[key]
+    const dataProperties = _.mapValues(this._connections, (unused, key) => ({
+      configurable: true, enumerable: false, get: () => {
+        const descriptor = this._vue.descriptors[key];
+        if (descriptor instanceof Reference) return descriptor.value;
+        return this._vue.values[key];
+      }
     }));
     Object.defineProperties(this._data, dataProperties);
     if (this._scope) {
@@ -148,10 +152,10 @@ export default class Connector {
     Vue.set(this._vue.descriptors, key, descriptor);
     angular.digest();
     if (!descriptor) return;
+    Vue.set(this._vue.values, key, undefined);
     if (descriptor instanceof Reference) {
       Vue.set(this._vue.refs, key, descriptor);
-      const updateFn = this._updateRefValue.bind(this, key);
-      this._disconnects[key] = this._tree.connectReference(descriptor, updateFn, this._method);
+      this._disconnects[key] = this._tree.connectReference(descriptor, this._method);
     } else if (descriptor instanceof Query) {
       Vue.set(this._vue.refs, key, descriptor);
       const updateFn = this._updateQueryValue.bind(this, key);

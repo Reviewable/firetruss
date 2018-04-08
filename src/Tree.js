@@ -101,14 +101,10 @@ export default class Tree {
     this._vue.$destroy();
   }
 
-  connectReference(ref, valueCallback, method) {
+  connectReference(ref, method) {
     this._checkHandle(ref);
     const operation = this._dispatcher.createOperation('read', method, ref);
     let unwatch;
-    if (valueCallback) {
-      unwatch = this._vue.$watch(
-        this.getObject.bind(this, ref.path), valueCallback, {immediate: true});
-    }
     operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
     this._dispatcher.begin(operation).then(() => {
       if (operation.running && !operation._disconnected) {
@@ -166,6 +162,10 @@ export default class Tree {
     if (!handle.belongsTo(this._truss)) {
       throw new Error('Reference belongs to another Truss instance');
     }
+  }
+
+  throttleRemoteDataUpdates(delay) {
+    this._coupler.throttleSnapshots(delay);
   }
 
   update(ref, method, values) {

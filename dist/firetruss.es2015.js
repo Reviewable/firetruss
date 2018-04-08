@@ -1004,8 +1004,12 @@ class Connector {
   }
 
   _linkScopeProperties() {
-    const dataProperties = _.mapValues(this._connections, (descriptor, key) => ({
-      configurable: true, enumerable: false, get: () => this._vue.values[key]
+    const dataProperties = _.mapValues(this._connections, (unused, key) => ({
+      configurable: true, enumerable: false, get: () => {
+        const descriptor = this._vue.descriptors[key];
+        if (descriptor instanceof Reference) return descriptor.value;
+        return this._vue.values[key];
+      }
     }));
     Object.defineProperties(this._data, dataProperties);
     if (this._scope) {
@@ -1084,10 +1088,10 @@ class Connector {
     Vue.set(this._vue.descriptors, key, descriptor);
     angularProxy.digest();
     if (!descriptor) return;
+    Vue.set(this._vue.values, key, undefined);
     if (descriptor instanceof Reference) {
       Vue.set(this._vue.refs, key, descriptor);
-      const updateFn = this._updateRefValue.bind(this, key);
-      this._disconnects[key] = this._tree.connectReference(descriptor, updateFn, this._method);
+      this._disconnects[key] = this._tree.connectReference(descriptor, this._method);
     } else if (descriptor instanceof Query) {
       Vue.set(this._vue.refs, key, descriptor);
       const updateFn = this._updateQueryValue.bind(this, key);
@@ -1634,23 +1638,25 @@ class QueryHandler {
   }
 
   _handleSnapshot(snap) {
-    // Order is important here: first couple any new subpaths so _handleSnapshot will update the
-    // tree, then tell the client to update its keys, pulling values from the tree.
-    if (!this._listeners.length || !this._listening) return;
-    const updatedKeys = this._updateKeys(snap);
-    this._coupler._applySnapshot(snap);
-    if (!this.ready) {
-      this.ready = true;
-      angularProxy.digest();
-      for (const listener of this._listeners) {
-        this._coupler._dispatcher.markReady(listener.operation);
+    this._coupler._queueSnapshotCallback(() => {
+      // Order is important here: first couple any new subpaths so _handleSnapshot will update the
+      // tree, then tell the client to update its keys, pulling values from the tree.
+      if (!this._listeners.length || !this._listening) return;
+      const updatedKeys = this._updateKeys(snap);
+      this._coupler._applySnapshot(snap);
+      if (!this.ready) {
+        this.ready = true;
+        angularProxy.digest();
+        for (const listener of this._listeners) {
+          this._coupler._dispatcher.markReady(listener.operation);
+        }
       }
-    }
-    if (updatedKeys) {
-      for (const listener of this._listeners) {
-        if (listener.keysCallback) listener.keysCallback(updatedKeys);
+      if (updatedKeys) {
+        for (const listener of this._listeners) {
+          if (listener.keysCallback) listener.keysCallback(updatedKeys);
+        }
       }
-    }
+    });
   }
 
   _updateKeys(snap) {
@@ -1758,16 +1764,18 @@ class Node {
   }
 
   _handleSnapshot(snap) {
-    if (!this.listening || !this._coupler.isTrunkCoupled(snap.path)) return;
-    this._coupler._applySnapshot(snap);
-    if (!this.ready && snap.path === this.path) {
-      this.ready = true;
-      angularProxy.digest();
-      this.unlisten(true);
-      this._forAllDescendants(node => {
-        for (const op of node.operations) this._coupler._dispatcher.markReady(op);
-      });
-    }
+    this._coupler._queueSnapshotCallback(() => {
+      if (!this.listening || !this._coupler.isTrunkCoupled(snap.path)) return;
+      this._coupler._applySnapshot(snap);
+      if (!this.ready && snap.path === this.path) {
+        this.ready = true;
+        angularProxy.digest();
+        this.unlisten(true);
+        this._forAllDescendants(node => {
+          for (const op of node.operations) this._coupler._dispatcher.markReady(op);
+        });
+      }
+    });
   }
 
   _handleError(error) {
@@ -1817,6 +1825,8 @@ class Coupler {
     this._bridge = bridge;
     this._dispatcher = dispatcher;
     this._applySnapshot = applySnapshot;
+    this._pendingSnapshotCallbacks = [];
+    this._throttled = {processPendingSnapshots: this._processPendingSnapshots};
     this._prunePath = prunePath;
     this._vue = new Vue({data: {root: undefined, queryHandlers: {}}});
     this._nodeIndex = Object.create(null);
@@ -1974,6 +1984,23 @@ class Coupler {
     return queryHandler && queryHandler.ready;
   }
 
+  _queueSnapshotCallback(callback) {
+    this._pendingSnapshotCallbacks.push(callback);
+    this._throttled.processPendingSnapshots.call(this);
+  }
+
+  _processPendingSnapshots() {
+    for (const callback of this._pendingSnapshotCallbacks) callback();
+    this._pendingSnapshotCallbacks.splice(0, Infinity);
+  }
+
+  throttleSnapshots(delay) {
+    if (delay) {
+      this._throttled.processPendingSnapshots = _.throttle(this._processPendingSnapshots, delay);
+    } else {
+      this._throttled.processPendingSnapshots = this._processPendingSnapshots;
+    }
+  }
 }
 
 // These are defined separately for each object so they're not included in Value below.
@@ -2663,14 +2690,10 @@ class Tree {
     this._vue.$destroy();
   }
 
-  connectReference(ref, valueCallback, method) {
+  connectReference(ref, method) {
     this._checkHandle(ref);
     const operation = this._dispatcher.createOperation('read', method, ref);
     let unwatch;
-    if (valueCallback) {
-      unwatch = this._vue.$watch(
-        this.getObject.bind(this, ref.path), valueCallback, {immediate: true});
-    }
     operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
     this._dispatcher.begin(operation).then(() => {
       if (operation.running && !operation._disconnected) {
@@ -2728,6 +2751,10 @@ class Tree {
     if (!handle.belongsTo(this._truss)) {
       throw new Error('Reference belongs to another Truss instance');
     }
+  }
+
+  throttleRemoteDataUpdates(delay) {
+    this._coupler.throttleSnapshots(delay);
   }
 
   update(ref, method, values) {
@@ -3442,6 +3469,10 @@ class Truss {
     });
     promise = promiseCancel(promise, cleanup);
     return promise;
+  }
+
+  throttleRemoteDataUpdates(delay) {
+    this._tree.throttleRemoteDataUpdates(delay);
   }
 
   checkObjectsForRogueProperties() {

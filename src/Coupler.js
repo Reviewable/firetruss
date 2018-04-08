@@ -49,23 +49,25 @@ class QueryHandler {
   }
 
   _handleSnapshot(snap) {
-    // Order is important here: first couple any new subpaths so _handleSnapshot will update the
-    // tree, then tell the client to update its keys, pulling values from the tree.
-    if (!this._listeners.length || !this._listening) return;
-    const updatedKeys = this._updateKeys(snap);
-    this._coupler._applySnapshot(snap);
-    if (!this.ready) {
-      this.ready = true;
-      angular.digest();
-      for (const listener of this._listeners) {
-        this._coupler._dispatcher.markReady(listener.operation);
+    this._coupler._queueSnapshotCallback(() => {
+      // Order is important here: first couple any new subpaths so _handleSnapshot will update the
+      // tree, then tell the client to update its keys, pulling values from the tree.
+      if (!this._listeners.length || !this._listening) return;
+      const updatedKeys = this._updateKeys(snap);
+      this._coupler._applySnapshot(snap);
+      if (!this.ready) {
+        this.ready = true;
+        angular.digest();
+        for (const listener of this._listeners) {
+          this._coupler._dispatcher.markReady(listener.operation);
+        }
       }
-    }
-    if (updatedKeys) {
-      for (const listener of this._listeners) {
-        if (listener.keysCallback) listener.keysCallback(updatedKeys);
+      if (updatedKeys) {
+        for (const listener of this._listeners) {
+          if (listener.keysCallback) listener.keysCallback(updatedKeys);
+        }
       }
-    }
+    });
   }
 
   _updateKeys(snap) {
@@ -173,16 +175,18 @@ class Node {
   }
 
   _handleSnapshot(snap) {
-    if (!this.listening || !this._coupler.isTrunkCoupled(snap.path)) return;
-    this._coupler._applySnapshot(snap);
-    if (!this.ready && snap.path === this.path) {
-      this.ready = true;
-      angular.digest();
-      this.unlisten(true);
-      this._forAllDescendants(node => {
-        for (const op of node.operations) this._coupler._dispatcher.markReady(op);
-      });
-    }
+    this._coupler._queueSnapshotCallback(() => {
+      if (!this.listening || !this._coupler.isTrunkCoupled(snap.path)) return;
+      this._coupler._applySnapshot(snap);
+      if (!this.ready && snap.path === this.path) {
+        this.ready = true;
+        angular.digest();
+        this.unlisten(true);
+        this._forAllDescendants(node => {
+          for (const op of node.operations) this._coupler._dispatcher.markReady(op);
+        });
+      }
+    });
   }
 
   _handleError(error) {
@@ -232,6 +236,8 @@ export default class Coupler {
     this._bridge = bridge;
     this._dispatcher = dispatcher;
     this._applySnapshot = applySnapshot;
+    this._pendingSnapshotCallbacks = [];
+    this._throttled = {processPendingSnapshots: this._processPendingSnapshots};
     this._prunePath = prunePath;
     this._vue = new Vue({data: {root: undefined, queryHandlers: {}}});
     this._nodeIndex = Object.create(null);
@@ -389,5 +395,22 @@ export default class Coupler {
     return queryHandler && queryHandler.ready;
   }
 
+  _queueSnapshotCallback(callback) {
+    this._pendingSnapshotCallbacks.push(callback);
+    this._throttled.processPendingSnapshots.call(this);
+  }
+
+  _processPendingSnapshots() {
+    for (const callback of this._pendingSnapshotCallbacks) callback();
+    this._pendingSnapshotCallbacks.splice(0, Infinity);
+  }
+
+  throttleSnapshots(delay) {
+    if (delay) {
+      this._throttled.processPendingSnapshots = _.throttle(this._processPendingSnapshots, delay);
+    } else {
+      this._throttled.processPendingSnapshots = this._processPendingSnapshots;
+    }
+  }
 }
 

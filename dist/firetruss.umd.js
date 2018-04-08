@@ -1145,8 +1145,12 @@
 	Connector.prototype._linkScopeProperties = function _linkScopeProperties () {
 	    var this$1 = this;
 
-	  var dataProperties = _.mapValues(this._connections, function (descriptor, key) { return ({
-	    configurable: true, enumerable: false, get: function () { return this$1._vue.values[key]; }
+	  var dataProperties = _.mapValues(this._connections, function (unused, key) { return ({
+	    configurable: true, enumerable: false, get: function () {
+	      var descriptor = this$1._vue.descriptors[key];
+	      if (descriptor instanceof Reference) { return descriptor.value; }
+	      return this$1._vue.values[key];
+	    }
 	  }); });
 	  Object.defineProperties(this._data, dataProperties);
 	  if (this._scope) {
@@ -1231,14 +1235,14 @@
 	  Vue.set(this._vue.descriptors, key, descriptor);
 	  angularProxy.digest();
 	  if (!descriptor) { return; }
+	  Vue.set(this._vue.values, key, undefined);
 	  if (descriptor instanceof Reference) {
 	    Vue.set(this._vue.refs, key, descriptor);
-	    var updateFn = this._updateRefValue.bind(this, key);
-	    this._disconnects[key] = this._tree.connectReference(descriptor, updateFn, this._method);
+	    this._disconnects[key] = this._tree.connectReference(descriptor, this._method);
 	  } else if (descriptor instanceof Query) {
 	    Vue.set(this._vue.refs, key, descriptor);
-	    var updateFn$1 = this._updateQueryValue.bind(this, key);
-	    this._disconnects[key] = this._tree.connectQuery(descriptor, updateFn$1, this._method);
+	    var updateFn = this._updateQueryValue.bind(this, key);
+	    this._disconnects[key] = this._tree.connectQuery(descriptor, updateFn, this._method);
 	  } else {
 	    var subScope = {}, subRefs = {};
 	    Vue.set(this._vue.refs, key, subRefs);
@@ -1812,27 +1816,29 @@
 	QueryHandler.prototype._handleSnapshot = function _handleSnapshot (snap) {
 	    var this$1 = this;
 
-	  // Order is important here: first couple any new subpaths so _handleSnapshot will update the
-	  // tree, then tell the client to update its keys, pulling values from the tree.
-	  if (!this._listeners.length || !this._listening) { return; }
-	  var updatedKeys = this._updateKeys(snap);
-	  this._coupler._applySnapshot(snap);
-	  if (!this.ready) {
-	    this.ready = true;
-	    angularProxy.digest();
-	    for (var i = 0, list = this$1._listeners; i < list.length; i += 1) {
-	      var listener = list[i];
+	  this._coupler._queueSnapshotCallback(function () {
+	    // Order is important here: first couple any new subpaths so _handleSnapshot will update the
+	    // tree, then tell the client to update its keys, pulling values from the tree.
+	    if (!this$1._listeners.length || !this$1._listening) { return; }
+	    var updatedKeys = this$1._updateKeys(snap);
+	    this$1._coupler._applySnapshot(snap);
+	    if (!this$1.ready) {
+	      this$1.ready = true;
+	      angularProxy.digest();
+	      for (var i = 0, list = this$1._listeners; i < list.length; i += 1) {
+	        var listener = list[i];
 
-	        this$1._coupler._dispatcher.markReady(listener.operation);
+	          this$1._coupler._dispatcher.markReady(listener.operation);
+	      }
 	    }
-	  }
-	  if (updatedKeys) {
-	    for (var i$1 = 0, list$1 = this$1._listeners; i$1 < list$1.length; i$1 += 1) {
-	      var listener$1 = list$1[i$1];
+	    if (updatedKeys) {
+	      for (var i$1 = 0, list$1 = this$1._listeners; i$1 < list$1.length; i$1 += 1) {
+	        var listener$1 = list$1[i$1];
 
-	        if (listener$1.keysCallback) { listener$1.keysCallback(updatedKeys); }
+	          if (listener$1.keysCallback) { listener$1.keysCallback(updatedKeys); }
+	      }
 	    }
-	  }
+	  });
 	};
 
 	QueryHandler.prototype._updateKeys = function _updateKeys (snap) {
@@ -1956,20 +1962,22 @@
 	Node.prototype._handleSnapshot = function _handleSnapshot (snap) {
 	    var this$1 = this;
 
-	  if (!this.listening || !this._coupler.isTrunkCoupled(snap.path)) { return; }
-	  this._coupler._applySnapshot(snap);
-	  if (!this.ready && snap.path === this.path) {
-	    this.ready = true;
-	    angularProxy.digest();
-	    this.unlisten(true);
-	    this._forAllDescendants(function (node) {
-	      for (var i = 0, list = node.operations; i < list.length; i += 1) {
-	          var op = list[i];
+	  this._coupler._queueSnapshotCallback(function () {
+	    if (!this$1.listening || !this$1._coupler.isTrunkCoupled(snap.path)) { return; }
+	    this$1._coupler._applySnapshot(snap);
+	    if (!this$1.ready && snap.path === this$1.path) {
+	      this$1.ready = true;
+	      angularProxy.digest();
+	      this$1.unlisten(true);
+	      this$1._forAllDescendants(function (node) {
+	        for (var i = 0, list = node.operations; i < list.length; i += 1) {
+	            var op = list[i];
 
-	          this$1._coupler._dispatcher.markReady(op);
-	        }
-	    });
-	  }
+	            this$1._coupler._dispatcher.markReady(op);
+	          }
+	      });
+	    }
+	  });
 	};
 
 	Node.prototype._handleError = function _handleError (error) {
@@ -2029,6 +2037,8 @@
 	  this._bridge = bridge;
 	  this._dispatcher = dispatcher;
 	  this._applySnapshot = applySnapshot;
+	  this._pendingSnapshotCallbacks = [];
+	  this._throttled = {processPendingSnapshots: this._processPendingSnapshots};
 	  this._prunePath = prunePath;
 	  this._vue = new Vue({data: {root: undefined, queryHandlers: {}}});
 	  this._nodeIndex = Object.create(null);
@@ -2203,6 +2213,30 @@
 	Coupler.prototype.isQueryReady = function isQueryReady (query) {
 	  var queryHandler = this._queryHandlers[query.toString()];
 	  return queryHandler && queryHandler.ready;
+	};
+
+	Coupler.prototype._queueSnapshotCallback = function _queueSnapshotCallback (callback) {
+	  this._pendingSnapshotCallbacks.push(callback);
+	  this._throttled.processPendingSnapshots.call(this);
+	};
+
+	Coupler.prototype._processPendingSnapshots = function _processPendingSnapshots () {
+	    var this$1 = this;
+
+	  for (var i = 0, list = this$1._pendingSnapshotCallbacks; i < list.length; i += 1) {
+	      var callback = list[i];
+
+	      callback();
+	    }
+	  this._pendingSnapshotCallbacks.splice(0, Infinity);
+	};
+
+	Coupler.prototype.throttleSnapshots = function throttleSnapshots (delay) {
+	  if (delay) {
+	    this._throttled.processPendingSnapshots = _.throttle(this._processPendingSnapshots, delay);
+	  } else {
+	    this._throttled.processPendingSnapshots = this._processPendingSnapshots;
+	  }
 	};
 
 	Object.defineProperties( Coupler.prototype, prototypeAccessors$1$3 );
@@ -2948,16 +2982,12 @@
 	  this._vue.$destroy();
 	};
 
-	Tree.prototype.connectReference = function connectReference (ref, valueCallback, method) {
+	Tree.prototype.connectReference = function connectReference (ref, method) {
 	    var this$1 = this;
 
 	  this._checkHandle(ref);
 	  var operation = this._dispatcher.createOperation('read', method, ref);
 	  var unwatch;
-	  if (valueCallback) {
-	    unwatch = this._vue.$watch(
-	      this.getObject.bind(this, ref.path), valueCallback, {immediate: true});
-	  }
 	  operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
 	  this._dispatcher.begin(operation).then(function () {
 	    if (operation.running && !operation._disconnected) {
@@ -3017,6 +3047,10 @@
 	  if (!handle.belongsTo(this._truss)) {
 	    throw new Error('Reference belongs to another Truss instance');
 	  }
+	};
+
+	Tree.prototype.throttleRemoteDataUpdates = function throttleRemoteDataUpdates (delay) {
+	  this._coupler.throttleSnapshots(delay);
 	};
 
 	Tree.prototype.update = function update (ref, method, values) {
@@ -3782,6 +3816,10 @@
 	  });
 	  promise = promiseCancel(promise, cleanup);
 	  return promise;
+	};
+
+	Truss.prototype.throttleRemoteDataUpdates = function throttleRemoteDataUpdates (delay) {
+	  this._tree.throttleRemoteDataUpdates(delay);
 	};
 
 	Truss.prototype.checkObjectsForRogueProperties = function checkObjectsForRogueProperties () {
