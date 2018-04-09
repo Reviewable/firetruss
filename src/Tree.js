@@ -72,7 +72,7 @@ export default class Tree {
 
   get root() {
     if (!this._vue.$data.$root) {
-      this._vue.$data.$root = this._createObject('/', '');
+      this._vue.$data.$root = this._createObject('/');
       this._fixObject(this._vue.$data.$root);
       this._completeCreateObject(this._vue.$data.$root);
       angular.digest();
@@ -255,7 +255,7 @@ export default class Tree {
         let subValue = value;
         if (subPath && value !== null && value !== undefined) {
           for (const segment of splitPath(subPath)) {
-            subValue = subValue[segment];
+            subValue = subValue.$data[segment];
             if (subValue === undefined) break;
           }
         }
@@ -285,7 +285,7 @@ export default class Tree {
    * them up and make the reactive, so you should call _completeCreateObject once it's done so and
    * before any Firebase properties are added.
    */
-  _createObject(path, key, parent) {
+  _createObject(path, parent) {
     if (!this._initialized && path !== '/') this.init();
     const properties = {
       // We want Vue to wrap this; we'll make it non-enumerable in _fixObject.
@@ -330,7 +330,7 @@ export default class Tree {
     // properties (that lead all over tree, e.g. $parent), we check that the property's parent is
     // ourselves before destroying.
     for (const key of Object.getOwnPropertyNames(object)) {
-      const child = object[key];
+      const child = object.$data[key];
       if (child && child.$parent === object) this._destroyObject(child);
     }
   }
@@ -379,7 +379,7 @@ export default class Tree {
     }
     if (remoteWrite && this._localWrites[path || '/']) return;
     if (value === SERVER_TIMESTAMP) value = this._localWriteTimestamp;
-    let object = parent[key];
+    let object = parent.$data[key];
     if (!_.isArray(value) && !(local ? _.isPlainObject(value) : _.isObject(value))) {
       this._destroyObject(object);
       this._setFirebaseProperty(parent, key, value);
@@ -391,7 +391,7 @@ export default class Tree {
       // properties while being created the $$touchThis method has something to add a dependency on
       // as the object's own properties won't be made reactive until *after* it's been created.
       this._setFirebaseProperty(parent, key, null);
-      object = this._createObject(path, key, parent);
+      object = this._createObject(path, parent);
       this._setFirebaseProperty(parent, key, object, object.$hidden);
       this._fixObject(object);
       createdObjects.push(object);
@@ -534,7 +534,7 @@ export default class Tree {
     const segments = splitPath(path);
     let object;
     for (const segment of segments) {
-      object = segment ? object[segment] : this.root;
+      object = segment ? object.$data[segment] : this.root;
       if (object === undefined) return;
     }
     return object;

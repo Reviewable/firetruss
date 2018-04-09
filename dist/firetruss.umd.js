@@ -2947,7 +2947,7 @@
 
 	prototypeAccessors$1$2.root.get = function () {
 	  if (!this._vue.$data.$root) {
-	    this._vue.$data.$root = this._createObject('/', '');
+	    this._vue.$data.$root = this._createObject('/');
 	    this._fixObject(this._vue.$data.$root);
 	    this._completeCreateObject(this._vue.$data.$root);
 	    angularProxy.digest();
@@ -3150,7 +3150,7 @@
 	        for (var i = 0, list = splitPath(subPath); i < list.length; i += 1) {
 	          var segment = list[i];
 
-	            subValue = subValue[segment];
+	            subValue = subValue.$data[segment];
 	          if (subValue === undefined) { break; }
 	        }
 	      }
@@ -3184,7 +3184,7 @@
 	 * them up and make the reactive, so you should call _completeCreateObject once it's done so and
 	 * before any Firebase properties are added.
 	 */
-	Tree.prototype._createObject = function _createObject (path, key, parent) {
+	Tree.prototype._createObject = function _createObject (path, parent) {
 	  if (!this._initialized && path !== '/') { this.init(); }
 	  var properties = {
 	    // We want Vue to wrap this; we'll make it non-enumerable in _fixObject.
@@ -3241,7 +3241,7 @@
 	  for (var i = 0, list = Object.getOwnPropertyNames(object); i < list.length; i += 1) {
 	    var key = list[i];
 
-	      var child = object[key];
+	      var child = object.$data[key];
 	    if (child && child.$parent === object) { this$1._destroyObject(child); }
 	  }
 	};
@@ -3300,7 +3300,7 @@
 	  }
 	  if (remoteWrite && this._localWrites[path || '/']) { return; }
 	  if (value === SERVER_TIMESTAMP) { value = this._localWriteTimestamp; }
-	  var object = parent[key];
+	  var object = parent.$data[key];
 	  if (!_.isArray(value) && !(local ? _.isPlainObject(value) : _.isObject(value))) {
 	    this._destroyObject(object);
 	    this._setFirebaseProperty(parent, key, value);
@@ -3312,7 +3312,7 @@
 	    // properties while being created the $$touchThis method has something to add a dependency on
 	    // as the object's own properties won't be made reactive until *after* it's been created.
 	    this._setFirebaseProperty(parent, key, null);
-	    object = this._createObject(path, key, parent);
+	    object = this._createObject(path, parent);
 	    this._setFirebaseProperty(parent, key, object, object.$hidden);
 	    this._fixObject(object);
 	    createdObjects.push(object);
@@ -3469,7 +3469,7 @@
 	  for (var i = 0, list = segments; i < list.length; i += 1) {
 	    var segment = list[i];
 
-	      object = segment ? object[segment] : this$1.root;
+	      object = segment ? object.$data[segment] : this$1.root;
 	    if (object === undefined) { return; }
 	  }
 	  return object;
