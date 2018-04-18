@@ -68,7 +68,7 @@ export default class Bridge {
     const items = [];
     try {
       const storage = window.localStorage || window.sessionStorage;
-      if (!storage) return;
+      if (!storage) throw new Error('localStorage and sessionStorage not available');
       for (let i = 0; i < storage.length; i++) {
         const key = storage.key(i);
         items.push({key, value: storage.getItem(key)});

@@ -321,7 +321,7 @@
 	  var items = [];
 	  try {
 	    var storage = window.localStorage || window.sessionStorage;
-	    if (!storage) { return; }
+	    if (!storage) { throw new Error('localStorage and sessionStorage not available'); }
 	    for (var i = 0; i < storage.length; i++) {
 	      var key = storage.key(i);
 	      items.push({key: key, value: storage.getItem(key)});
