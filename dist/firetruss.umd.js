@@ -1624,6 +1624,9 @@
 
 	var ALPHABET = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz';
 
+	var getRandomValues = window.crypto && window.crypto.getRandomValues &&
+	  window.crypto.getRandomValues.bind(window.crypto);
+
 	var KeyGenerator = function KeyGenerator() {
 	  this._lastUniqueKeyTime = 0;
 	  this._lastRandomValues = [];
@@ -1651,13 +1654,23 @@
 	    this._lastRandomValues[i$1] += 1;
 	  } else {
 	    this._lastUniqueKeyTime = now;
-	    for (var i$2 = 0; i$2 < 12; i$2++) {
-	      // Make sure to leave some space for incrementing in the top nibble.
-	      this$1._lastRandomValues[i$2] = Math.floor(Math.random() * (i$2 ? 64 : 16));
+	    if (getRandomValues) {
+	      /* global Uint8Array */
+	      var array = new Uint8Array(12);
+	      getRandomValues(array);
+	      for (var i$2 = 0; i$2 < 12; i$2++) {
+	        // eslint-disable-next-line no-bitwise
+	        this$1._lastRandomValues[i$2] = array[i$2] & (i$2 ? 0x3f : 0x0f);
+	      }
+	    } else {
+	      for (var i$3 = 0; i$3 < 12; i$3++) {
+	        // Make sure to leave some space for incrementing in the top nibble.
+	        this$1._lastRandomValues[i$3] = Math.floor(Math.random() * (i$3 ? 64 : 16));
+	      }
 	    }
 	  }
-	  for (var i$3 = 0; i$3 < 12; i$3++) {
-	    chars[i$3 + 8] = ALPHABET[this$1._lastRandomValues[i$3]];
+	  for (var i$4 = 0; i$4 < 12; i$4++) {
+	    chars[i$4 + 8] = ALPHABET[this$1._lastRandomValues[i$4]];
 	  }
 	  return chars.join('');
 	};

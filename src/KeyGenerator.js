@@ -1,5 +1,8 @@
 const ALPHABET = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz';
 
+const getRandomValues = window.crypto && window.crypto.getRandomValues &&
+  window.crypto.getRandomValues.bind(window.crypto);
+
 export default class KeyGenerator {
   constructor() {
     this._lastUniqueKeyTime = 0;
@@ -26,9 +29,19 @@ export default class KeyGenerator {
       this._lastRandomValues[i] += 1;
     } else {
       this._lastUniqueKeyTime = now;
-      for (let i = 0; i < 12; i++) {
-        // Make sure to leave some space for incrementing in the top nibble.
-        this._lastRandomValues[i] = Math.floor(Math.random() * (i ? 64 : 16));
+      if (getRandomValues) {
+        /* global Uint8Array */
+        const array = new Uint8Array(12);
+        getRandomValues(array);
+        for (let i = 0; i < 12; i++) {
+          // eslint-disable-next-line no-bitwise
+          this._lastRandomValues[i] = array[i] & (i ? 0x3f : 0x0f);
+        }
+      } else {
+        for (let i = 0; i < 12; i++) {
+          // Make sure to leave some space for incrementing in the top nibble.
+          this._lastRandomValues[i] = Math.floor(Math.random() * (i ? 64 : 16));
+        }
       }
     }
     for (let i = 0; i < 12; i++) {
