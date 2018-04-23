@@ -4,7 +4,7 @@ import _ from 'lodash';
 import Vue from 'vue';
 
 
-const vue = new Vue({data: {digestRequest: 0}});
+let vue;
 let lastDigestRequest = 0, digestInProgress = false;
 const bareDigest = function() {
   if (vue.digestRequest > lastDigestRequest) return;
@@ -51,6 +51,7 @@ function initAngular() {
         const angularDigest = proto.$digest;
         proto.$digest = bareDigest;
         proto.$digest.original = angularDigest;
+        vue = new Vue({data: {digestRequest: 0}});
         vue.$watch(() => vue.digestRequest, () => {
           if (vue.digestRequest > lastDigestRequest) {
             digestInProgress = true;

@@ -4,7 +4,7 @@ import performanceNow from 'performance-now';
 
 /* globals window */
 
-const vue = new Vue({data: {digestRequest: 0}});
+let vue;
 let lastDigestRequest = 0;
 let digestInProgress = false;
 const bareDigest = function() {
@@ -52,6 +52,7 @@ function initAngular() {
         const angularDigest = proto.$digest;
         proto.$digest = bareDigest;
         proto.$digest.original = angularDigest;
+        vue = new Vue({data: {digestRequest: 0}});
         vue.$watch(() => vue.digestRequest, () => {
           if (vue.digestRequest > lastDigestRequest) {
             digestInProgress = true;

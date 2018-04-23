@@ -9,7 +9,7 @@
 
 	/* globals window */
 
-	var vue = new Vue({data: {digestRequest: 0}});
+	var vue;
 	var lastDigestRequest = 0;
 	var digestInProgress = false;
 	var bareDigest = function() {
@@ -57,6 +57,7 @@
 	        var angularDigest = proto.$digest;
 	        proto.$digest = bareDigest;
 	        proto.$digest.original = angularDigest;
+	        vue = new Vue({data: {digestRequest: 0}});
 	        vue.$watch(function () { return vue.digestRequest; }, function () {
 	          if (vue.digestRequest > lastDigestRequest) {
 	            digestInProgress = true;
