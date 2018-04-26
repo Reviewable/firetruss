@@ -23,7 +23,7 @@ module.exports = function(grunt) {
         overwrite: true,
         replacements: [{
           from: /const VERSION = '.*?';/,
-          to: () => `const VERSION = '${grunt.config('ext.version')}';`
+          to: () => `const VERSION = '${grunt.option('release')}';`
         }]
       }
     },
@@ -120,8 +120,7 @@ module.exports = function(grunt) {
     release: {
       options: {
         additionalFiles: ['bower.json'],
-        updateVars: ['ext'],
-        afterBump: ['replace'],
+        afterBump: ['replace --release=<%= version %>'],
         beforeRelease: ['default']
       }
     }
