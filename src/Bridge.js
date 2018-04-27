@@ -1,14 +1,13 @@
 import {unescapeKey} from './utils/paths.js';
 import _ from 'lodash';
 
-const MIN_WORKER_VERSION = '0.4.0';
+const MIN_WORKER_VERSION = '0.7.0';
 
 
 class Snapshot {
-  constructor({path, value, valueError, exists, writeSerial}) {
+  constructor({path, value, exists, writeSerial}) {
     this._path = path;
     this._value = value;
-    this._valueError = errorFromJson(valueError);
     this._exists = value === undefined ? exists || false : value !== null;
     this._writeSerial = writeSerial;
   }
@@ -22,7 +21,7 @@ class Snapshot {
   }
 
   get value() {
-    this._checkValue();
+    if (this._value === undefined) throw new Error('Value omitted from snapshot');
     return this._value;
   }
 
@@ -33,11 +32,6 @@ class Snapshot {
 
   get writeSerial() {
     return this._writeSerial;
-  }
-
-  _checkValue() {
-    if (this._valueError) throw this._valueError;
-    if (this._value === undefined) throw new Error('Value omitted from snapshot');
   }
 }
 

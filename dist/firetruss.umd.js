@@ -246,19 +246,17 @@
 	  return matcher;
 	}
 
-	var MIN_WORKER_VERSION = '0.4.0';
+	var MIN_WORKER_VERSION = '0.7.0';
 
 
 	var Snapshot = function Snapshot(ref) {
 	  var path = ref.path;
 	  var value = ref.value;
-	  var valueError = ref.valueError;
 	  var exists = ref.exists;
 	  var writeSerial = ref.writeSerial;
 
 	  this._path = path;
 	  this._value = value;
-	  this._valueError = errorFromJson(valueError);
 	  this._exists = value === undefined ? exists || false : value !== null;
 	  this._writeSerial = writeSerial;
 	};
@@ -274,7 +272,7 @@
 	};
 
 	prototypeAccessors$1.value.get = function () {
-	  this._checkValue();
+	  if (this._value === undefined) { throw new Error('Value omitted from snapshot'); }
 	  return this._value;
 	};
 
@@ -285,11 +283,6 @@
 
 	prototypeAccessors$1.writeSerial.get = function () {
 	  return this._writeSerial;
-	};
-
-	Snapshot.prototype._checkValue = function _checkValue () {
-	  if (this._valueError) { throw this._valueError; }
-	  if (this._value === undefined) { throw new Error('Value omitted from snapshot'); }
 	};
 
 	Object.defineProperties( Snapshot.prototype, prototypeAccessors$1 );
@@ -3634,7 +3627,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '0.7.4';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {
