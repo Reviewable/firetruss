@@ -34,7 +34,7 @@
     "grunt-contrib-watch": "^1.0.0",
     "grunt-eslint": "^20.1.0",
     "grunt-git": "^1.0.1",
-    "grunt-release": "geddski/grunt-release#master",
+    "grunt-release": "pkaminski/grunt-release#master",
     "grunt-rollup": "^1.0.1",
     "grunt-text-replace": "^0.4.0",
     "load-grunt-tasks": "^3.5.2",
