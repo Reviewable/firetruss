@@ -3141,9 +3141,12 @@ class Tree {
     const descriptor = Object.getOwnPropertyDescriptor(data, key);
     if (descriptor) {
       if (!descriptor.enumerable) {
-        throw new Error(
-          `Key conflict between Firebase and instance or computed properties at ` +
-          `${object.$path}: ${key}`);
+        const child = data[key];
+        if (!child || child.$parent !== object) {
+          throw new Error(
+            `Key conflict between Firebase and instance or computed properties at ` +
+            `${object.$path}: ${key}`);
+        }
       }
       if (!descriptor.get || !descriptor.set) {
         throw new Error(`Unbound property at ${object.$path}: ${key}`);
