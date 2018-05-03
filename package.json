@@ -33,6 +33,7 @@
     "grunt-contrib-uglify": "^2.0.0",
     "grunt-contrib-watch": "^1.0.0",
     "grunt-eslint": "^20.1.0",
+    "grunt-exec": "^3.0.0",
     "grunt-git": "^1.0.1",
     "grunt-release": "pkaminski/grunt-release#master",
     "grunt-rollup": "^1.0.1",

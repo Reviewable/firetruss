@@ -1970,6 +1970,10 @@ grunt-eslint@^20.1.0:
     chalk "^2.1.0"
     eslint "^4.0.0"
 
+grunt-exec@^3.0.0:
+  version "3.0.0"
+  resolved "https://registry.yarnpkg.com/grunt-exec/-/grunt-exec-3.0.0.tgz#881f868d64098788fddaf22fa25d8572a9d64dc7"
+
 grunt-git@^1.0.1:
   version "1.0.9"
   resolved "https://registry.yarnpkg.com/grunt-git/-/grunt-git-1.0.9.tgz#167b551ec7ccf75f10c9df8e785f16a0b5a9b1a9"
