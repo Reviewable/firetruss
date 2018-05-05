@@ -108,6 +108,8 @@ class QueryHandler {
   _handleError(error) {
     if (!this._listeners.length || !this._listening) return;
     this._listening = false;
+    this.ready = false;
+    angular.digest();
     Promise.all(_.map(this._listeners, listener => {
       this._coupler._dispatcher.clearReady(listener.operation);
       return this._coupler._dispatcher.retry(listener.operation, error).catch(e => {

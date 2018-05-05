@@ -1894,6 +1894,8 @@
 
 	  if (!this._listeners.length || !this._listening) { return; }
 	  this._listening = false;
+	  this.ready = false;
+	  angularProxy.digest();
 	  Promise.all(_.map(this._listeners, function (listener) {
 	    this$1._coupler._dispatcher.clearReady(listener.operation);
 	    return this$1._coupler._dispatcher.retry(listener.operation, error).catch(function (e) {
@@ -3630,7 +3632,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '0.8.1';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {

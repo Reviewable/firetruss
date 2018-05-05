@@ -1705,6 +1705,8 @@ class QueryHandler {
   _handleError(error) {
     if (!this._listeners.length || !this._listening) return;
     this._listening = false;
+    this.ready = false;
+    angularProxy.digest();
     Promise.all(_.map(this._listeners, listener => {
       this._coupler._dispatcher.clearReady(listener.operation);
       return this._coupler._dispatcher.retry(listener.operation, error).catch(e => {
@@ -3283,7 +3285,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '0.8.1';
+const VERSION = 'dev';
 
 
 class Truss {
