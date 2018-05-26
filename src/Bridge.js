@@ -1,7 +1,7 @@
 import {unescapeKey} from './utils/paths.js';
 import _ from 'lodash';
 
-const MIN_WORKER_VERSION = '0.7.0';
+const MIN_WORKER_VERSION = '0.8.0';
 
 
 class Snapshot {
@@ -204,6 +204,9 @@ export default class Bridge {
       case 'update':
         simulatedCalls.push({method: 'update', url: props.url, args: [props.value]});
         break;
+      case 'once':
+        simulatedCalls.push({method: 'once', url: props.url, spec: props.spec, args: ['value']});
+        break;
       case 'on':
         simulatedCalls.push({method: 'once', url: props.url, spec: props.spec, args: ['value']});
         break;
@@ -296,6 +299,10 @@ export default class Bridge {
 
   set(url, value, writeSerial) {return this._send({msg: 'set', url, value, writeSerial});}
   update(url, value, writeSerial) {return this._send({msg: 'update', url, value, writeSerial});}
+
+  once(url, writeSerial) {
+    return this._send({msg: 'once', url, writeSerial}).then(snapshot => new Snapshot(snapshot));
+  }
 
   on(listenerKey, url, spec, eventType, snapshotCallback, cancelCallback, context, options) {
     const handle = {

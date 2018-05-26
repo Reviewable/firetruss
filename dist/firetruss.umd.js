@@ -246,7 +246,7 @@
 	  return matcher;
 	}
 
-	var MIN_WORKER_VERSION = '0.7.0';
+	var MIN_WORKER_VERSION = '0.8.0';
 
 
 	var Snapshot = function Snapshot(ref) {
@@ -465,6 +465,9 @@
 	    case 'update':
 	      simulatedCalls.push({method: 'update', url: props.url, args: [props.value]});
 	      break;
+	    case 'once':
+	      simulatedCalls.push({method: 'once', url: props.url, spec: props.spec, args: ['value']});
+	      break;
 	    case 'on':
 	      simulatedCalls.push({method: 'once', url: props.url, spec: props.spec, args: ['value']});
 	      break;
@@ -565,6 +568,10 @@
 
 	Bridge.prototype.set = function set (url, value, writeSerial) {return this._send({msg: 'set', url: url, value: value, writeSerial: writeSerial});};
 	Bridge.prototype.update = function update (url, value, writeSerial) {return this._send({msg: 'update', url: url, value: value, writeSerial: writeSerial});};
+
+	Bridge.prototype.once = function once (url, writeSerial) {
+	  return this._send({msg: 'once', url: url, writeSerial: writeSerial}).then(function (snapshot) { return new Snapshot(snapshot); });
+	};
 
 	Bridge.prototype.on = function on (listenerKey, url, spec, eventType, snapshotCallback, cancelCallback, context, options) {
 	  var handle = {
@@ -3080,8 +3087,11 @@
 	  var set = numValues === 1;
 	  var operand = set ? values[''] : values;
 	  return this._dispatcher.execute('write', set ? 'set' : 'update', ref, operand, function () {
-	    if (set) { return this$1._bridge.set(url, operand, writeSerial); }
-	    return this$1._bridge.update(url, operand, writeSerial);
+	    var promise = this$1._bridge[set ? 'set' : 'update'](url, operand, writeSerial);
+	    return promise.catch(function (e) {
+	      if (!e.immediateFailure) { return Promise.reject(e); }
+	      return promiseFinally(this$1._repair(ref, values), function () { return Promise.reject(e); });
+	    });
 	  });
 	};
 
@@ -3126,6 +3136,11 @@
 	      ).then(function (result) {
 	        _.forEach(result.snapshots, function (snapshot) { return this$1._integrateSnapshot(snapshot); });
 	        return result.committed ? txn : attemptTransaction();
+	      }, function (e) {
+	        if (e.immediateFailure && (txn.outcome === 'set' || txn.outcome === 'update')) {
+	          return promiseFinally(this$1._repair(ref, values), function () { return Promise.reject(e); });
+	        }
+	        return Promise.reject(e);
 	      });
 	    });
 	  };
@@ -3133,6 +3148,26 @@
 	  return this._truss.peek(ref, function () {
 	    return this$1._dispatcher.execute('write', 'commit', ref, undefined, attemptTransaction);
 	  });
+	};
+
+	Tree.prototype._repair = function _repair (ref, values) {
+	    var this$1 = this;
+
+	  // If a write fails early -- that is, before it gets applied to the Firebase client's local
+	  // tree -- then we need to repair our own local tree manually since Firebase won't send events
+	  // to unwind the change.This should be very rare since it's always due to a developer mistake
+	  // so we don't need to be particularly efficient.
+	  var basePath = ref.path;
+	  var paths = _(values).keys().map(function (key) {
+	    var path = basePath;
+	    if (key) { path = joinPath(path, key); }
+	    return _.keys(this$1._coupler.findCoupledDescendantPaths(path));
+	  }).flatten().value();
+	  return Promise.all(_.map(paths, function (path) {
+	    return this$1._bridge.once(this$1._rootUrl + path).then(function (snap) {
+	      this$1._integrateSnapshot(snap);
+	    });
+	  }));
 	};
 
 	Tree.prototype._applyLocalWrite = function _applyLocalWrite (values, override) {
@@ -3632,7 +3667,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '0.8.2';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {

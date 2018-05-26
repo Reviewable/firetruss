@@ -3,7 +3,7 @@ import Coupler from './Coupler.js';
 import Modeler from './Modeler.js';
 import Reference from './Reference.js';
 import {escapeKey, escapeKeys, unescapeKey, joinPath, splitPath} from './utils/paths.js';
-import {wrapPromiseCallback} from './utils/promises.js';
+import {wrapPromiseCallback, promiseFinally} from './utils/promises.js';
 import {SERVER_TIMESTAMP} from './utils/utils.js';
 
 import _ from 'lodash';
@@ -184,8 +184,11 @@ export default class Tree {
     const set = numValues === 1;
     const operand = set ? values[''] : values;
     return this._dispatcher.execute('write', set ? 'set' : 'update', ref, operand, () => {
-      if (set) return this._bridge.set(url, operand, writeSerial);
-      return this._bridge.update(url, operand, writeSerial);
+      const promise = this._bridge[set ? 'set' : 'update'](url, operand, writeSerial);
+      return promise.catch(e => {
+        if (!e.immediateFailure) return Promise.reject(e);
+        return promiseFinally(this._repair(ref, values), () => Promise.reject(e));
+      });
     });
   }
 
@@ -227,6 +230,11 @@ export default class Tree {
         ).then(result => {
           _.forEach(result.snapshots, snapshot => this._integrateSnapshot(snapshot));
           return result.committed ? txn : attemptTransaction();
+        }, e => {
+          if (e.immediateFailure && (txn.outcome === 'set' || txn.outcome === 'update')) {
+            return promiseFinally(this._repair(ref, values), () => Promise.reject(e));
+          }
+          return Promise.reject(e);
         });
       });
     };
@@ -234,6 +242,24 @@ export default class Tree {
     return this._truss.peek(ref, () => {
       return this._dispatcher.execute('write', 'commit', ref, undefined, attemptTransaction);
     });
+  }
+
+  _repair(ref, values) {
+    // If a write fails early -- that is, before it gets applied to the Firebase client's local
+    // tree -- then we need to repair our own local tree manually since Firebase won't send events
+    // to unwind the change.  This should be very rare since it's always due to a developer mistake
+    // so we don't need to be particularly efficient.
+    const basePath = ref.path;
+    const paths = _(values).keys().map(key => {
+      let path = basePath;
+      if (key) path = joinPath(path, key);
+      return _.keys(this._coupler.findCoupledDescendantPaths(path));
+    }).flatten().value();
+    return Promise.all(_.map(paths, path => {
+      return this._bridge.once(this._rootUrl + path).then(snap => {
+        this._integrateSnapshot(snap);
+      });
+    }));
   }
 
   _applyLocalWrite(values, override) {
