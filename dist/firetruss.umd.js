@@ -60,9 +60,18 @@
 	        vue = new Vue({data: {digestRequest: 0}});
 	        vue.$watch(function () { return vue.digestRequest; }, function () {
 	          if (vue.digestRequest > lastDigestRequest) {
-	            digestInProgress = true;
-	            rootScope.$digest.original.call(rootScope);
-	            lastDigestRequest = vue.digestRequest = vue.digestRequest + 1;
+	            // Make sure we execute the digest outside the Vue task queue, because otherwise if the
+	            // client replaced Promise with angular.$q all Truss.nextTick().then() functions will be
+	            // executed inside the Angular digest and hence inside the Vue task queue. But
+	            // Truss.nextTick() is used precisely to avoid that.  Note that it's OK to use
+	            // Vue.nextTick() here because even though it will schedule a flush via Promise.then()
+	            // it only uses the native Promise, before it could've been monkey-patched by the app.
+	            Vue.nextTick(function () {
+	              if (vue.digestRequest <= lastDigestRequest) { return; }
+	              digestInProgress = true;
+	              rootScope.$digest.original.call(rootScope);
+	              lastDigestRequest = vue.digestRequest = vue.digestRequest + 1;
+	            });
 	          } else {
 	            digestInProgress = false;
 	          }
