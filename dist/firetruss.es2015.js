@@ -2281,12 +2281,10 @@ class Modeler {
           }
           throw new Error(`Property names starting with "$" are reserved: ${Class.name}.${name}`);
         }
-        if (descriptor.set) {
-          throw new Error(`Computed properties must not have a setter: ${Class.name}.${name}`);
-        }
         if (descriptor.get && !(computedProperties && computedProperties[name])) {
           (computedProperties || (computedProperties = {}))[name] = {
-            name, fullName: `${proto.constructor.name}.${name}`, get: descriptor.get
+            name, fullName: `${proto.constructor.name}.${name}`, get: descriptor.get,
+            set: descriptor.set
           };
         }
       }
@@ -2478,8 +2476,13 @@ class Modeler {
         return value;
       },
       set(newValue) {
-        if (!writeAllowed) throw new Error(`You cannot set a computed property: ${prop.name}`);
-        value = newValue;
+        if (writeAllowed) {
+          value = newValue;
+        } else if (prop.set) {
+          prop.set.call(this, newValue);
+        } else {
+          throw new Error(`You cannot set a computed property: ${prop.name}`);
+        }
       }
     };
   }
@@ -3327,7 +3330,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '0.8.4';
+const VERSION = 'dev';
 
 
 class Truss {
