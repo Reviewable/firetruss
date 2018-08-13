@@ -405,12 +405,15 @@ export default class Modeler {
             // No need to angular.digest() here, since if we're running under Angular then we expect
             // promises to be aliased to its $q service, which triggers digest itself.
           }, error => {
-            if (promise === pendingPromise && update(new ErrorWrapper(error))) throw error;
+            if (promise === pendingPromise && update(new ErrorWrapper(error)) &&
+                !error.trussExpectedException) throw error;
           });
           pendingPromise = promise;
         } else if (update(newValue)) {
           angular.digest();
-          if (newValue instanceof ErrorWrapper) throw newValue.error;
+          if (newValue instanceof ErrorWrapper && !newValue.error.trussExpectedException) {
+            throw newValue.error;
+          }
         }
       }, {immediate: true});  // use immediate:true since watcher will run computeValue anyway
       // Hack to change order of computed property watchers.  By flipping their ids to be negative,
@@ -520,6 +523,14 @@ export default class Modeler {
         // eslint-disable-next-line no-shadow
         const mount = this._findMount(mount => mount.Class === object.constructor);
         if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) continue;
+        let value;
+        try {
+          value = object[key];
+        } catch (e) {
+          // Ignore any values that hold exceptions, or otherwise throw on access -- we won't be
+          // able to check them anyway.
+          continue;
+        }
         if (!(_.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
           const descriptor = Object.getOwnPropertyDescriptor(object, key);
           if ('value' in descriptor || !descriptor.get) {
@@ -528,7 +539,7 @@ export default class Modeler {
           }
           if (object.$truss && descriptor.enumerable) {
             try {
-              object[key] = object[key];
+              object[key] = value;
               throw new Error(
                 `Firetruss object at ${path} has an enumerable non-Firebase property: ${key}`);
             } catch (e) {
@@ -536,7 +547,6 @@ export default class Modeler {
             }
           }
         }
-        const value = object[key];
         if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
             !(_.isFunction(value) || value instanceof Promise)) {
           value.$$$trussCheck = true;
