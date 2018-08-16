@@ -3689,7 +3689,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = 'dev';
+	var VERSION = '0.8.7';
 
 
 	var Truss = function Truss(rootUrl) {
