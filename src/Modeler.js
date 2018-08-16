@@ -454,7 +454,7 @@ export default class Modeler {
     return {
       enumerable: true, configurable: true,
       get() {
-        if (value instanceof ErrorWrapper) throw value.error;
+        if (!writeAllowed && value instanceof ErrorWrapper) throw value.error;
         return value;
       },
       set(newValue) {

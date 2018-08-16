@@ -2745,7 +2745,7 @@
 	  return {
 	    enumerable: true, configurable: true,
 	    get: function get() {
-	      if (value instanceof ErrorWrapper) { throw value.error; }
+	      if (!writeAllowed && value instanceof ErrorWrapper) { throw value.error; }
 	      return value;
 	    },
 	    set: function set(newValue) {
@@ -3689,7 +3689,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '0.8.6';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {

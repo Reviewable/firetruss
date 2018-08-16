@@ -2475,7 +2475,7 @@ class Modeler {
     return {
       enumerable: true, configurable: true,
       get() {
-        if (value instanceof ErrorWrapper) throw value.error;
+        if (!writeAllowed && value instanceof ErrorWrapper) throw value.error;
         return value;
       },
       set(newValue) {
@@ -3340,7 +3340,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '0.8.6';
+const VERSION = 'dev';
 
 
 class Truss {
