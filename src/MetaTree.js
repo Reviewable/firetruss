@@ -25,7 +25,7 @@ export default class MetaTree {
       }
     }}});
 
-    this._auth = {serial: 0};
+    this._auth = {serial: 0, initialAuthChangeReceived: false};
 
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
@@ -70,6 +70,9 @@ export default class MetaTree {
   }
 
   _handleAuthChange(user) {
+    const supersededChange = !this._auth.initialAuthChangeReceived && this._auth.serial;
+    if (user !== undefined) this._auth.initialAuthChangeReceived = true;
+    if (supersededChange) return;
     const authSerial = this._auth.serial;
     if (this.root.user === user) return Promise.resolve(false);
     return this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, () => {
