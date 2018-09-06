@@ -399,7 +399,7 @@ export default class Modeler {
           if (pendingPromise.cancel) pendingPromise.cancel();
           pendingPromise = undefined;
         }
-        if (_.isObject(newValue) && newValue.then) {
+        if (_.isObject(newValue) && _.isFunction(newValue.then)) {
           const promise = newValue.then(finalValue => {
             if (promise === pendingPromise) update(finalValue);
             // No need to angular.digest() here, since if we're running under Angular then we expect
