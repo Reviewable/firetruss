@@ -3343,7 +3343,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '0.8.8';
+const VERSION = '0.8.9';
 
 
 class Truss {
