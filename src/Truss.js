@@ -7,11 +7,12 @@ import Dispatcher from './Dispatcher.js';
 import KeyGenerator from './KeyGenerator.js';
 import MetaTree from './MetaTree.js';
 import {Handle} from './Reference.js';
+import {BaseValue} from './Modeler.js';
 import Tree from './Tree.js';
 import stats from './utils/stats.js';
 import {escapeKey, unescapeKey} from './utils/paths.js';
 import {wrapPromiseCallback, promiseCancel, promiseFinally} from './utils/promises.js';
-import {SERVER_TIMESTAMP} from './utils/utils.js';
+import {SERVER_TIMESTAMP, copyPrototype} from './utils/utils.js';
 
 
 let bridge, logging;
@@ -46,7 +47,7 @@ export default class Truss {
   }
 
   get meta() {return this._metaTree.root;}
-  get root() {return this._tree.root;}
+  get store() {return this._tree.root;}
 
   /**
    * Mount a set of classes against the datastore structure.  Must be called at most once, and
@@ -115,17 +116,17 @@ export default class Truss {
         }
       }});
 
-      let unwatch = this.watch(() => connector.ready, ready => {
+      let unobserve = this.observe(() => connector.ready, ready => {
         if (!ready) return;
-        unwatch();
-        unwatch = null;
+        unobserve();
+        unobserve = null;
         callbackPromise = promiseFinally(
           callback(scope.result), () => {angular.digest(); callbackPromise = null; cleanup();}
         ).then(result => {resolve(result);}, error => {reject(error);});
       });
 
       cleanup = () => {
-        if (unwatch) {unwatch(); unwatch = null;}
+        if (unobserve) {unobserve(); unobserve = null;}
         if (unintercept) {unintercept(); unintercept = null;}
         if (connector) {connector.destroy(); connector = null;}
         if (callbackPromise && callbackPromise.cancel) callbackPromise.cancel();
@@ -139,7 +140,7 @@ export default class Truss {
     return promiseCancel(promise, cancel);
   }
 
-  watch(subjectFn, callbackFn, options) {
+  observe(subjectFn, callbackFn, options) {
     const usePreciseDefaults = _.isObject(options && options.precise);
     let numCallbacks = 0;
     let oldValueClone;
@@ -176,7 +177,7 @@ export default class Truss {
   when(expression, options) {
     let cleanup, timeoutHandle;
     let promise = new Promise((resolve, reject) => {
-      let unwatch = this.watch(expression, value => {
+      let unobserve = this.observe(expression, value => {
         if (!value) return;
         // Wait for computed properties to settle and double-check.
         Vue.nextTick(() => {
@@ -194,7 +195,7 @@ export default class Truss {
         }, options.timeout);
       }
       cleanup = () => {
-        if (unwatch) {unwatch(); unwatch = null;}
+        if (unobserve) {unobserve(); unobserve = null;}
         if (timeoutHandle) {clearTimeout(timeoutHandle); timeoutHandle = null;}
         reject(new Error('Canceled'));
       };
@@ -283,7 +284,37 @@ export default class Truss {
 
 Object.defineProperties(Truss, {
   SERVER_TIMESTAMP: {value: SERVER_TIMESTAMP},
-  VERSION: {value: VERSION}
+  VERSION: {value: VERSION},
+
+  ComponentPlugin: {value: {
+    install(Vue2, pluginOptions) {
+      if (Vue !== Vue2) throw new Error('Multiple versions of Vue detected');
+      if (!pluginOptions.truss) {
+        throw new Error('Need to pass `truss` instance as an option to use the ComponentPlugin');
+      }
+      const prototypeExtension = {
+        $truss: {value: pluginOptions.truss},
+        $destroyed: {get() {return this._isBeingDestroyed || this._isDestroyed;}},
+        $$touchThis: {value() {if (this._.data.__ob__) this._data.__ob__.dep.depend();}}
+      };
+      const conflictingKeys = _(prototypeExtension).keys()
+        .union(_.keys(BaseValue.prototype)).intersection(_.keys(Vue.prototype)).value();
+      if (conflictingKeys.length) {
+        throw new Error(
+          'Truss extension properties conflict with Vue properties: ' + conflictingKeys.join(', '));
+      }
+      Object.defineProperties(Vue.prototype, prototypeExtension);
+      copyPrototype(BaseValue, Vue);
+      Vue.mixin({
+        destroyed() {
+          if (_.has(this, '$$trussFinalizers')) {
+            // Some finalizers remove themselves from the array, so clone it before iterating.
+            for (const fn of _.clone(this.$$trussFinalizers)) fn();
+          }
+        }
+      });
+    }
+  }}
 });
 
 angular.defineModule(Truss);

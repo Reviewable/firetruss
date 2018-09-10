@@ -1041,6 +1041,15 @@
 	  if (a.isEqual) { return a.isEqual(b); }
 	}
 
+	function copyPrototype(a, b) {
+	  for (var i = 0, list = Object.getOwnPropertyNames(a.prototype); i < list.length; i += 1) {
+	    var prop = list[i];
+
+	    if (prop === 'constructor') { continue; }
+	    Object.defineProperty(b.prototype, prop, Object.getOwnPropertyDescriptor(a.prototype, prop));
+	  }
+	}
+
 	var commonjsGlobal = typeof window !== 'undefined' ? window : typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : {};
 
 
@@ -1188,7 +1197,7 @@
 	  var getter = this._computeConnection.bind(this, fn, connectionStats);
 	  var update = this._updateComputedConnection.bind(this, key, fn, connectionStats);
 	  var angularWatch = angularProxy.active && !fn.angularWatchSuppressed;
-	  // Use this._vue.$watch instead of truss.watch here so that we can disable the immediate
+	  // Use this._vue.$watch instead of truss.observe here so that we can disable the immediate
 	  // callback if we'll get one from Angular anyway.
 	  this._vue.$watch(getter, update, {immediate: !angularWatch});
 	  if (angularWatch) {
@@ -1258,14 +1267,14 @@
 	    Vue.set(this._vue.refs, key, subRefs);
 	    var subConnector = this._subConnectors[key] =
 	      new Connector(subScope, descriptor, this._tree, this._method, subRefs);
-	    // Use a truss.watch here instead of this._vue.$watch so that the "immediate" execution
+	    // Use a truss.observe here instead of this._vue.$watch so that the "immediate" execution
 	    // actually takes place after we've captured the unwatch function, in case the subConnector
 	    // is ready immediately.
-	    var unwatch = this._disconnects[key] = this._tree.truss.watch(
+	    var unobserve = this._disconnects[key] = this._tree.truss.observe(
 	      function () { return subConnector.ready; },
 	      function (subReady) {
 	        if (!subReady) { return; }
-	        unwatch();
+	        unobserve();
 	        delete this$1._disconnects[key];
 	        Vue.set(this$1._vue.values, key, subScope);
 	        angularProxy.digest();
@@ -1792,483 +1801,6 @@
 
 	Object.defineProperties( MetaTree.prototype, prototypeAccessors$6 );
 
-	var QueryHandler = function QueryHandler(coupler, query) {
-	  this._coupler = coupler;
-	  this._query = query;
-	  this._listeners = [];
-	  this._keys = [];
-	  this._url = this._coupler._rootUrl + query.path;
-	  this._segments = splitPath(query.path, true);
-	  this._listening = false;
-	  this.ready = false;
-	};
-
-	QueryHandler.prototype.attach = function attach (operation, keysCallback) {
-	  this._listen();
-	  this._listeners.push({operation: operation, keysCallback: keysCallback});
-	  if (keysCallback) { keysCallback(this._keys); }
-	};
-
-	QueryHandler.prototype.detach = function detach (operation) {
-	  var k = _.findIndex(this._listeners, {operation: operation});
-	  if (k >= 0) { this._listeners.splice(k, 1); }
-	  return this._listeners.length;
-	};
-
-	QueryHandler.prototype._listen = function _listen () {
-	  if (this._listening) { return; }
-	  this._coupler._bridge.on(
-	    this._query.toString(), this._url, this._query.constraints, 'value',
-	    this._handleSnapshot, this._handleError, this, {sync: true});
-	  this._listening = true;
-	};
-
-	QueryHandler.prototype.destroy = function destroy () {
-	    var this$1 = this;
-
-	  this._coupler._bridge.off(
-	    this._query.toString(), this._url, this._query.constraints, 'value', this._handleSnapshot,
-	    this);
-	  this._listening = false;
-	  this.ready = false;
-	  angularProxy.digest();
-	  for (var i = 0, list = this$1._keys; i < list.length; i += 1) {
-	    var key = list[i];
-
-	      this$1._coupler._decoupleSegments(this$1._segments.concat(key));
-	  }
-	};
-
-	QueryHandler.prototype._handleSnapshot = function _handleSnapshot (snap) {
-	    var this$1 = this;
-
-	  this._coupler._queueSnapshotCallback(function () {
-	    // Order is important here: first couple any new subpaths so _handleSnapshot will update the
-	    // tree, then tell the client to update its keys, pulling values from the tree.
-	    if (!this$1._listeners.length || !this$1._listening) { return; }
-	    var updatedKeys = this$1._updateKeys(snap);
-	    this$1._coupler._applySnapshot(snap);
-	    if (!this$1.ready) {
-	      this$1.ready = true;
-	      angularProxy.digest();
-	      for (var i = 0, list = this$1._listeners; i < list.length; i += 1) {
-	        var listener = list[i];
-
-	          this$1._coupler._dispatcher.markReady(listener.operation);
-	      }
-	    }
-	    if (updatedKeys) {
-	      for (var i$1 = 0, list$1 = this$1._listeners; i$1 < list$1.length; i$1 += 1) {
-	        var listener$1 = list$1[i$1];
-
-	          if (listener$1.keysCallback) { listener$1.keysCallback(updatedKeys); }
-	      }
-	    }
-	  });
-	};
-
-	QueryHandler.prototype._updateKeys = function _updateKeys (snap) {
-	    var this$1 = this;
-
-	  var updatedKeys;
-	  if (snap.path === this._query.path) {
-	    updatedKeys = _.keys(snap.value);
-	    updatedKeys.sort();
-	    if (_.isEqual(this._keys, updatedKeys)) {
-	      updatedKeys = null;
-	    } else {
-	      for (var i = 0, list = _.difference(updatedKeys, this$1._keys); i < list.length; i += 1) {
-	        var key = list[i];
-
-	          this$1._coupler._coupleSegments(this$1._segments.concat(key));
-	      }
-	      for (var i$1 = 0, list$1 = _.difference(this$1._keys, updatedKeys); i$1 < list$1.length; i$1 += 1) {
-	        var key$1 = list$1[i$1];
-
-	          this$1._coupler._decoupleSegments(this$1._segments.concat(key$1));
-	      }
-	      this._keys = updatedKeys;
-	    }
-	  } else if (snap.path.replace(/\/[^/]+/, '') === this._query.path) {
-	    var hasKey = _.includes(this._keys, snap.key);
-	    if (snap.value) {
-	      if (!hasKey) {
-	        this._coupler._coupleSegments(this._segments.concat(snap.key));
-	        this._keys.push(snap.key);
-	        this._keys.sort();
-	        updatedKeys = this._keys;
-	      }
-	    } else if (hasKey) {
-	      this._coupler._decoupleSegments(this._segments.concat(snap.key));
-	      _.pull(this._keys, snap.key);
-	      this._keys.sort();
-	      updatedKeys = this._keys;
-	    }
-	  }
-	  return updatedKeys;
-	};
-
-	QueryHandler.prototype._handleError = function _handleError (error) {
-	    var this$1 = this;
-
-	  if (!this._listeners.length || !this._listening) { return; }
-	  this._listening = false;
-	  this.ready = false;
-	  angularProxy.digest();
-	  Promise.all(_.map(this._listeners, function (listener) {
-	    this$1._coupler._dispatcher.clearReady(listener.operation);
-	    return this$1._coupler._dispatcher.retry(listener.operation, error).catch(function (e) {
-	      listener.operation._disconnect(e);
-	      return false;
-	    });
-	  })).then(function (results) {
-	    if (_.some(results)) {
-	      if (this$1._listeners.length) { this$1._listen(); }
-	    } else {
-	      for (var i = 0, list = this$1._listeners; i < list.length; i += 1) {
-	          var listener = list[i];
-
-	          listener.operation._disconnect(error);
-	        }
-	    }
-	  });
-	};
-
-
-	var Node = function Node(coupler, path, parent) {
-	  this._coupler = coupler;
-	  this.path = path;
-	  this.parent = parent;
-	  this.url = this._coupler._rootUrl + path;
-	  this.operations = [];
-	  this.queryCount = 0;
-	  this.listening = false;
-	  this.ready = false;
-	  this.children = {};
-	};
-
-	var prototypeAccessors$8 = { active: {},count: {} };
-
-	prototypeAccessors$8.active.get = function () {
-	  return this.count || this.queryCount;
-	};
-
-	prototypeAccessors$8.count.get = function () {
-	  return this.operations.length;
-	};
-
-	Node.prototype.listen = function listen (skip) {
-	    var this$1 = this;
-
-	  if (!skip && this.count) {
-	    if (this.listening) { return; }
-	    _.forEach(this.operations, function (op) {this$1._coupler._dispatcher.clearReady(op);});
-	    this._coupler._bridge.on(
-	      this.url, this.url, null, 'value', this._handleSnapshot, this._handleError, this,
-	      {sync: true});
-	    this.listening = true;
-	  } else {
-	    _.forEach(this.children, function (child) {child.listen();});
-	  }
-	};
-
-	Node.prototype.unlisten = function unlisten (skip) {
-	  if (!skip && this.listening) {
-	    this._coupler._bridge.off(this.url, this.url, null, 'value', this._handleSnapshot, this);
-	    this.listening = false;
-	    this._forAllDescendants(function (node) {
-	      if (node.ready) {
-	        node.ready = false;
-	        angularProxy.digest();
-	      }
-	    });
-	  } else {
-	    _.forEach(this.children, function (child) {child.unlisten();});
-	  }
-	};
-
-	Node.prototype._handleSnapshot = function _handleSnapshot (snap) {
-	    var this$1 = this;
-
-	  this._coupler._queueSnapshotCallback(function () {
-	    if (!this$1.listening || !this$1._coupler.isTrunkCoupled(snap.path)) { return; }
-	    this$1._coupler._applySnapshot(snap);
-	    if (!this$1.ready && snap.path === this$1.path) {
-	      this$1.ready = true;
-	      angularProxy.digest();
-	      this$1.unlisten(true);
-	      this$1._forAllDescendants(function (node) {
-	        for (var i = 0, list = node.operations; i < list.length; i += 1) {
-	            var op = list[i];
-
-	            this$1._coupler._dispatcher.markReady(op);
-	          }
-	      });
-	    }
-	  });
-	};
-
-	Node.prototype._handleError = function _handleError (error) {
-	    var this$1 = this;
-
-	  if (!this.count || !this.listening) { return; }
-	  this.listening = false;
-	  this._forAllDescendants(function (node) {
-	    if (node.ready) {
-	      node.ready = false;
-	      angularProxy.digest();
-	    }
-	    for (var i = 0, list = node.operations; i < list.length; i += 1) {
-	        var op = list[i];
-
-	        this$1._coupler._dispatcher.clearReady(op);
-	      }
-	  });
-	  return Promise.all(_.map(this.operations, function (op) {
-	    return this$1._coupler._dispatcher.retry(op, error).catch(function (e) {
-	      op._disconnect(e);
-	      return false;
-	    });
-	  })).then(function (results) {
-	    if (_.some(results)) {
-	      if (this$1.count) { this$1.listen(); }
-	    } else {
-	      for (var i = 0, list = this$1.operations; i < list.length; i += 1) {
-	          var op = list[i];
-
-	          op._disconnect(error);
-	        }
-	      // Pulling all the operations will automatically get us listening on descendants.
-	    }
-	  });
-	};
-
-	Node.prototype._forAllDescendants = function _forAllDescendants (iteratee) {
-	  iteratee(this);
-	  _.forEach(this.children, function (child) { return child._forAllDescendants(iteratee); });
-	};
-
-	Node.prototype.collectCoupledDescendantPaths = function collectCoupledDescendantPaths (paths) {
-	  if (!paths) { paths = {}; }
-	  paths[this.path] = this.active;
-	  if (!this.active) {
-	    _.forEach(this.children, function (child) {child.collectCoupledDescendantPaths(paths);});
-	  }
-	  return paths;
-	};
-
-	Object.defineProperties( Node.prototype, prototypeAccessors$8 );
-
-
-	var Coupler = function Coupler(rootUrl, bridge, dispatcher, applySnapshot, prunePath) {
-	  this._rootUrl = rootUrl;
-	  this._bridge = bridge;
-	  this._dispatcher = dispatcher;
-	  this._applySnapshot = applySnapshot;
-	  this._pendingSnapshotCallbacks = [];
-	  this._throttled = {processPendingSnapshots: this._processPendingSnapshots};
-	  this._prunePath = prunePath;
-	  this._vue = new Vue({data: {root: undefined, queryHandlers: {}}});
-	  this._nodeIndex = Object.create(null);
-	  Object.freeze(this);
-	  // Set root node after freezing Coupler, otherwise it gets vue-ified too.
-	  this._vue.$data.root = new Node(this, '/');
-	  this._nodeIndex['/'] = this._root;
-	};
-
-	var prototypeAccessors$1$3 = { _root: {},_queryHandlers: {} };
-
-	prototypeAccessors$1$3._root.get = function () {
-	  return this._vue.$data.root;
-	};
-
-	prototypeAccessors$1$3._queryHandlers.get = function () {
-	  return this._vue.$data.queryHandlers;
-	};
-
-	Coupler.prototype.destroy = function destroy () {
-	  _.forEach(this._queryHandlers, function (queryHandler) {queryHandler.destroy();});
-	  this._root.unlisten();
-	  this._vue.$destroy();
-	};
-
-	Coupler.prototype.couple = function couple (path, operation) {
-	  return this._coupleSegments(splitPath(path, true), operation);
-	};
-
-	Coupler.prototype._coupleSegments = function _coupleSegments (segments, operation) {
-	    var this$1 = this;
-
-	  var node;
-	  var superseded = !operation;
-	  var ready = false;
-	  for (var i = 0, list = segments; i < list.length; i += 1) {
-	    var segment = list[i];
-
-	      var child = segment ? node.children && node.children[segment] : this$1._root;
-	    if (!child) {
-	      child = new Node(this$1, ((node.path === '/' ? '' : node.path) + "/" + segment), node);
-	      Vue.set(node.children, segment, child);
-	      this$1._nodeIndex[child.path] = child;
-	    }
-	    superseded = superseded || child.listening;
-	    ready = ready || child.ready;
-	    node = child;
-	  }
-	  if (operation) {
-	    node.operations.push(operation);
-	  } else {
-	    node.queryCount++;
-	  }
-	  if (superseded) {
-	    if (operation && ready) { this._dispatcher.markReady(operation); }
-	  } else {
-	    node.listen();// node will call unlisten() on descendants when ready
-	  }
-	};
-
-	Coupler.prototype.decouple = function decouple (path, operation) {
-	  return this._decoupleSegments(splitPath(path, true), operation);
-	};
-
-	Coupler.prototype._decoupleSegments = function _decoupleSegments (segments, operation) {
-	    var this$1 = this;
-
-	  var ancestors = [];
-	  var node;
-	  for (var i$1 = 0, list = segments; i$1 < list.length; i$1 += 1) {
-	    var segment = list[i$1];
-
-	      node = segment ? node.children && node.children[segment] : this$1._root;
-	    if (!node) { break; }
-	    ancestors.push(node);
-	  }
-	  if (!node || !(operation ? node.count : node.queryCount)) {
-	    throw new Error(("Path not coupled: " + (segments.join('/') || '/')));
-	  }
-	  if (operation) {
-	    _.pull(node.operations, operation);
-	  } else {
-	    node.queryCount--;
-	  }
-	  if (operation && !node.count) {
-	    // Ideally, we wouldn't resync the full values here since we probably already have the current
-	    // value for all children.But making sure that's true is tricky in an async system (what if
-	    // the node's value changes and the update crosses the 'off' call in transit?) and this
-	    // situation should be sufficiently rare that the optimization is probably not worth it right
-	    // now.
-	    node.listen();
-	    if (node.listening) { node.unlisten(); }
-	  }
-	  if (!node.active) {
-	    for (var i = ancestors.length - 1; i > 0; i--) {
-	      node = ancestors[i];
-	      if (node === this$1._root || node.active || !_.isEmpty(node.children)) { break; }
-	      Vue.delete(ancestors[i - 1].children, segments[i]);
-	      node.ready = undefined;
-	      delete this$1._nodeIndex[node.path];
-	    }
-	    var path = segments.join('/') || '/';
-	    this._prunePath(path, this.findCoupledDescendantPaths(path));
-	  }
-	};
-
-	Coupler.prototype.subscribe = function subscribe (query, operation, keysCallback) {
-	  var queryHandler = this._queryHandlers[query.toString()];
-	  if (!queryHandler) {
-	    queryHandler = new QueryHandler(this, query);
-	    Vue.set(this._queryHandlers, query.toString(), queryHandler);
-	  }
-	  queryHandler.attach(operation, keysCallback);
-	};
-
-	Coupler.prototype.unsubscribe = function unsubscribe (query, operation) {
-	  var queryHandler = this._queryHandlers[query.toString()];
-	  if (queryHandler && !queryHandler.detach(operation)) {
-	    queryHandler.destroy();
-	    Vue.delete(this._queryHandlers, query.toString());
-	  }
-	};
-
-	// Return whether the node at path or any ancestors are coupled.
-	Coupler.prototype.isTrunkCoupled = function isTrunkCoupled (path) {
-	    var this$1 = this;
-
-	  var segments = splitPath(path, true);
-	  var node;
-	  for (var i = 0, list = segments; i < list.length; i += 1) {
-	    var segment = list[i];
-
-	      node = segment ? node.children && node.children[segment] : this$1._root;
-	    if (!node) { return false; }
-	    if (node.active) { return true; }
-	  }
-	  return false;
-	};
-
-	Coupler.prototype.findCoupledDescendantPaths = function findCoupledDescendantPaths (path) {
-	    var this$1 = this;
-
-	  var node;
-	  for (var i = 0, list = splitPath(path, true); i < list.length; i += 1) {
-	    var segment = list[i];
-
-	      node = segment ? node.children && node.children[segment] : this$1._root;
-	    if (node && node.active) { return ( obj = {}, obj[path] = node.active, obj );
-	        var obj; }
-	    if (!node) { break; }
-	  }
-	  return node && node.collectCoupledDescendantPaths();
-	};
-
-	Coupler.prototype.isSubtreeReady = function isSubtreeReady (path) {
-	  var node, childSegment;
-	  function extractChildSegment(match) {
-	    childSegment = match.slice(1);
-	    return '';
-	  }
-	  while (!(node = this._nodeIndex[path])) {
-	    path = path.replace(/\/[^/]*$/, extractChildSegment) || '/';
-	  }
-	  if (childSegment) { void node.children; }// state an interest in the closest ancestor's children
-	  while (node) {
-	    if (node.ready) { return true; }
-	    node = node.parent;
-	  }
-	  return false;
-	};
-
-	Coupler.prototype.isQueryReady = function isQueryReady (query) {
-	  var queryHandler = this._queryHandlers[query.toString()];
-	  return queryHandler && queryHandler.ready;
-	};
-
-	Coupler.prototype._queueSnapshotCallback = function _queueSnapshotCallback (callback) {
-	  this._pendingSnapshotCallbacks.push(callback);
-	  this._throttled.processPendingSnapshots.call(this);
-	};
-
-	Coupler.prototype._processPendingSnapshots = function _processPendingSnapshots () {
-	    var this$1 = this;
-
-	  for (var i = 0, list = this$1._pendingSnapshotCallbacks; i < list.length; i += 1) {
-	      var callback = list[i];
-
-	      callback();
-	    }
-	  this._pendingSnapshotCallbacks.splice(0, Infinity);
-	};
-
-	Coupler.prototype.throttleSnapshots = function throttleSnapshots (delay) {
-	  if (delay) {
-	    this._throttled.processPendingSnapshots = _.throttle(this._processPendingSnapshots, delay);
-	  } else {
-	    this._throttled.processPendingSnapshots = this._processPendingSnapshots;
-	  }
-	};
-
-	Object.defineProperties( Coupler.prototype, prototypeAccessors$1$3 );
-
 	// These are defined separately for each object so they're not included in Value below.
 	var RESERVED_VALUE_PROPERTY_NAMES = {$$$trussCheck: true, __ob__: true};
 
@@ -2280,40 +1812,17 @@
 	var currentPropertyFrozen;
 
 
-	var Value = function Value () {};
+	var BaseValue = function BaseValue () {};
 
-	var prototypeAccessors$9 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$hidden: {},$empty: {},$keys: {},$values: {},$meta: {},$root: {},$now: {},$ready: {},$overridden: {},$$initializers: {},$$finalizers: {},$destroyed: {} };
+	var prototypeAccessors$7 = { $meta: {},$store: {},$now: {},$$finalizers: {} };
 
-	prototypeAccessors$9.$parent.get = function () {return creatingObjectProperties.$parent.value;};
-	prototypeAccessors$9.$path.get = function () {return creatingObjectProperties.$path.value;};
-	prototypeAccessors$9.$truss.get = function () {
-	  Object.defineProperty(this, '$truss', {value: this.$parent.$truss});
-	  return this.$truss;
-	};
-	prototypeAccessors$9.$ref.get = function () {
-	  Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
-	  return this.$ref;
-	};
-	prototypeAccessors$9.$refs.get = function () {return this.$ref;};
-	prototypeAccessors$9.$key.get = function () {
-	  Object.defineProperty(
-	    this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
-	  return this.$key;
-	};
-	prototypeAccessors$9.$data.get = function () {return this;};
-	prototypeAccessors$9.$hidden.get = function () {return false;};// eslint-disable-line lodash/prefer-constant
-	prototypeAccessors$9.$empty.get = function () {return _.isEmpty(this.$data);};
-	prototypeAccessors$9.$keys.get = function () {return _.keys(this.$data);};
-	prototypeAccessors$9.$values.get = function () {return _.values(this.$data);};
-	prototypeAccessors$9.$meta.get = function () {return this.$truss.meta;};
-	prototypeAccessors$9.$root.get = function () {return this.$truss.root;};// access indirectly to leave dependency trace
-	prototypeAccessors$9.$now.get = function () {return this.$truss.now;};
-	prototypeAccessors$9.$ready.get = function () {return this.$ref.ready;};
-	prototypeAccessors$9.$overridden.get = function () {return false;};// eslint-disable-line lodash/prefer-constant
+	prototypeAccessors$7.$meta.get = function () {return this.$truss.meta;};
+	prototypeAccessors$7.$store.get = function () {return this.$truss.store;};// access indirectly to leave dependency trace
+	prototypeAccessors$7.$now.get = function () {return this.$truss.now;};
 
-	Value.prototype.$newKey = function $newKey () {return this.$truss.newKey();};
+	BaseValue.prototype.$newKey = function $newKey () {return this.$truss.newKey();};
 
-	Value.prototype.$intercept = function $intercept (actionType, callbacks) {
+	BaseValue.prototype.$intercept = function $intercept (actionType, callbacks) {
 	    var this$1 = this;
 
 	  if (this.$destroyed) { throw new Error('Object already destroyed'); }
@@ -2326,7 +1835,7 @@
 	  return uninterceptAndRemoveFinalizer;
 	};
 
-	Value.prototype.$connect = function $connect (scope, connections) {
+	BaseValue.prototype.$connect = function $connect (scope, connections) {
 	    var this$1 = this;
 
 	  if (this.$destroyed) { throw new Error('Object already destroyed'); }
@@ -2345,7 +1854,7 @@
 	  return connector;
 	};
 
-	Value.prototype.$peek = function $peek (target, callback) {
+	BaseValue.prototype.$peek = function $peek (target, callback) {
 	    var this$1 = this;
 
 	  if (this.$destroyed) { throw new Error('Object already destroyed'); }
@@ -2356,26 +1865,26 @@
 	  return promise;
 	};
 
-	Value.prototype.$watch = function $watch (subjectFn, callbackFn, options) {
+	BaseValue.prototype.$observe = function $observe (subjectFn, callbackFn, options) {
 	    var this$1 = this;
 
 	  if (this.$destroyed) { throw new Error('Object already destroyed'); }
-	  var unwatchAndRemoveFinalizer;
+	  var unobserveAndRemoveFinalizer;
 
-	  var unwatch = this.$truss.watch(function () {
+	  var unobserve = this.$truss.observe(function () {
 	    this$1.$$touchThis();
 	    return subjectFn.call(this$1);
 	  }, callbackFn.bind(this), options);
 
-	  unwatchAndRemoveFinalizer = function () {// eslint-disable-line prefer-const
-	    unwatch();
-	    _.pull(this$1.$$finalizers, unwatchAndRemoveFinalizer);
+	  unobserveAndRemoveFinalizer = function () {// eslint-disable-line prefer-const
+	    unobserve();
+	    _.pull(this$1.$$finalizers, unobserveAndRemoveFinalizer);
 	  };
-	  this.$$finalizers.push(unwatchAndRemoveFinalizer);
-	  return unwatchAndRemoveFinalizer;
+	  this.$$finalizers.push(unobserveAndRemoveFinalizer);
+	  return unobserveAndRemoveFinalizer;
 	};
 
-	Value.prototype.$when = function $when (expression, options) {
+	BaseValue.prototype.$when = function $when (expression, options) {
 	    var this$1 = this;
 
 	  if (this.$destroyed) { throw new Error('Object already destroyed'); }
@@ -2387,6 +1896,43 @@
 	  this.$$finalizers.push(promise.cancel);
 	  return promise;
 	};
+
+	prototypeAccessors$7.$$finalizers.get = function () {
+	  Object.defineProperty(this, '$$finalizers', {
+	    value: [], writable: false, enumerable: false, configurable: false});
+	  return this.$$finalizers;
+	};
+
+	Object.defineProperties( BaseValue.prototype, prototypeAccessors$7 );
+
+
+	var Value = function Value () {};
+
+	var prototypeAccessors$1$2 = { $parent: {},$path: {},$truss: {},$ref: {},$refs: {},$key: {},$data: {},$hidden: {},$empty: {},$keys: {},$values: {},$ready: {},$overridden: {},$$initializers: {},$destroyed: {} };
+
+	prototypeAccessors$1$2.$parent.get = function () {return creatingObjectProperties.$parent.value;};
+	prototypeAccessors$1$2.$path.get = function () {return creatingObjectProperties.$path.value;};
+	prototypeAccessors$1$2.$truss.get = function () {
+	  Object.defineProperty(this, '$truss', {value: this.$parent.$truss});
+	  return this.$truss;
+	};
+	prototypeAccessors$1$2.$ref.get = function () {
+	  Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
+	  return this.$ref;
+	};
+	prototypeAccessors$1$2.$refs.get = function () {return this.$ref;};
+	prototypeAccessors$1$2.$key.get = function () {
+	  Object.defineProperty(
+	    this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
+	  return this.$key;
+	};
+	prototypeAccessors$1$2.$data.get = function () {return this;};
+	prototypeAccessors$1$2.$hidden.get = function () {return false;};// eslint-disable-line lodash/prefer-constant
+	prototypeAccessors$1$2.$empty.get = function () {return _.isEmpty(this.$data);};
+	prototypeAccessors$1$2.$keys.get = function () {return _.keys(this.$data);};
+	prototypeAccessors$1$2.$values.get = function () {return _.values(this.$data);};
+	prototypeAccessors$1$2.$ready.get = function () {return this.$ref.ready;};
+	prototypeAccessors$1$2.$overridden.get = function () {return false;};// eslint-disable-line lodash/prefer-constant
 
 	Value.prototype.$nextTick = function $nextTick () {
 	    var this$1 = this;
@@ -2417,29 +1963,24 @@
 	  } else if (this.$parent) {
 	    (this.$parent.hasOwnProperty('$data') ? this.$parent.$data : this.$parent)[this.$key];
 	  } else {
-	    this.$root;
+	    this.$store;
 	  }
 	  /* eslint-enable no-unused-expressions */
 	};
 
-	prototypeAccessors$9.$$initializers.get = function () {
+	prototypeAccessors$1$2.$$initializers.get = function () {
 	  Object.defineProperty(this, '$$initializers', {
 	    value: [], writable: false, enumerable: false, configurable: true});
 	  return this.$$initializers;
 	};
 
-	prototypeAccessors$9.$$finalizers.get = function () {
-	  Object.defineProperty(this, '$$finalizers', {
-	    value: [], writable: false, enumerable: false, configurable: false});
-	  return this.$$finalizers;
-	};
-
-	prototypeAccessors$9.$destroyed.get = function () {// eslint-disable-line lodash/prefer-constant
+	prototypeAccessors$1$2.$destroyed.get = function () {// eslint-disable-line lodash/prefer-constant
 	  return false;
 	};
 
-	Object.defineProperties( Value.prototype, prototypeAccessors$9 );
+	Object.defineProperties( Value.prototype, prototypeAccessors$1$2 );
 
+	copyPrototype(BaseValue, Value);
 
 	_.forEach(Value.prototype, function (prop, name) {
 	  Object.defineProperty(
@@ -2765,7 +2306,7 @@
 
 	Modeler.prototype.destroyObject = function destroyObject (object) {
 	  if (_.has(object, '$$finalizers')) {
-	    // Some destructors remove themselves from the array, so clone it before iterating.
+	    // Some finalizers remove themselves from the array, so clone it before iterating.
 	    for (var i = 0, list = _.clone(object.$$finalizers); i < list.length; i += 1) {
 	        var fn = list[i];
 
@@ -2923,17 +2464,494 @@
 	  return _.mapValues(object, function (value) { return freeze(value); });
 	}
 
+	var QueryHandler = function QueryHandler(coupler, query) {
+	  this._coupler = coupler;
+	  this._query = query;
+	  this._listeners = [];
+	  this._keys = [];
+	  this._url = this._coupler._rootUrl + query.path;
+	  this._segments = splitPath(query.path, true);
+	  this._listening = false;
+	  this.ready = false;
+	};
+
+	QueryHandler.prototype.attach = function attach (operation, keysCallback) {
+	  this._listen();
+	  this._listeners.push({operation: operation, keysCallback: keysCallback});
+	  if (keysCallback) { keysCallback(this._keys); }
+	};
+
+	QueryHandler.prototype.detach = function detach (operation) {
+	  var k = _.findIndex(this._listeners, {operation: operation});
+	  if (k >= 0) { this._listeners.splice(k, 1); }
+	  return this._listeners.length;
+	};
+
+	QueryHandler.prototype._listen = function _listen () {
+	  if (this._listening) { return; }
+	  this._coupler._bridge.on(
+	    this._query.toString(), this._url, this._query.constraints, 'value',
+	    this._handleSnapshot, this._handleError, this, {sync: true});
+	  this._listening = true;
+	};
+
+	QueryHandler.prototype.destroy = function destroy () {
+	    var this$1 = this;
+
+	  this._coupler._bridge.off(
+	    this._query.toString(), this._url, this._query.constraints, 'value', this._handleSnapshot,
+	    this);
+	  this._listening = false;
+	  this.ready = false;
+	  angularProxy.digest();
+	  for (var i = 0, list = this$1._keys; i < list.length; i += 1) {
+	    var key = list[i];
+
+	      this$1._coupler._decoupleSegments(this$1._segments.concat(key));
+	  }
+	};
+
+	QueryHandler.prototype._handleSnapshot = function _handleSnapshot (snap) {
+	    var this$1 = this;
+
+	  this._coupler._queueSnapshotCallback(function () {
+	    // Order is important here: first couple any new subpaths so _handleSnapshot will update the
+	    // tree, then tell the client to update its keys, pulling values from the tree.
+	    if (!this$1._listeners.length || !this$1._listening) { return; }
+	    var updatedKeys = this$1._updateKeys(snap);
+	    this$1._coupler._applySnapshot(snap);
+	    if (!this$1.ready) {
+	      this$1.ready = true;
+	      angularProxy.digest();
+	      for (var i = 0, list = this$1._listeners; i < list.length; i += 1) {
+	        var listener = list[i];
+
+	          this$1._coupler._dispatcher.markReady(listener.operation);
+	      }
+	    }
+	    if (updatedKeys) {
+	      for (var i$1 = 0, list$1 = this$1._listeners; i$1 < list$1.length; i$1 += 1) {
+	        var listener$1 = list$1[i$1];
+
+	          if (listener$1.keysCallback) { listener$1.keysCallback(updatedKeys); }
+	      }
+	    }
+	  });
+	};
+
+	QueryHandler.prototype._updateKeys = function _updateKeys (snap) {
+	    var this$1 = this;
+
+	  var updatedKeys;
+	  if (snap.path === this._query.path) {
+	    updatedKeys = _.keys(snap.value);
+	    updatedKeys.sort();
+	    if (_.isEqual(this._keys, updatedKeys)) {
+	      updatedKeys = null;
+	    } else {
+	      for (var i = 0, list = _.difference(updatedKeys, this$1._keys); i < list.length; i += 1) {
+	        var key = list[i];
+
+	          this$1._coupler._coupleSegments(this$1._segments.concat(key));
+	      }
+	      for (var i$1 = 0, list$1 = _.difference(this$1._keys, updatedKeys); i$1 < list$1.length; i$1 += 1) {
+	        var key$1 = list$1[i$1];
+
+	          this$1._coupler._decoupleSegments(this$1._segments.concat(key$1));
+	      }
+	      this._keys = updatedKeys;
+	    }
+	  } else if (snap.path.replace(/\/[^/]+/, '') === this._query.path) {
+	    var hasKey = _.includes(this._keys, snap.key);
+	    if (snap.value) {
+	      if (!hasKey) {
+	        this._coupler._coupleSegments(this._segments.concat(snap.key));
+	        this._keys.push(snap.key);
+	        this._keys.sort();
+	        updatedKeys = this._keys;
+	      }
+	    } else if (hasKey) {
+	      this._coupler._decoupleSegments(this._segments.concat(snap.key));
+	      _.pull(this._keys, snap.key);
+	      this._keys.sort();
+	      updatedKeys = this._keys;
+	    }
+	  }
+	  return updatedKeys;
+	};
+
+	QueryHandler.prototype._handleError = function _handleError (error) {
+	    var this$1 = this;
+
+	  if (!this._listeners.length || !this._listening) { return; }
+	  this._listening = false;
+	  this.ready = false;
+	  angularProxy.digest();
+	  Promise.all(_.map(this._listeners, function (listener) {
+	    this$1._coupler._dispatcher.clearReady(listener.operation);
+	    return this$1._coupler._dispatcher.retry(listener.operation, error).catch(function (e) {
+	      listener.operation._disconnect(e);
+	      return false;
+	    });
+	  })).then(function (results) {
+	    if (_.some(results)) {
+	      if (this$1._listeners.length) { this$1._listen(); }
+	    } else {
+	      for (var i = 0, list = this$1._listeners; i < list.length; i += 1) {
+	          var listener = list[i];
+
+	          listener.operation._disconnect(error);
+	        }
+	    }
+	  });
+	};
+
+
+	var Node = function Node(coupler, path, parent) {
+	  this._coupler = coupler;
+	  this.path = path;
+	  this.parent = parent;
+	  this.url = this._coupler._rootUrl + path;
+	  this.operations = [];
+	  this.queryCount = 0;
+	  this.listening = false;
+	  this.ready = false;
+	  this.children = {};
+	};
+
+	var prototypeAccessors$9 = { active: {},count: {} };
+
+	prototypeAccessors$9.active.get = function () {
+	  return this.count || this.queryCount;
+	};
+
+	prototypeAccessors$9.count.get = function () {
+	  return this.operations.length;
+	};
+
+	Node.prototype.listen = function listen (skip) {
+	    var this$1 = this;
+
+	  if (!skip && this.count) {
+	    if (this.listening) { return; }
+	    _.forEach(this.operations, function (op) {this$1._coupler._dispatcher.clearReady(op);});
+	    this._coupler._bridge.on(
+	      this.url, this.url, null, 'value', this._handleSnapshot, this._handleError, this,
+	      {sync: true});
+	    this.listening = true;
+	  } else {
+	    _.forEach(this.children, function (child) {child.listen();});
+	  }
+	};
+
+	Node.prototype.unlisten = function unlisten (skip) {
+	  if (!skip && this.listening) {
+	    this._coupler._bridge.off(this.url, this.url, null, 'value', this._handleSnapshot, this);
+	    this.listening = false;
+	    this._forAllDescendants(function (node) {
+	      if (node.ready) {
+	        node.ready = false;
+	        angularProxy.digest();
+	      }
+	    });
+	  } else {
+	    _.forEach(this.children, function (child) {child.unlisten();});
+	  }
+	};
+
+	Node.prototype._handleSnapshot = function _handleSnapshot (snap) {
+	    var this$1 = this;
+
+	  this._coupler._queueSnapshotCallback(function () {
+	    if (!this$1.listening || !this$1._coupler.isTrunkCoupled(snap.path)) { return; }
+	    this$1._coupler._applySnapshot(snap);
+	    if (!this$1.ready && snap.path === this$1.path) {
+	      this$1.ready = true;
+	      angularProxy.digest();
+	      this$1.unlisten(true);
+	      this$1._forAllDescendants(function (node) {
+	        for (var i = 0, list = node.operations; i < list.length; i += 1) {
+	            var op = list[i];
+
+	            this$1._coupler._dispatcher.markReady(op);
+	          }
+	      });
+	    }
+	  });
+	};
+
+	Node.prototype._handleError = function _handleError (error) {
+	    var this$1 = this;
+
+	  if (!this.count || !this.listening) { return; }
+	  this.listening = false;
+	  this._forAllDescendants(function (node) {
+	    if (node.ready) {
+	      node.ready = false;
+	      angularProxy.digest();
+	    }
+	    for (var i = 0, list = node.operations; i < list.length; i += 1) {
+	        var op = list[i];
+
+	        this$1._coupler._dispatcher.clearReady(op);
+	      }
+	  });
+	  return Promise.all(_.map(this.operations, function (op) {
+	    return this$1._coupler._dispatcher.retry(op, error).catch(function (e) {
+	      op._disconnect(e);
+	      return false;
+	    });
+	  })).then(function (results) {
+	    if (_.some(results)) {
+	      if (this$1.count) { this$1.listen(); }
+	    } else {
+	      for (var i = 0, list = this$1.operations; i < list.length; i += 1) {
+	          var op = list[i];
+
+	          op._disconnect(error);
+	        }
+	      // Pulling all the operations will automatically get us listening on descendants.
+	    }
+	  });
+	};
+
+	Node.prototype._forAllDescendants = function _forAllDescendants (iteratee) {
+	  iteratee(this);
+	  _.forEach(this.children, function (child) { return child._forAllDescendants(iteratee); });
+	};
+
+	Node.prototype.collectCoupledDescendantPaths = function collectCoupledDescendantPaths (paths) {
+	  if (!paths) { paths = {}; }
+	  paths[this.path] = this.active;
+	  if (!this.active) {
+	    _.forEach(this.children, function (child) {child.collectCoupledDescendantPaths(paths);});
+	  }
+	  return paths;
+	};
+
+	Object.defineProperties( Node.prototype, prototypeAccessors$9 );
+
+
+	var Coupler = function Coupler(rootUrl, bridge, dispatcher, applySnapshot, prunePath) {
+	  this._rootUrl = rootUrl;
+	  this._bridge = bridge;
+	  this._dispatcher = dispatcher;
+	  this._applySnapshot = applySnapshot;
+	  this._pendingSnapshotCallbacks = [];
+	  this._throttled = {processPendingSnapshots: this._processPendingSnapshots};
+	  this._prunePath = prunePath;
+	  this._vue = new Vue({data: {root: undefined, queryHandlers: {}}});
+	  this._nodeIndex = Object.create(null);
+	  Object.freeze(this);
+	  // Set root node after freezing Coupler, otherwise it gets vue-ified too.
+	  this._vue.$data.root = new Node(this, '/');
+	  this._nodeIndex['/'] = this._root;
+	};
+
+	var prototypeAccessors$1$4 = { _root: {},_queryHandlers: {} };
+
+	prototypeAccessors$1$4._root.get = function () {
+	  return this._vue.$data.root;
+	};
+
+	prototypeAccessors$1$4._queryHandlers.get = function () {
+	  return this._vue.$data.queryHandlers;
+	};
+
+	Coupler.prototype.destroy = function destroy () {
+	  _.forEach(this._queryHandlers, function (queryHandler) {queryHandler.destroy();});
+	  this._root.unlisten();
+	  this._vue.$destroy();
+	};
+
+	Coupler.prototype.couple = function couple (path, operation) {
+	  return this._coupleSegments(splitPath(path, true), operation);
+	};
+
+	Coupler.prototype._coupleSegments = function _coupleSegments (segments, operation) {
+	    var this$1 = this;
+
+	  var node;
+	  var superseded = !operation;
+	  var ready = false;
+	  for (var i = 0, list = segments; i < list.length; i += 1) {
+	    var segment = list[i];
+
+	      var child = segment ? node.children && node.children[segment] : this$1._root;
+	    if (!child) {
+	      child = new Node(this$1, ((node.path === '/' ? '' : node.path) + "/" + segment), node);
+	      Vue.set(node.children, segment, child);
+	      this$1._nodeIndex[child.path] = child;
+	    }
+	    superseded = superseded || child.listening;
+	    ready = ready || child.ready;
+	    node = child;
+	  }
+	  if (operation) {
+	    node.operations.push(operation);
+	  } else {
+	    node.queryCount++;
+	  }
+	  if (superseded) {
+	    if (operation && ready) { this._dispatcher.markReady(operation); }
+	  } else {
+	    node.listen();// node will call unlisten() on descendants when ready
+	  }
+	};
+
+	Coupler.prototype.decouple = function decouple (path, operation) {
+	  return this._decoupleSegments(splitPath(path, true), operation);
+	};
+
+	Coupler.prototype._decoupleSegments = function _decoupleSegments (segments, operation) {
+	    var this$1 = this;
+
+	  var ancestors = [];
+	  var node;
+	  for (var i$1 = 0, list = segments; i$1 < list.length; i$1 += 1) {
+	    var segment = list[i$1];
+
+	      node = segment ? node.children && node.children[segment] : this$1._root;
+	    if (!node) { break; }
+	    ancestors.push(node);
+	  }
+	  if (!node || !(operation ? node.count : node.queryCount)) {
+	    throw new Error(("Path not coupled: " + (segments.join('/') || '/')));
+	  }
+	  if (operation) {
+	    _.pull(node.operations, operation);
+	  } else {
+	    node.queryCount--;
+	  }
+	  if (operation && !node.count) {
+	    // Ideally, we wouldn't resync the full values here since we probably already have the current
+	    // value for all children.But making sure that's true is tricky in an async system (what if
+	    // the node's value changes and the update crosses the 'off' call in transit?) and this
+	    // situation should be sufficiently rare that the optimization is probably not worth it right
+	    // now.
+	    node.listen();
+	    if (node.listening) { node.unlisten(); }
+	  }
+	  if (!node.active) {
+	    for (var i = ancestors.length - 1; i > 0; i--) {
+	      node = ancestors[i];
+	      if (node === this$1._root || node.active || !_.isEmpty(node.children)) { break; }
+	      Vue.delete(ancestors[i - 1].children, segments[i]);
+	      node.ready = undefined;
+	      delete this$1._nodeIndex[node.path];
+	    }
+	    var path = segments.join('/') || '/';
+	    this._prunePath(path, this.findCoupledDescendantPaths(path));
+	  }
+	};
+
+	Coupler.prototype.subscribe = function subscribe (query, operation, keysCallback) {
+	  var queryHandler = this._queryHandlers[query.toString()];
+	  if (!queryHandler) {
+	    queryHandler = new QueryHandler(this, query);
+	    Vue.set(this._queryHandlers, query.toString(), queryHandler);
+	  }
+	  queryHandler.attach(operation, keysCallback);
+	};
+
+	Coupler.prototype.unsubscribe = function unsubscribe (query, operation) {
+	  var queryHandler = this._queryHandlers[query.toString()];
+	  if (queryHandler && !queryHandler.detach(operation)) {
+	    queryHandler.destroy();
+	    Vue.delete(this._queryHandlers, query.toString());
+	  }
+	};
+
+	// Return whether the node at path or any ancestors are coupled.
+	Coupler.prototype.isTrunkCoupled = function isTrunkCoupled (path) {
+	    var this$1 = this;
+
+	  var segments = splitPath(path, true);
+	  var node;
+	  for (var i = 0, list = segments; i < list.length; i += 1) {
+	    var segment = list[i];
+
+	      node = segment ? node.children && node.children[segment] : this$1._root;
+	    if (!node) { return false; }
+	    if (node.active) { return true; }
+	  }
+	  return false;
+	};
+
+	Coupler.prototype.findCoupledDescendantPaths = function findCoupledDescendantPaths (path) {
+	    var this$1 = this;
+
+	  var node;
+	  for (var i = 0, list = splitPath(path, true); i < list.length; i += 1) {
+	    var segment = list[i];
+
+	      node = segment ? node.children && node.children[segment] : this$1._root;
+	    if (node && node.active) { return ( obj = {}, obj[path] = node.active, obj );
+	        var obj; }
+	    if (!node) { break; }
+	  }
+	  return node && node.collectCoupledDescendantPaths();
+	};
+
+	Coupler.prototype.isSubtreeReady = function isSubtreeReady (path) {
+	  var node, childSegment;
+	  function extractChildSegment(match) {
+	    childSegment = match.slice(1);
+	    return '';
+	  }
+	  while (!(node = this._nodeIndex[path])) {
+	    path = path.replace(/\/[^/]*$/, extractChildSegment) || '/';
+	  }
+	  if (childSegment) { void node.children; }// state an interest in the closest ancestor's children
+	  while (node) {
+	    if (node.ready) { return true; }
+	    node = node.parent;
+	  }
+	  return false;
+	};
+
+	Coupler.prototype.isQueryReady = function isQueryReady (query) {
+	  var queryHandler = this._queryHandlers[query.toString()];
+	  return queryHandler && queryHandler.ready;
+	};
+
+	Coupler.prototype._queueSnapshotCallback = function _queueSnapshotCallback (callback) {
+	  this._pendingSnapshotCallbacks.push(callback);
+	  this._throttled.processPendingSnapshots.call(this);
+	};
+
+	Coupler.prototype._processPendingSnapshots = function _processPendingSnapshots () {
+	    var this$1 = this;
+
+	  for (var i = 0, list = this$1._pendingSnapshotCallbacks; i < list.length; i += 1) {
+	      var callback = list[i];
+
+	      callback();
+	    }
+	  this._pendingSnapshotCallbacks.splice(0, Infinity);
+	};
+
+	Coupler.prototype.throttleSnapshots = function throttleSnapshots (delay) {
+	  if (delay) {
+	    this._throttled.processPendingSnapshots = _.throttle(this._processPendingSnapshots, delay);
+	  } else {
+	    this._throttled.processPendingSnapshots = this._processPendingSnapshots;
+	  }
+	};
+
+	Object.defineProperties( Coupler.prototype, prototypeAccessors$1$4 );
+
 	var Transaction = function Transaction(ref) {
 	  this._ref = ref;
 	  this._outcome = undefined;
 	  this._values = undefined;
 	};
 
-	var prototypeAccessors$7 = { currentValue: {},outcome: {},values: {} };
+	var prototypeAccessors$8 = { currentValue: {},outcome: {},values: {} };
 
-	prototypeAccessors$7.currentValue.get = function () {return this._ref.value;};
-	prototypeAccessors$7.outcome.get = function () {return this._outcome;};
-	prototypeAccessors$7.values.get = function () {return this._values;};
+	prototypeAccessors$8.currentValue.get = function () {return this._ref.value;};
+	prototypeAccessors$8.outcome.get = function () {return this._outcome;};
+	prototypeAccessors$8.values.get = function () {return this._values;};
 
 	Transaction.prototype._setOutcome = function _setOutcome (value) {
 	  if (this._outcome) { throw new Error('Transaction already resolved with ' + this._outcome); }
@@ -2961,7 +2979,7 @@
 	  this._values = values;
 	};
 
-	Object.defineProperties( Transaction.prototype, prototypeAccessors$7 );
+	Object.defineProperties( Transaction.prototype, prototypeAccessors$8 );
 
 
 	var Tree = function Tree(truss, rootUrl, bridge, dispatcher) {
@@ -2984,9 +3002,9 @@
 	  // access the tree root via truss.
 	};
 
-	var prototypeAccessors$1$2 = { root: {},truss: {} };
+	var prototypeAccessors$1$3 = { root: {},truss: {} };
 
-	prototypeAccessors$1$2.root.get = function () {
+	prototypeAccessors$1$3.root.get = function () {
 	  if (!this._vue.$data.$root) {
 	    this._vue.$data.$root = this._createObject('/');
 	    this._fixObject(this._vue.$data.$root);
@@ -2996,7 +3014,7 @@
 	  return this._vue.$data.$root;
 	};
 
-	prototypeAccessors$1$2.truss.get = function () {
+	prototypeAccessors$1$3.truss.get = function () {
 	  return this._truss;
 	};
 
@@ -3614,7 +3632,7 @@
 	  this._modeler.checkVueObject(object, path);
 	};
 
-	Object.defineProperties( Tree.prototype, prototypeAccessors$1$2 );
+	Object.defineProperties( Tree.prototype, prototypeAccessors$1$3 );
 
 	function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
 	  // First, check all paths for correctness and absolutize them, since there could be a mix of
@@ -3692,7 +3710,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '0.8.9';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {
@@ -3712,11 +3730,11 @@
 	  Object.freeze(this);
 	};
 
-	var prototypeAccessors = { meta: {},root: {},now: {},SERVER_TIMESTAMP: {},VERSION: {},FIREBASE_SDK_VERSION: {} };
+	var prototypeAccessors = { meta: {},store: {},now: {},SERVER_TIMESTAMP: {},VERSION: {},FIREBASE_SDK_VERSION: {} };
 	var staticAccessors = { computedPropertyStats: {},worker: {} };
 
 	prototypeAccessors.meta.get = function () {return this._metaTree.root;};
-	prototypeAccessors.root.get = function () {return this._tree.root;};
+	prototypeAccessors.store.get = function () {return this._tree.root;};
 
 	/**
 	 * Mount a set of classes against the datastore structure.Must be called at most once, and
@@ -3787,17 +3805,17 @@
 	      }
 	    }});
 
-	    var unwatch = this$1.watch(function () { return connector.ready; }, function (ready) {
+	    var unobserve = this$1.observe(function () { return connector.ready; }, function (ready) {
 	      if (!ready) { return; }
-	      unwatch();
-	      unwatch = null;
+	      unobserve();
+	      unobserve = null;
 	      callbackPromise = promiseFinally(
 	        callback(scope.result), function () {angularProxy.digest(); callbackPromise = null; cleanup();}
 	      ).then(function (result) {resolve(result);}, function (error) {reject(error);});
 	    });
 
 	    cleanup = function () {
-	      if (unwatch) {unwatch(); unwatch = null;}
+	      if (unobserve) {unobserve(); unobserve = null;}
 	      if (unintercept) {unintercept(); unintercept = null;}
 	      if (connector) {connector.destroy(); connector = null;}
 	      if (callbackPromise && callbackPromise.cancel) { callbackPromise.cancel(); }
@@ -3811,7 +3829,7 @@
 	  return promiseCancel(promise, cancel);
 	};
 
-	Truss.prototype.watch = function watch (subjectFn, callbackFn, options) {
+	Truss.prototype.observe = function observe (subjectFn, callbackFn, options) {
 	  var usePreciseDefaults = _.isObject(options && options.precise);
 	  var numCallbacks = 0;
 	  var oldValueClone;
@@ -3850,7 +3868,7 @@
 
 	  var cleanup, timeoutHandle;
 	  var promise = new Promise(function (resolve, reject) {
-	    var unwatch = this$1.watch(expression, function (value) {
+	    var unobserve = this$1.observe(expression, function (value) {
 	      if (!value) { return; }
 	      // Wait for computed properties to settle and double-check.
 	      Vue.nextTick(function () {
@@ -3868,7 +3886,7 @@
 	      }, options.timeout);
 	    }
 	    cleanup = function () {
-	      if (unwatch) {unwatch(); unwatch = null;}
+	      if (unobserve) {unobserve(); unobserve = null;}
 	      if (timeoutHandle) {clearTimeout(timeoutHandle); timeoutHandle = null;}
 	      reject(new Error('Canceled'));
 	    };
@@ -3966,7 +3984,43 @@
 
 	Object.defineProperties(Truss, {
 	  SERVER_TIMESTAMP: {value: SERVER_TIMESTAMP},
-	  VERSION: {value: VERSION}
+	  VERSION: {value: VERSION},
+
+	  ComponentPlugin: {value: {
+	    install: function install(Vue2, pluginOptions) {
+	      if (Vue !== Vue2) { throw new Error('Multiple versions of Vue detected'); }
+	      if (!pluginOptions.truss) {
+	        throw new Error('Need to pass `truss` instance as an option to use the ComponentPlugin');
+	      }
+	      var prototypeExtension = {
+	        $truss: {value: pluginOptions.truss},
+	        $destroyed: {get: function get() {return this._isBeingDestroyed || this._isDestroyed;}},
+	        $$touchThis: {value: function value() {if (this._.data.__ob__) { this._data.__ob__.dep.depend(); }}}
+	      };
+	      var conflictingKeys = _(prototypeExtension).keys()
+	        .union(_.keys(BaseValue.prototype)).intersection(_.keys(Vue.prototype)).value();
+	      if (conflictingKeys.length) {
+	        throw new Error(
+	          'Truss extension properties conflict with Vue properties: ' + conflictingKeys.join(', '));
+	      }
+	      Object.defineProperties(Vue.prototype, prototypeExtension);
+	      copyPrototype(BaseValue, Vue);
+	      Vue.mixin({
+	        destroyed: function destroyed() {
+	          var this$1 = this;
+
+	          if (_.has(this, '$$trussFinalizers')) {
+	            // Some finalizers remove themselves from the array, so clone it before iterating.
+	            for (var i = 0, list = _.clone(this$1.$$trussFinalizers); i < list.length; i += 1) {
+	              var fn = list[i];
+
+	              fn();
+	            }
+	          }
+	        }
+	      });
+	    }
+	  }}
 	});
 
 	angularProxy.defineModule(Truss);

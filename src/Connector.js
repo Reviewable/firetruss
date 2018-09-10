@@ -99,7 +99,7 @@ export default class Connector {
     const getter = this._computeConnection.bind(this, fn, connectionStats);
     const update = this._updateComputedConnection.bind(this, key, fn, connectionStats);
     const angularWatch = angular.active && !fn.angularWatchSuppressed;
-    // Use this._vue.$watch instead of truss.watch here so that we can disable the immediate
+    // Use this._vue.$watch instead of truss.observe here so that we can disable the immediate
     // callback if we'll get one from Angular anyway.
     this._vue.$watch(getter, update, {immediate: !angularWatch});
     if (angularWatch) {
@@ -165,14 +165,14 @@ export default class Connector {
       Vue.set(this._vue.refs, key, subRefs);
       const subConnector = this._subConnectors[key] =
         new Connector(subScope, descriptor, this._tree, this._method, subRefs);
-      // Use a truss.watch here instead of this._vue.$watch so that the "immediate" execution
+      // Use a truss.observe here instead of this._vue.$watch so that the "immediate" execution
       // actually takes place after we've captured the unwatch function, in case the subConnector
       // is ready immediately.
-      const unwatch = this._disconnects[key] = this._tree.truss.watch(
+      const unobserve = this._disconnects[key] = this._tree.truss.observe(
         () => subConnector.ready,
         subReady => {
           if (!subReady) return;
-          unwatch();
+          unobserve();
           delete this._disconnects[key];
           Vue.set(this._vue.values, key, subScope);
           angular.digest();

@@ -2,7 +2,7 @@ import {Reference, Handle} from './Reference.js';
 import angular from './angularCompatibility.js';
 import stats from './utils/stats.js';
 import {makePathMatcher, joinPath, splitPath, escapeKey, unescapeKey} from './utils/paths.js';
-import {isTrussEqual} from './utils/utils.js';
+import {isTrussEqual, copyPrototype} from './utils/utils.js';
 import {promiseFinally} from './utils/promises.js';
 
 import _ from 'lodash';
@@ -19,33 +19,10 @@ let creatingObjectProperties;
 let currentPropertyFrozen;
 
 
-class Value {
-  get $parent() {return creatingObjectProperties.$parent.value;}
-  get $path() {return creatingObjectProperties.$path.value;}
-  get $truss() {
-    Object.defineProperty(this, '$truss', {value: this.$parent.$truss});
-    return this.$truss;
-  }
-  get $ref() {
-    Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
-    return this.$ref;
-  }
-  get $refs() {return this.$ref;}
-  get $key() {
-    Object.defineProperty(
-      this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
-    return this.$key;
-  }
-  get $data() {return this;}
-  get $hidden() {return false;}  // eslint-disable-line lodash/prefer-constant
-  get $empty() {return _.isEmpty(this.$data);}
-  get $keys() {return _.keys(this.$data);}
-  get $values() {return _.values(this.$data);}
+export class BaseValue {
   get $meta() {return this.$truss.meta;}
-  get $root() {return this.$truss.root;}  // access indirectly to leave dependency trace
+  get $store() {return this.$truss.store;}  // access indirectly to leave dependency trace
   get $now() {return this.$truss.now;}
-  get $ready() {return this.$ref.ready;}
-  get $overridden() {return false;}  // eslint-disable-line lodash/prefer-constant
 
   $newKey() {return this.$truss.newKey();}
 
@@ -86,21 +63,21 @@ class Value {
     return promise;
   }
 
-  $watch(subjectFn, callbackFn, options) {
+  $observe(subjectFn, callbackFn, options) {
     if (this.$destroyed) throw new Error('Object already destroyed');
-    let unwatchAndRemoveFinalizer;
+    let unobserveAndRemoveFinalizer;
 
-    const unwatch = this.$truss.watch(() => {
+    const unobserve = this.$truss.observe(() => {
       this.$$touchThis();
       return subjectFn.call(this);
     }, callbackFn.bind(this), options);
 
-    unwatchAndRemoveFinalizer = () => {  // eslint-disable-line prefer-const
-      unwatch();
-      _.pull(this.$$finalizers, unwatchAndRemoveFinalizer);
+    unobserveAndRemoveFinalizer = () => {  // eslint-disable-line prefer-const
+      unobserve();
+      _.pull(this.$$finalizers, unobserveAndRemoveFinalizer);
     };
-    this.$$finalizers.push(unwatchAndRemoveFinalizer);
-    return unwatchAndRemoveFinalizer;
+    this.$$finalizers.push(unobserveAndRemoveFinalizer);
+    return unobserveAndRemoveFinalizer;
   }
 
   $when(expression, options) {
@@ -113,6 +90,39 @@ class Value {
     this.$$finalizers.push(promise.cancel);
     return promise;
   }
+
+  get $$finalizers() {
+    Object.defineProperty(this, '$$finalizers', {
+      value: [], writable: false, enumerable: false, configurable: false});
+    return this.$$finalizers;
+  }
+}
+
+
+class Value {
+  get $parent() {return creatingObjectProperties.$parent.value;}
+  get $path() {return creatingObjectProperties.$path.value;}
+  get $truss() {
+    Object.defineProperty(this, '$truss', {value: this.$parent.$truss});
+    return this.$truss;
+  }
+  get $ref() {
+    Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
+    return this.$ref;
+  }
+  get $refs() {return this.$ref;}
+  get $key() {
+    Object.defineProperty(
+      this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
+    return this.$key;
+  }
+  get $data() {return this;}
+  get $hidden() {return false;}  // eslint-disable-line lodash/prefer-constant
+  get $empty() {return _.isEmpty(this.$data);}
+  get $keys() {return _.keys(this.$data);}
+  get $values() {return _.values(this.$data);}
+  get $ready() {return this.$ref.ready;}
+  get $overridden() {return false;}  // eslint-disable-line lodash/prefer-constant
 
   $nextTick() {
     if (this.$destroyed) throw new Error('Object already destroyed');
@@ -141,7 +151,7 @@ class Value {
     } else if (this.$parent) {
       (this.$parent.hasOwnProperty('$data') ? this.$parent.$data : this.$parent)[this.$key];
     } else {
-      this.$root;
+      this.$store;
     }
     /* eslint-enable no-unused-expressions */
   }
@@ -152,17 +162,12 @@ class Value {
     return this.$$initializers;
   }
 
-  get $$finalizers() {
-    Object.defineProperty(this, '$$finalizers', {
-      value: [], writable: false, enumerable: false, configurable: false});
-    return this.$$finalizers;
-  }
-
   get $destroyed() {  // eslint-disable-line lodash/prefer-constant
     return false;
   }
 }
 
+copyPrototype(BaseValue, Value);
 
 _.forEach(Value.prototype, (prop, name) => {
   Object.defineProperty(
@@ -471,7 +476,7 @@ export default class Modeler {
 
   destroyObject(object) {
     if (_.has(object, '$$finalizers')) {
-      // Some destructors remove themselves from the array, so clone it before iterating.
+      // Some finalizers remove themselves from the array, so clone it before iterating.
       for (const fn of _.clone(object.$$finalizers)) fn();
     }
     if (_.isFunction(object.$finalize)) object.$finalize();
