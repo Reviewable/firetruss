@@ -3710,7 +3710,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '0.9.0';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {
@@ -3785,7 +3785,7 @@
 	Truss.prototype.peek = function peek (target, callback) {
 	    var this$1 = this;
 
-	  callback = wrapPromiseCallback(callback);
+	  callback = wrapPromiseCallback(callback || _.identity);
 	  var cleanup, cancel;
 	  var promise = Promise.resolve().then(function () { return new Promise(function (resolve, reject) {
 	    var scope = {};
@@ -3995,7 +3995,7 @@
 	      var prototypeExtension = {
 	        $truss: {value: pluginOptions.truss},
 	        $destroyed: {get: function get() {return this._isBeingDestroyed || this._isDestroyed;}},
-	        $$touchThis: {value: function value() {if (this._.data.__ob__) { this._data.__ob__.dep.depend(); }}}
+	        $$touchThis: {value: function value() {if (this.__ob__) { this.__ob__.dep.depend(); }}}
 	      };
 	      var conflictingKeys = _(prototypeExtension).keys()
 	        .union(_.keys(BaseValue.prototype)).intersection(_.keys(Vue.prototype)).value();

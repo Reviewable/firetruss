@@ -96,7 +96,7 @@ export default class Truss {
 
   // target is Reference, Query, or connection Object like above
   peek(target, callback) {
-    callback = wrapPromiseCallback(callback);
+    callback = wrapPromiseCallback(callback || _.identity);
     let cleanup, cancel;
     const promise = Promise.resolve().then(() => new Promise((resolve, reject) => {
       const scope = {};
@@ -295,7 +295,7 @@ Object.defineProperties(Truss, {
       const prototypeExtension = {
         $truss: {value: pluginOptions.truss},
         $destroyed: {get() {return this._isBeingDestroyed || this._isDestroyed;}},
-        $$touchThis: {value() {if (this._.data.__ob__) this._data.__ob__.dep.depend();}}
+        $$touchThis: {value() {if (this.__ob__) this.__ob__.dep.depend();}}
       };
       const conflictingKeys = _(prototypeExtension).keys()
         .union(_.keys(BaseValue.prototype)).intersection(_.keys(Vue.prototype)).value();
@@ -318,3 +318,4 @@ Object.defineProperties(Truss, {
 });
 
 angular.defineModule(Truss);
+
