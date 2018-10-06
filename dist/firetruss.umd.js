@@ -2669,6 +2669,7 @@
 	    this._coupler._bridge.off(this.url, this.url, null, 'value', this._handleSnapshot, this);
 	    this.listening = false;
 	    this._forAllDescendants(function (node) {
+	      if (node.listening) { return false; }
 	      if (node.ready) {
 	        node.ready = false;
 	        angularProxy.digest();
@@ -2706,6 +2707,7 @@
 	  if (!this.count || !this.listening) { return; }
 	  this.listening = false;
 	  this._forAllDescendants(function (node) {
+	    if (node.listening) { return false; }
 	    if (node.ready) {
 	      node.ready = false;
 	      angularProxy.digest();
@@ -2736,7 +2738,7 @@
 	};
 
 	Node.prototype._forAllDescendants = function _forAllDescendants (iteratee) {
-	  iteratee(this);
+	  if (iteratee(this) === false) { return; }
 	  _.forEach(this.children, function (child) { return child._forAllDescendants(iteratee); });
 	};
 
@@ -3730,7 +3732,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '0.9.4';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {

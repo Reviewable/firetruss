@@ -2423,6 +2423,7 @@ class Node {
       this._coupler._bridge.off(this.url, this.url, null, 'value', this._handleSnapshot, this);
       this.listening = false;
       this._forAllDescendants(node => {
+        if (node.listening) return false;
         if (node.ready) {
           node.ready = false;
           angularProxy.digest();
@@ -2452,6 +2453,7 @@ class Node {
     if (!this.count || !this.listening) return;
     this.listening = false;
     this._forAllDescendants(node => {
+      if (node.listening) return false;
       if (node.ready) {
         node.ready = false;
         angularProxy.digest();
@@ -2474,7 +2476,7 @@ class Node {
   }
 
   _forAllDescendants(iteratee) {
-    iteratee(this);
+    if (iteratee(this) === false) return;
     _.forEach(this.children, child => child._forAllDescendants(iteratee));
   }
 
@@ -3375,7 +3377,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '0.9.4';
+const VERSION = 'dev';
 
 
 class Truss {
