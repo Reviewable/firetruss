@@ -1,6 +1,7 @@
 module.exports = {
   env: {
-    browser: true
+    browser: true,
+    es6: true
   },
   parserOptions: {
     ecmaVersion: 6,
@@ -8,9 +9,6 @@ module.exports = {
   },
   plugins: ['lodash'],
   extends: ['eslint:recommended', 'plugin:lodash/v3'],
-  globals: {
-    Promise: false,
-  },
   rules: {
     'accessor-pairs': 'error',
     'array-bracket-spacing': 'warn',
