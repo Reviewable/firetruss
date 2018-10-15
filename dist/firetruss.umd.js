@@ -275,7 +275,7 @@
 	  return matcher;
 	}
 
-	var MIN_WORKER_VERSION = '0.8.0';
+	var MIN_WORKER_VERSION = '1.0.0';
 
 
 	var Snapshot = function Snapshot(ref) {
@@ -326,9 +326,6 @@
 	  this._servers = {};
 	  this._callbacks = {};
 	  this._log = _.noop;
-	  this._simulatedTokenGenerator = null;
-	  this._maxSimulationDuration = 5000;
-	  this._simulatedCallFilter = null;
 	  this._inboundMessages = [];
 	  this._outboundMessages = [];
 	  this._flushMessageQueue = this._flushMessageQueue.bind(this);
@@ -340,7 +337,7 @@
 	  setInterval(function () {this$1._send({msg: 'ping'});}, 60 * 1000);
 	};
 
-	Bridge.prototype.init = function init (webWorker) {
+	Bridge.prototype.init = function init (webWorker, config) {
 	  var items = [];
 	  try {
 	    var storage = window.localStorage || window.sessionStorage;
@@ -352,7 +349,7 @@
 	  } catch (e) {
 	    // Some browsers don't like us accessing local storage -- nothing we can do.
 	  }
-	  return this._send({msg: 'init', storage: items}).then(function (response) {
+	  return this._send({msg: 'init', storage: items, config: config}).then(function (response) {
 	    var workerVersion = response.version.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
 	    if (workerVersion) {
 	      var minVersion = MIN_WORKER_VERSION.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
@@ -381,12 +378,6 @@
 	    this._inboundMessages = [];
 	    if (this._outboundMessages.length) { Promise.resolve().then(this._flushMessageQueue); }
 	  }
-	};
-
-	Bridge.prototype.debugPermissionDeniedErrors = function debugPermissionDeniedErrors (simulatedTokenGenerator, maxSimulationDuration, callFilter) {
-	  this._simulatedTokenGenerator = simulatedTokenGenerator;
-	  if (maxSimulationDuration !== undefined) { this._maxSimulationDuration = maxSimulationDuration; }
-	  this._simulatedCallFilter = callFilter || _.constant(true);
 	};
 
 	Bridge.prototype.enableLogging = function enableLogging (fn) {
@@ -470,65 +461,6 @@
 	  deferred.reject(errorFromJson(message.error, deferred.params));
 	};
 
-	Bridge.prototype.probeError = function probeError (error) {
-	  var code = error.code || error.message;
-	  if (error.params && code && code.toLowerCase() === 'permission_denied') {
-	    return this._simulateCall(error.params).then(function (securityTrace) {
-	      if (securityTrace) { error.permissionDeniedDetails = securityTrace; }
-	    });
-	  }
-	  return Promise.resolve();
-	};
-
-	Bridge.prototype._simulateCall = function _simulateCall (props) {
-	    var this$1 = this;
-
-	  if (!(this._simulatedTokenGenerator && this._maxSimulationDuration > 0)) {
-	    return Promise.resolve();
-	  }
-	  var simulatedCalls = [];
-	  switch (props.msg) {
-	    case 'set':
-	      simulatedCalls.push({method: 'set', url: props.url, args: [props.value]});
-	      break;
-	    case 'update':
-	      simulatedCalls.push({method: 'update', url: props.url, args: [props.value]});
-	      break;
-	    case 'once':
-	      simulatedCalls.push({method: 'once', url: props.url, spec: props.spec, args: ['value']});
-	      break;
-	    case 'on':
-	      simulatedCalls.push({method: 'once', url: props.url, spec: props.spec, args: ['value']});
-	      break;
-	    case 'transaction':
-	      simulatedCalls.push({method: 'once', url: props.url, args: ['value']});
-	      simulatedCalls.push({method: 'set', url: props.url, args: [props.newValue]});
-	      break;
-	  }
-	  if (!simulatedCalls.length || !this._simulatedCallFilter(props.msg, props.url)) {
-	    return Promise.resolve();
-	  }
-	  var auth = this.getAuth(getUrlRoot(props.url));
-	  var simulationPromise = this._simulatedTokenGenerator(auth && auth.uid).then(function (token) {
-	    return Promise.all(_.map(simulatedCalls, function (message) {
-	      message.msg = 'simulate';
-	      message.token = token;
-	      return this$1._send(message);
-	    }));
-	  }).then(function (securityTraces) {
-	    if (_.every(securityTraces, function (trace) { return trace === null; })) {
-	      return 'Unable to reproduce error in simulation';
-	    }
-	    return _.compact(securityTraces).join('\n\n');
-	  }).catch(function (e) {
-	    return 'Error running simulation: ' + e;
-	  });
-	  var timeoutPromise = new Promise(function (resolve) {
-	    setTimeout(resolve.bind(null, 'Simulated call timed out'), this$1._maxSimulationDuration);
-	  });
-	  return Promise.race([simulationPromise, timeoutPromise]);
-	};
-
 	Bridge.prototype.updateLocalStorage = function updateLocalStorage (ref) {
 	    var items = ref.items;
 
@@ -549,7 +481,7 @@
 	};
 
 	Bridge.prototype.trackServer = function trackServer (rootUrl) {
-	  if (this._servers.hasOwnProperty(rootUrl)) { return; }
+	  if (this._servers.hasOwnProperty(rootUrl)) { return Promise.resolve(); }
 	  var server = this._servers[rootUrl] = {authListeners: []};
 	  var authCallbackId = this._registerCallback(this._authCallback.bind(this, server));
 	  this._send({msg: 'onAuth', url: rootUrl, callbackId: authCallbackId});
@@ -587,8 +519,8 @@
 	  return this._servers[rootUrl].auth;
 	};
 
-	Bridge.prototype.authWithCustomToken = function authWithCustomToken (url, authToken, options) {
-	  return this._send({msg: 'authWithCustomToken', url: url, authToken: authToken, options: options});
+	Bridge.prototype.authWithCustomToken = function authWithCustomToken (url, authToken) {
+	  return this._send({msg: 'authWithCustomToken', url: url, authToken: authToken});
 	};
 
 	Bridge.prototype.unauth = function unauth (url) {
@@ -749,11 +681,6 @@
 	    }
 	  }
 	  return error;
-	}
-
-	function getUrlRoot(url) {
-	  var k = url.indexOf('/', 8);
-	  return k >= 8 ? url.slice(0, k) : url;
 	}
 
 	/* eslint-disable no-use-before-define */
@@ -1651,14 +1578,12 @@
 	  operation._markReady(true);
 	  if (!operation.error) { return Promise.resolve(); }
 	  var onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
-	  return this._bridge.probeError(operation.error).then(function () {
-	    if (onFailureCallbacks) {
-	      setTimeout(function () {
-	        _.forEach(onFailureCallbacks, function (onFailure) { return onFailure(operation); });
-	      }, 0);
-	    }
-	    return Promise.reject(operation.error);
-	  });
+	  if (onFailureCallbacks) {
+	    setTimeout(function () {
+	      _.forEach(onFailureCallbacks, function (onFailure) { return onFailure(operation); });
+	    }, 0);
+	  }
+	  return Promise.reject(operation.error);
 	};
 
 	var ALPHABET = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz';
@@ -1763,7 +1688,7 @@
 	  this._auth.serial++;
 	  return this._dispatcher.execute(
 	    'auth', 'authenticate', new Reference(this._tree, '/'), token, function () {
-	      return this$1._bridge.authWithCustomToken(this$1._rootUrl, token, {rememberMe: true});
+	      return this$1._bridge.authWithCustomToken(this$1._rootUrl, token);
 	    }
 	  );
 	};
@@ -3732,7 +3657,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '0.9.5';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {
@@ -3948,7 +3873,7 @@
 	  return stats.log(n);
 	};
 
-	Truss.connectWorker = function connectWorker (webWorker) {
+	Truss.connectWorker = function connectWorker (webWorker, config) {
 	  if (bridge) { throw new Error('Worker already connected'); }
 	  if (_.isString(webWorker)) {
 	    var Worker = window.SharedWorker || window.Worker;
@@ -3957,7 +3882,7 @@
 	  }
 	  bridge = new Bridge(webWorker);
 	  if (logging) { bridge.enableLogging(logging); }
-	  return bridge.init(webWorker).then(
+	  return bridge.init(webWorker, config).then(
 	    function (ref) {
 	        var exposedFunctionNames = ref.exposedFunctionNames;
 	        var firebaseSdkVersion = ref.firebaseSdkVersion;

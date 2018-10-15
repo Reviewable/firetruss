@@ -264,7 +264,7 @@ function makePathMatcher(pattern) {
   return matcher;
 }
 
-const MIN_WORKER_VERSION = '0.8.0';
+const MIN_WORKER_VERSION = '1.0.0';
 
 
 class Snapshot {
@@ -307,9 +307,6 @@ class Bridge {
     this._servers = {};
     this._callbacks = {};
     this._log = _.noop;
-    this._simulatedTokenGenerator = null;
-    this._maxSimulationDuration = 5000;
-    this._simulatedCallFilter = null;
     this._inboundMessages = [];
     this._outboundMessages = [];
     this._flushMessageQueue = this._flushMessageQueue.bind(this);
@@ -321,7 +318,7 @@ class Bridge {
     setInterval(() => {this._send({msg: 'ping'});}, 60 * 1000);
   }
 
-  init(webWorker) {
+  init(webWorker, config) {
     const items = [];
     try {
       const storage = window.localStorage || window.sessionStorage;
@@ -333,7 +330,7 @@ class Bridge {
     } catch (e) {
       // Some browsers don't like us accessing local storage -- nothing we can do.
     }
-    return this._send({msg: 'init', storage: items}).then(response => {
+    return this._send({msg: 'init', storage: items, config}).then(response => {
       const workerVersion = response.version.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
       if (workerVersion) {
         const minVersion = MIN_WORKER_VERSION.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
@@ -362,12 +359,6 @@ class Bridge {
       this._inboundMessages = [];
       if (this._outboundMessages.length) Promise.resolve().then(this._flushMessageQueue);
     }
-  }
-
-  debugPermissionDeniedErrors(simulatedTokenGenerator, maxSimulationDuration, callFilter) {
-    this._simulatedTokenGenerator = simulatedTokenGenerator;
-    if (maxSimulationDuration !== undefined) this._maxSimulationDuration = maxSimulationDuration;
-    this._simulatedCallFilter = callFilter || _.constant(true);
   }
 
   enableLogging(fn) {
@@ -445,63 +436,6 @@ class Bridge {
     deferred.reject(errorFromJson(message.error, deferred.params));
   }
 
-  probeError(error) {
-    const code = error.code || error.message;
-    if (error.params && code && code.toLowerCase() === 'permission_denied') {
-      return this._simulateCall(error.params).then(securityTrace => {
-        if (securityTrace) error.permissionDeniedDetails = securityTrace;
-      });
-    }
-    return Promise.resolve();
-  }
-
-  _simulateCall(props) {
-    if (!(this._simulatedTokenGenerator && this._maxSimulationDuration > 0)) {
-      return Promise.resolve();
-    }
-    const simulatedCalls = [];
-    switch (props.msg) {
-      case 'set':
-        simulatedCalls.push({method: 'set', url: props.url, args: [props.value]});
-        break;
-      case 'update':
-        simulatedCalls.push({method: 'update', url: props.url, args: [props.value]});
-        break;
-      case 'once':
-        simulatedCalls.push({method: 'once', url: props.url, spec: props.spec, args: ['value']});
-        break;
-      case 'on':
-        simulatedCalls.push({method: 'once', url: props.url, spec: props.spec, args: ['value']});
-        break;
-      case 'transaction':
-        simulatedCalls.push({method: 'once', url: props.url, args: ['value']});
-        simulatedCalls.push({method: 'set', url: props.url, args: [props.newValue]});
-        break;
-    }
-    if (!simulatedCalls.length || !this._simulatedCallFilter(props.msg, props.url)) {
-      return Promise.resolve();
-    }
-    const auth = this.getAuth(getUrlRoot(props.url));
-    const simulationPromise = this._simulatedTokenGenerator(auth && auth.uid).then(token => {
-      return Promise.all(_.map(simulatedCalls, message => {
-        message.msg = 'simulate';
-        message.token = token;
-        return this._send(message);
-      }));
-    }).then(securityTraces => {
-      if (_.every(securityTraces, trace => trace === null)) {
-        return 'Unable to reproduce error in simulation';
-      }
-      return _.compact(securityTraces).join('\n\n');
-    }).catch(e => {
-      return 'Error running simulation: ' + e;
-    });
-    const timeoutPromise = new Promise(resolve => {
-      setTimeout(resolve.bind(null, 'Simulated call timed out'), this._maxSimulationDuration);
-    });
-    return Promise.race([simulationPromise, timeoutPromise]);
-  }
-
   updateLocalStorage({items}) {
     try {
       const storage = window.localStorage || window.sessionStorage;
@@ -518,7 +452,7 @@ class Bridge {
   }
 
   trackServer(rootUrl) {
-    if (this._servers.hasOwnProperty(rootUrl)) return;
+    if (this._servers.hasOwnProperty(rootUrl)) return Promise.resolve();
     const server = this._servers[rootUrl] = {authListeners: []};
     const authCallbackId = this._registerCallback(this._authCallback.bind(this, server));
     this._send({msg: 'onAuth', url: rootUrl, callbackId: authCallbackId});
@@ -552,8 +486,8 @@ class Bridge {
     return this._servers[rootUrl].auth;
   }
 
-  authWithCustomToken(url, authToken, options) {
-    return this._send({msg: 'authWithCustomToken', url, authToken, options});
+  authWithCustomToken(url, authToken) {
+    return this._send({msg: 'authWithCustomToken', url, authToken});
   }
 
   unauth(url) {
@@ -699,11 +633,6 @@ function errorFromJson(json, params) {
     }
   }
   return error;
-}
-
-function getUrlRoot(url) {
-  const k = url.indexOf('/', 8);
-  return k >= 8 ? url.slice(0, k) : url;
 }
 
 /* eslint-disable no-use-before-define */
@@ -1488,14 +1417,12 @@ class Dispatcher {
     operation._markReady(true);
     if (!operation.error) return Promise.resolve();
     const onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
-    return this._bridge.probeError(operation.error).then(() => {
-      if (onFailureCallbacks) {
-        setTimeout(() => {
-          _.forEach(onFailureCallbacks, onFailure => onFailure(operation));
-        }, 0);
-      }
-      return Promise.reject(operation.error);
-    });
+    if (onFailureCallbacks) {
+      setTimeout(() => {
+        _.forEach(onFailureCallbacks, onFailure => onFailure(operation));
+      }, 0);
+    }
+    return Promise.reject(operation.error);
   }
 }
 
@@ -1596,7 +1523,7 @@ class MetaTree {
     this._auth.serial++;
     return this._dispatcher.execute(
       'auth', 'authenticate', new Reference(this._tree, '/'), token, () => {
-        return this._bridge.authWithCustomToken(this._rootUrl, token, {rememberMe: true});
+        return this._bridge.authWithCustomToken(this._rootUrl, token);
       }
     );
   }
@@ -3377,7 +3304,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '0.9.5';
+const VERSION = 'dev';
 
 
 class Truss {
@@ -3592,7 +3519,7 @@ class Truss {
     return stats.log(n);
   }
 
-  static connectWorker(webWorker) {
+  static connectWorker(webWorker, config) {
     if (bridge) throw new Error('Worker already connected');
     if (_.isString(webWorker)) {
       const Worker = window.SharedWorker || window.Worker;
@@ -3601,7 +3528,7 @@ class Truss {
     }
     bridge = new Bridge(webWorker);
     if (logging) bridge.enableLogging(logging);
-    return bridge.init(webWorker).then(
+    return bridge.init(webWorker, config).then(
       ({exposedFunctionNames, firebaseSdkVersion}) => {
         Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
         for (const name of exposedFunctionNames) {

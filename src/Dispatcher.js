@@ -239,14 +239,12 @@ export default class Dispatcher {
     operation._markReady(true);
     if (!operation.error) return Promise.resolve();
     const onFailureCallbacks = this._getCallbacks('onFailure', operation.type, operation.method);
-    return this._bridge.probeError(operation.error).then(() => {
-      if (onFailureCallbacks) {
-        setTimeout(() => {
-          _.forEach(onFailureCallbacks, onFailure => onFailure(operation));
-        }, 0);
-      }
-      return Promise.reject(operation.error);
-    });
+    if (onFailureCallbacks) {
+      setTimeout(() => {
+        _.forEach(onFailureCallbacks, onFailure => onFailure(operation));
+      }, 0);
+    }
+    return Promise.reject(operation.error);
   }
 }
 

@@ -233,7 +233,7 @@ export default class Truss {
     return stats.log(n);
   }
 
-  static connectWorker(webWorker) {
+  static connectWorker(webWorker, config) {
     if (bridge) throw new Error('Worker already connected');
     if (_.isString(webWorker)) {
       const Worker = window.SharedWorker || window.Worker;
@@ -242,7 +242,7 @@ export default class Truss {
     }
     bridge = new Bridge(webWorker);
     if (logging) bridge.enableLogging(logging);
-    return bridge.init(webWorker).then(
+    return bridge.init(webWorker, config).then(
       ({exposedFunctionNames, firebaseSdkVersion}) => {
         Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
         for (const name of exposedFunctionNames) {
