@@ -2996,7 +2996,7 @@ class Tree {
       throw new Error(`Snapshot includes invalid value at ${path}: ${value}`);
     }
     if (remoteWrite && this._localWrites[path || '/']) return;
-    if (value === SERVER_TIMESTAMP) value = this._localWriteTimestamp;
+    if (_.isEqual(value, SERVER_TIMESTAMP)) value = this._localWriteTimestamp;
     let object = parent.$data[key];
     if (!_.isArray(value) && !(local ? _.isPlainObject(value) : _.isObject(value))) {
       this._destroyObject(object);
@@ -3304,7 +3304,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '1.0.0';
+const VERSION = 'dev';
 
 
 class Truss {
