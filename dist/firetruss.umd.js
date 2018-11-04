@@ -334,7 +334,6 @@
 	  Object.seal(this);
 	  this._port.onmessage = this._receive.bind(this);
 	  window.addEventListener('unload', function () {this$1._send({msg: 'destroy'});});
-	  setInterval(function () {this$1._send({msg: 'ping'});}, 60 * 1000);
 	};
 
 	Bridge.prototype.init = function init (webWorker, config) {
@@ -3657,7 +3656,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '1.0.1';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {

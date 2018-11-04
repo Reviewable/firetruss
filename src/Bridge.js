@@ -52,7 +52,6 @@ export default class Bridge {
     Object.seal(this);
     this._port.onmessage = this._receive.bind(this);
     window.addEventListener('unload', () => {this._send({msg: 'destroy'});});
-    setInterval(() => {this._send({msg: 'ping'});}, 60 * 1000);
   }
 
   init(webWorker, config) {
