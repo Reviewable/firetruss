@@ -831,6 +831,25 @@ class Reference extends Handle {
   }
 }
 
+const SERVER_TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
+
+function isTrussEqual(a, b) {
+  return _.isEqual(a, b, isTrussValueEqual);
+}
+
+function isTrussValueEqual(a, b) {
+  if (a === b || a === undefined || a === null || b === undefined || b === null ||
+      a.$truss || b.$truss) return a === b;
+  if (a.isEqual) return a.isEqual(b);
+}
+
+function copyPrototype(a, b) {
+  for (const prop of Object.getOwnPropertyNames(a.prototype)) {
+    if (prop === 'constructor') continue;
+    Object.defineProperty(b.prototype, prop, Object.getOwnPropertyDescriptor(a.prototype, prop));
+  }
+}
+
 class StatItem {
   constructor(name) {
     _.assign(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
@@ -887,28 +906,26 @@ class Stats {
       console.log(_.map(line, (column, i) => _.padLeft(column, widths[i])).join(' '));
     });
   }
+
+  wrap(getter, className, propName) {
+    const item = this.for(`${className}.${propName}`);
+    return function() {
+      /* eslint-disable no-invalid-this */
+      const startTime = performanceNow();
+      const oldValue = this._computedWatchers && this._computedWatchers[propName].value;
+      try {
+        const newValue = getter.call(this);
+        if (!isTrussEqual(oldValue, newValue)) item.numUpdates += 1;
+        return newValue;
+      } finally {
+        item.runtime += performanceNow() - startTime;
+        item.numRecomputes += 1;
+      }
+    };
+  }
 }
 
 var stats = new Stats();
-
-const SERVER_TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
-
-function isTrussEqual(a, b) {
-  return _.isEqual(a, b, isTrussValueEqual);
-}
-
-function isTrussValueEqual(a, b) {
-  if (a === b || a === undefined || a === null || b === undefined || b === null ||
-      a.$truss || b.$truss) return a === b;
-  if (a.isEqual) return a.isEqual(b);
-}
-
-function copyPrototype(a, b) {
-  for (const prop of Object.getOwnPropertyNames(a.prototype)) {
-    if (prop === 'constructor') continue;
-    Object.defineProperty(b.prototype, prop, Object.getOwnPropertyDescriptor(a.prototype, prop));
-  }
-}
 
 class Connector {
   constructor(scope, connections, tree, method, refs) {
@@ -3303,7 +3320,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '1.0.2';
+const VERSION = 'dev';
 
 
 class Truss {
@@ -3511,11 +3528,7 @@ class Truss {
   }
 
   static get computedPropertyStats() {
-    return stats.list;
-  }
-
-  static logComputedPropertyStats(n = 10) {
-    return stats.log(n);
+    return stats;
   }
 
   static connectWorker(webWorker, config) {

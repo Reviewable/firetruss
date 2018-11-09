@@ -909,72 +909,6 @@
 	  return Reference;
 	}(Handle));
 
-	var StatItem = function StatItem(name) {
-	  _.assign(this, {name: name, numRecomputes: 0, numUpdates: 0, runtime: 0});
-	};
-
-	var prototypeAccessors$4 = { runtimePerRecompute: {} };
-
-	StatItem.prototype.add = function add (item) {
-	  this.runtime += item.runtime;
-	  this.numUpdates += item.numUpdates;
-	  this.numRecomputes += item.numRecomputes;
-	};
-
-	prototypeAccessors$4.runtimePerRecompute.get = function () {
-	  return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
-	};
-
-	StatItem.prototype.toLogParts = function toLogParts (totals) {
-	  return [
-	    ((this.name) + ":"), (" " + ((this.runtime / 1000).toFixed(2)) + "s"),
-	    ("(" + ((this.runtime / totals.runtime * 100).toFixed(1)) + "%)"),
-	    (" " + (this.numUpdates) + " upd /"), ((this.numRecomputes) + " runs"),
-	    ("(" + ((this.numUpdates / this.numRecomputes * 100).toFixed(1)) + "%)"),
-	    (" " + (this.runtimePerRecompute.toFixed(2)) + "ms / run")
-	  ];
-	};
-
-	Object.defineProperties( StatItem.prototype, prototypeAccessors$4 );
-
-	var Stats = function Stats() {
-	  this._items = {};
-	};
-
-	var prototypeAccessors$1$1 = { list: {} };
-
-	Stats.prototype.for = function for$1 (name) {
-	  if (!this._items[name]) { this._items[name] = new StatItem(name); }
-	  return this._items[name];
-	};
-
-	prototypeAccessors$1$1.list.get = function () {
-	  return _(this._items).values().sortBy(function (item) { return -item.runtime; }).value();
-	};
-
-	Stats.prototype.log = function log (n) {
-	    if ( n === void 0 ) n = 10;
-
-	  var stats = this.list;
-	  if (!stats.length) { return; }
-	  var totals = new StatItem('=== Total');
-	  _.forEach(stats, function (stat) {totals.add(stat);});
-	  stats = _.take(stats, n);
-	  var above = new StatItem('--- Above');
-	  _.forEach(stats, function (stat) {above.add(stat);});
-	  var lines = _.map(stats, function (item) { return item.toLogParts(totals); });
-	  lines.push(above.toLogParts(totals));
-	  lines.push(totals.toLogParts(totals));
-	  var widths = _.map(_.range(lines[0].length), function (i) { return _(lines).map(function (line) { return line[i].length; }).max(); });
-	  _.forEach(lines, function (line) {
-	    console.log(_.map(line, function (column, i) { return _.padLeft(column, widths[i]); }).join(' '));
-	  });
-	};
-
-	Object.defineProperties( Stats.prototype, prototypeAccessors$1$1 );
-
-	var stats = new Stats();
-
 	var SERVER_TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
 
 	function isTrussEqual(a, b) {
@@ -1040,6 +974,89 @@
 
 	}).call(commonjsGlobal);
 	});
+
+	var StatItem = function StatItem(name) {
+	  _.assign(this, {name: name, numRecomputes: 0, numUpdates: 0, runtime: 0});
+	};
+
+	var prototypeAccessors$4 = { runtimePerRecompute: {} };
+
+	StatItem.prototype.add = function add (item) {
+	  this.runtime += item.runtime;
+	  this.numUpdates += item.numUpdates;
+	  this.numRecomputes += item.numRecomputes;
+	};
+
+	prototypeAccessors$4.runtimePerRecompute.get = function () {
+	  return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
+	};
+
+	StatItem.prototype.toLogParts = function toLogParts (totals) {
+	  return [
+	    ((this.name) + ":"), (" " + ((this.runtime / 1000).toFixed(2)) + "s"),
+	    ("(" + ((this.runtime / totals.runtime * 100).toFixed(1)) + "%)"),
+	    (" " + (this.numUpdates) + " upd /"), ((this.numRecomputes) + " runs"),
+	    ("(" + ((this.numUpdates / this.numRecomputes * 100).toFixed(1)) + "%)"),
+	    (" " + (this.runtimePerRecompute.toFixed(2)) + "ms / run")
+	  ];
+	};
+
+	Object.defineProperties( StatItem.prototype, prototypeAccessors$4 );
+
+	var Stats = function Stats() {
+	  this._items = {};
+	};
+
+	var prototypeAccessors$1$1 = { list: {} };
+
+	Stats.prototype.for = function for$1 (name) {
+	  if (!this._items[name]) { this._items[name] = new StatItem(name); }
+	  return this._items[name];
+	};
+
+	prototypeAccessors$1$1.list.get = function () {
+	  return _(this._items).values().sortBy(function (item) { return -item.runtime; }).value();
+	};
+
+	Stats.prototype.log = function log (n) {
+	    if ( n === void 0 ) n = 10;
+
+	  var stats = this.list;
+	  if (!stats.length) { return; }
+	  var totals = new StatItem('=== Total');
+	  _.forEach(stats, function (stat) {totals.add(stat);});
+	  stats = _.take(stats, n);
+	  var above = new StatItem('--- Above');
+	  _.forEach(stats, function (stat) {above.add(stat);});
+	  var lines = _.map(stats, function (item) { return item.toLogParts(totals); });
+	  lines.push(above.toLogParts(totals));
+	  lines.push(totals.toLogParts(totals));
+	  var widths = _.map(_.range(lines[0].length), function (i) { return _(lines).map(function (line) { return line[i].length; }).max(); });
+	  _.forEach(lines, function (line) {
+	    console.log(_.map(line, function (column, i) { return _.padLeft(column, widths[i]); }).join(' '));
+	  });
+	};
+
+	Stats.prototype.wrap = function wrap (getter, className, propName) {
+	  var item = this.for((className + "." + propName));
+	  return function() {
+	    /* eslint-disable no-invalid-this */
+	    var startTime = performanceNow();
+	    var oldValue = this._computedWatchers && this._computedWatchers[propName].value;
+	    try {
+	      var newValue = getter.call(this);
+	      if (!isTrussEqual(oldValue, newValue)) { item.numUpdates += 1; }
+	      return newValue;
+	    } finally {
+	      item.runtime += performanceNow() - startTime;
+	      item.numRecomputes += 1;
+	    }
+	  };
+	};
+
+	Object.defineProperties( Stats.prototype, prototypeAccessors$1$1 );
+
+	var stats = new Stats();
 
 	var Connector = function Connector(scope, connections, tree, method, refs) {
 	  var this$1 = this;
@@ -3656,7 +3673,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '1.0.2';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {
@@ -3863,13 +3880,7 @@
 	};
 
 	staticAccessors.computedPropertyStats.get = function () {
-	  return stats.list;
-	};
-
-	Truss.logComputedPropertyStats = function logComputedPropertyStats (n) {
-	    if ( n === void 0 ) n = 10;
-
-	  return stats.log(n);
+	  return stats;
 	};
 
 	Truss.connectWorker = function connectWorker (webWorker, config) {

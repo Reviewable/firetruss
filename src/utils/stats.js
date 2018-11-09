@@ -1,4 +1,7 @@
+import {isTrussEqual} from './utils.js';
+
 import _ from 'lodash';
+import performanceNow from 'performance-now';
 
 
 class StatItem {
@@ -56,6 +59,23 @@ class Stats {
     _.forEach(lines, line => {
       console.log(_.map(line, (column, i) => _.padLeft(column, widths[i])).join(' '));
     });
+  }
+
+  wrap(getter, className, propName) {
+    const item = this.for(`${className}.${propName}`);
+    return function() {
+      /* eslint-disable no-invalid-this */
+      const startTime = performanceNow();
+      const oldValue = this._computedWatchers && this._computedWatchers[propName].value;
+      try {
+        const newValue = getter.call(this);
+        if (!isTrussEqual(oldValue, newValue)) item.numUpdates += 1;
+        return newValue;
+      } finally {
+        item.runtime += performanceNow() - startTime;
+        item.numRecomputes += 1;
+      }
+    };
   }
 }
 

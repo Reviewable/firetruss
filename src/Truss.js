@@ -226,11 +226,7 @@ export default class Truss {
   }
 
   static get computedPropertyStats() {
-    return stats.list;
-  }
-
-  static logComputedPropertyStats(n = 10) {
-    return stats.log(n);
+    return stats;
   }
 
   static connectWorker(webWorker, config) {
