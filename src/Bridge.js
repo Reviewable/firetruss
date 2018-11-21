@@ -131,8 +131,13 @@ export default class Bridge {
   }
 
   _flushMessageQueue() {
-    this._port.postMessage(this._outboundMessages);
-    this._outboundMessages = [];
+    try {
+      this._port.postMessage(this._outboundMessages);
+      this._outboundMessages = [];
+    } catch (e) {
+      e.extra = {messages: this._outboundMessages};
+      throw e;
+    }
   }
 
   _receive(event) {

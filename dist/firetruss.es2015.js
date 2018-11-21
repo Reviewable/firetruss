@@ -394,8 +394,13 @@ class Bridge {
   }
 
   _flushMessageQueue() {
-    this._port.postMessage(this._outboundMessages);
-    this._outboundMessages = [];
+    try {
+      this._port.postMessage(this._outboundMessages);
+      this._outboundMessages = [];
+    } catch (e) {
+      e.extra = {messages: this._outboundMessages};
+      throw e;
+    }
   }
 
   _receive(event) {
@@ -3320,7 +3325,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '2.0.0';
+const VERSION = 'dev';
 
 
 class Truss {

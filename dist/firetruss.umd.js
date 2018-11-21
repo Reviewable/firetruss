@@ -415,8 +415,13 @@
 	};
 
 	Bridge.prototype._flushMessageQueue = function _flushMessageQueue () {
-	  this._port.postMessage(this._outboundMessages);
-	  this._outboundMessages = [];
+	  try {
+	    this._port.postMessage(this._outboundMessages);
+	    this._outboundMessages = [];
+	  } catch (e) {
+	    e.extra = {messages: this._outboundMessages};
+	    throw e;
+	  }
 	};
 
 	Bridge.prototype._receive = function _receive (event) {
@@ -3673,7 +3678,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '2.0.0';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {
