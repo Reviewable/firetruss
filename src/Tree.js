@@ -355,7 +355,7 @@ export default class Tree {
     // properties as well.  To distinguish such placeholders from the myriad other non-enumerable
     // properties (that lead all over tree, e.g. $parent), we check that the property's parent is
     // ourselves before destroying.
-    for (const key of Object.getOwnPropertyNames(object)) {
+    for (const key of Object.getOwnPropertyNames(object.$data)) {
       const child = object.$data[key];
       if (child && child.$parent === object) this._destroyObject(child);
     }
@@ -443,7 +443,7 @@ export default class Tree {
     if (objectCreated) {
       this._plantPlaceholders(object, path, false, createdObjects);
     } else {
-      _.forEach(object, (item, childKey) => {
+      _.forEach(object.$data, (item, childKey) => {
         const escapedChildKey = escapeKey(childKey);
         if (!value.hasOwnProperty(escapedChildKey)) {
           this._prune(joinPath(path, escapedChildKey), null, remoteWrite);
@@ -457,7 +457,7 @@ export default class Tree {
     this._modeler.forEachPlaceholderChild(path, mount => {
       if (hidden !== undefined && hidden !== !!mount.hidden) return;
       const key = unescapeKey(mount.escapedKey);
-      if (!object.hasOwnProperty(key)) {
+      if (!object.$data.hasOwnProperty(key)) {
         this._plantValue(
           joinPath(path, mount.escapedKey), key, mount.placeholder, object, false, false, false,
           createdObjects);
@@ -530,14 +530,14 @@ export default class Tree {
     if (object === undefined || object === null) return false;
     if (ghostObjects && _.includes(ghostObjects, object)) return false;
     if (!_.isObject(object) || !object.$truss) return true;
-    return _.some(object, value => this._holdsConcreteData(value, ghostObjects));
+    return _.some(object.$data, value => this._holdsConcreteData(value, ghostObjects));
   }
 
   _pruneDescendants(object, lockedDescendantPaths) {
     if (lockedDescendantPaths[object.$path]) return true;
     if (object.$overridden) delete object.$overridden;
     let coupledDescendantFound = false;
-    _.forEach(object, (value, key) => {
+    _.forEach(object.$data, (value, key) => {
       let shouldDelete = true;
       let valueLocked;
       if (lockedDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
@@ -702,8 +702,9 @@ export function relativizePaths(rootPath, values) {
 export function toFirebaseJson(object) {
   if (!_.isObject(object)) return object;
   const result = {};
-  for (const key in object) {
-    if (object.hasOwnProperty(key)) result[escapeKey(key)] = toFirebaseJson(object[key]);
+  const data = object.$data;
+  for (const key in data) {
+    if (data.hasOwnProperty(key)) result[escapeKey(key)] = toFirebaseJson(data[key]);
   }
   return result;
 }

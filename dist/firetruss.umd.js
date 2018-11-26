@@ -3293,7 +3293,7 @@
 	  // properties as well.To distinguish such placeholders from the myriad other non-enumerable
 	  // properties (that lead all over tree, e.g. $parent), we check that the property's parent is
 	  // ourselves before destroying.
-	  for (var i = 0, list = Object.getOwnPropertyNames(object); i < list.length; i += 1) {
+	  for (var i = 0, list = Object.getOwnPropertyNames(object.$data); i < list.length; i += 1) {
 	    var key = list[i];
 
 	      var child = object.$data[key];
@@ -3393,7 +3393,7 @@
 	  if (objectCreated) {
 	    this._plantPlaceholders(object, path, false, createdObjects);
 	  } else {
-	    _.forEach(object, function (item, childKey) {
+	    _.forEach(object.$data, function (item, childKey) {
 	      var escapedChildKey = escapeKey(childKey);
 	      if (!value.hasOwnProperty(escapedChildKey)) {
 	        this$1._prune(joinPath(path, escapedChildKey), null, remoteWrite);
@@ -3409,7 +3409,7 @@
 	  this._modeler.forEachPlaceholderChild(path, function (mount) {
 	    if (hidden !== undefined && hidden !== !!mount.hidden) { return; }
 	    var key = unescapeKey(mount.escapedKey);
-	    if (!object.hasOwnProperty(key)) {
+	    if (!object.$data.hasOwnProperty(key)) {
 	      this$1._plantValue(
 	        joinPath(path, mount.escapedKey), key, mount.placeholder, object, false, false, false,
 	        createdObjects);
@@ -3488,7 +3488,7 @@
 	  if (object === undefined || object === null) { return false; }
 	  if (ghostObjects && _.includes(ghostObjects, object)) { return false; }
 	  if (!_.isObject(object) || !object.$truss) { return true; }
-	  return _.some(object, function (value) { return this$1._holdsConcreteData(value, ghostObjects); });
+	  return _.some(object.$data, function (value) { return this$1._holdsConcreteData(value, ghostObjects); });
 	};
 
 	Tree.prototype._pruneDescendants = function _pruneDescendants (object, lockedDescendantPaths) {
@@ -3497,7 +3497,7 @@
 	  if (lockedDescendantPaths[object.$path]) { return true; }
 	  if (object.$overridden) { delete object.$overridden; }
 	  var coupledDescendantFound = false;
-	  _.forEach(object, function (value, key) {
+	  _.forEach(object.$data, function (value, key) {
 	    var shouldDelete = true;
 	    var valueLocked;
 	    if (lockedDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
@@ -3668,8 +3668,9 @@
 	function toFirebaseJson(object) {
 	  if (!_.isObject(object)) { return object; }
 	  var result = {};
-	  for (var key in object) {
-	    if (object.hasOwnProperty(key)) { result[escapeKey(key)] = toFirebaseJson(object[key]); }
+	  var data = object.$data;
+	  for (var key in data) {
+	    if (data.hasOwnProperty(key)) { result[escapeKey(key)] = toFirebaseJson(data[key]); }
 	  }
 	  return result;
 	}
@@ -3678,7 +3679,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '2.0.1';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {
