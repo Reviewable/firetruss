@@ -344,30 +344,35 @@ export default class Modeler {
    */
   createObject(path, properties) {
     const mount = this._getMount(path) || {Class: Value};
-    if (mount.matcher) {
-      const match = mount.matcher.match(path);
-      for (const variable in match) {
-        properties[variable] = {value: match[variable]};
+    try {
+      if (mount.matcher) {
+        const match = mount.matcher.match(path);
+        for (const variable in match) {
+          properties[variable] = {value: match[variable]};
+        }
       }
+
+      creatingObjectProperties = properties;
+      const object = new mount.Class();
+      creatingObjectProperties = null;
+
+      if (angular.active) this._wrapProperties(object);
+
+      if (mount.keysUnsafe) {
+        properties.$data = {value: Object.create(null), configurable: true, enumerable: true};
+      }
+      if (mount.hidden) properties.$hidden = {value: true};
+      if (mount.computedProperties) {
+        _.forEach(mount.computedProperties, prop => {
+          properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop);
+        });
+      }
+
+      return object;
+    } catch (e) {
+      e.extra = _.assign({mount, properties, className: mount.Class && mount.Class.name}, e.extra);
+      throw e;
     }
-
-    creatingObjectProperties = properties;
-    const object = new mount.Class();
-    creatingObjectProperties = null;
-
-    if (angular.active) this._wrapProperties(object);
-
-    if (mount.keysUnsafe) {
-      properties.$data = {value: Object.create(null), configurable: true, enumerable: true};
-    }
-    if (mount.hidden) properties.$hidden = {value: true};
-    if (mount.computedProperties) {
-      _.forEach(mount.computedProperties, prop => {
-        properties[prop.name] = this._buildComputedPropertyDescriptor(object, prop);
-      });
-    }
-
-    return object;
   }
 
   _wrapProperties(object) {

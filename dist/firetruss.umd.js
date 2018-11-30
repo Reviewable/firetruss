@@ -2140,30 +2140,35 @@
 	    var this$1 = this;
 
 	  var mount = this._getMount(path) || {Class: Value};
-	  if (mount.matcher) {
-	    var match = mount.matcher.match(path);
-	    for (var variable in match) {
-	      properties[variable] = {value: match[variable]};
+	  try {
+	    if (mount.matcher) {
+	      var match = mount.matcher.match(path);
+	      for (var variable in match) {
+	        properties[variable] = {value: match[variable]};
+	      }
 	    }
+
+	    creatingObjectProperties = properties;
+	    var object = new mount.Class();
+	    creatingObjectProperties = null;
+
+	    if (angularProxy.active) { this._wrapProperties(object); }
+
+	    if (mount.keysUnsafe) {
+	      properties.$data = {value: Object.create(null), configurable: true, enumerable: true};
+	    }
+	    if (mount.hidden) { properties.$hidden = {value: true}; }
+	    if (mount.computedProperties) {
+	      _.forEach(mount.computedProperties, function (prop) {
+	        properties[prop.name] = this$1._buildComputedPropertyDescriptor(object, prop);
+	      });
+	    }
+
+	    return object;
+	  } catch (e) {
+	    e.extra = _.assign({mount: mount, properties: properties, className: mount.Class && mount.Class.name}, e.extra);
+	    throw e;
 	  }
-
-	  creatingObjectProperties = properties;
-	  var object = new mount.Class();
-	  creatingObjectProperties = null;
-
-	  if (angularProxy.active) { this._wrapProperties(object); }
-
-	  if (mount.keysUnsafe) {
-	    properties.$data = {value: Object.create(null), configurable: true, enumerable: true};
-	  }
-	  if (mount.hidden) { properties.$hidden = {value: true}; }
-	  if (mount.computedProperties) {
-	    _.forEach(mount.computedProperties, function (prop) {
-	      properties[prop.name] = this$1._buildComputedPropertyDescriptor(object, prop);
-	    });
-	  }
-
-	  return object;
 	};
 
 	Modeler.prototype._wrapProperties = function _wrapProperties (object) {
@@ -3679,7 +3684,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '2.0.2';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {
