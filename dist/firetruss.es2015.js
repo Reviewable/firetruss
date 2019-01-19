@@ -264,7 +264,7 @@ function makePathMatcher(pattern) {
   return matcher;
 }
 
-const MIN_WORKER_VERSION = '1.0.0';
+const MIN_WORKER_VERSION = '2.0.0';
 
 
 class Snapshot {
@@ -3331,7 +3331,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '2.0.3';
+const VERSION = '3.0.0';
 
 
 class Truss {

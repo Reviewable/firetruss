@@ -275,7 +275,7 @@
 	  return matcher;
 	}
 
-	var MIN_WORKER_VERSION = '1.0.0';
+	var MIN_WORKER_VERSION = '2.0.0';
 
 
 	var Snapshot = function Snapshot(ref) {
@@ -3684,7 +3684,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '2.0.3';
+	var VERSION = '3.0.0';
 
 
 	var Truss = function Truss(rootUrl) {
