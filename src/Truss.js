@@ -303,9 +303,9 @@ Object.defineProperties(Truss, {
       copyPrototype(BaseValue, Vue);
       Vue.mixin({
         destroyed() {
-          if (_.has(this, '$$trussFinalizers')) {
+          if (_.has(this, '$$finalizers')) {
             // Some finalizers remove themselves from the array, so clone it before iterating.
-            for (const fn of _.clone(this.$$trussFinalizers)) fn();
+            for (const fn of _.clone(this.$$finalizers)) fn();
           }
         }
       });

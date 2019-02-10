@@ -3684,7 +3684,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '3.0.0';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {
@@ -3977,9 +3977,9 @@
 	        destroyed: function destroyed() {
 	          var this$1 = this;
 
-	          if (_.has(this, '$$trussFinalizers')) {
+	          if (_.has(this, '$$finalizers')) {
 	            // Some finalizers remove themselves from the array, so clone it before iterating.
-	            for (var i = 0, list = _.clone(this$1.$$trussFinalizers); i < list.length; i += 1) {
+	            for (var i = 0, list = _.clone(this$1.$$finalizers); i < list.length; i += 1) {
 	              var fn = list[i];
 
 	              fn();
