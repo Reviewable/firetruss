@@ -1,6 +1,6 @@
 {
   "name": "firetruss",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Advanced data sync layer for Firebase and Vue.js",
   "scripts": {
     "setup": "rm -rf bower_components; rm -rf node_modules; npm install; bower install;",
