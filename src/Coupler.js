@@ -406,7 +406,7 @@ export default class Coupler {
 
   _processPendingSnapshots() {
     for (const callback of this._pendingSnapshotCallbacks) callback();
-    this._pendingSnapshotCallbacks.splice(0, Infinity);
+    this._pendingSnapshotCallbacks = [];
   }
 
   throttleSnapshots(delay) {
