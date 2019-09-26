@@ -2616,7 +2616,8 @@ class Coupler {
 
   _processPendingSnapshots() {
     for (const callback of this._pendingSnapshotCallbacks) callback();
-    this._pendingSnapshotCallbacks = [];
+    // Property is frozen, so we need to splice to empty the array.
+    this._pendingSnapshotCallbacks.splice(0, Infinity);
   }
 
   throttleSnapshots(delay) {
@@ -3331,7 +3332,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '3.0.2';
+const VERSION = '3.0.3';
 
 
 class Truss {
