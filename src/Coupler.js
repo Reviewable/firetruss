@@ -406,7 +406,8 @@ export default class Coupler {
 
   _processPendingSnapshots() {
     for (const callback of this._pendingSnapshotCallbacks) callback();
-    this._pendingSnapshotCallbacks = [];
+    // Property is frozen, so we need to splice to empty the array.
+    this._pendingSnapshotCallbacks.splice(0, Infinity);
   }
 
   throttleSnapshots(delay) {
