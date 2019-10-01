@@ -2013,9 +2013,9 @@ grunt-legacy-util@~1.0.0:
     underscore.string "~3.2.3"
     which "~1.2.1"
 
-grunt-release@pkaminski/grunt-release#master:
+grunt-release@reviewable/grunt-release#master:
   version "0.14.1-0"
-  resolved "https://codeload.github.com/pkaminski/grunt-release/tar.gz/2cf7007ff3d844494c3a447803e28eee24677ef6"
+  resolved "https://codeload.github.com/reviewable/grunt-release/tar.gz/2cf7007ff3d844494c3a447803e28eee24677ef6"
   dependencies:
     q "^1.4.1"
     semver "^5.1.0"
