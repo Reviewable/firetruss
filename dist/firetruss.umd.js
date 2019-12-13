@@ -892,21 +892,29 @@
 	  };
 
 	  Reference.prototype.set = function set (value) {
+	    this._checkForUndefinedPath();
 	    return this._tree.update(this, 'set', ( obj = {}, obj[this.path] = value, obj ));
 	    var obj;
 	  };
 
 	  Reference.prototype.update = function update (values) {
+	    this._checkForUndefinedPath();
 	    return this._tree.update(this, 'update', values);
 	  };
 
 	  Reference.prototype.override = function override (value) {
+	    this._checkForUndefinedPath();
 	    return this._tree.update(this, 'override', ( obj = {}, obj[this.path] = value, obj ));
 	    var obj;
 	  };
 
 	  Reference.prototype.commit = function commit (updateFunction) {
+	    this._checkForUndefinedPath();
 	    return this._tree.commit(this, updateFunction);
+	  };
+
+	  Reference.prototype._checkForUndefinedPath = function _checkForUndefinedPath () {
+	    if (this.path === '/undefined') { throw new Error('Invalid path for operation: ' + this.path); }
 	  };
 
 	  Object.defineProperties( Reference.prototype, prototypeAccessors$2 );
@@ -3685,7 +3693,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '3.0.3';
+	var VERSION = 'dev';
 
 
 	var Truss = function Truss(rootUrl) {

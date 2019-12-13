@@ -183,19 +183,27 @@ export class Reference extends Handle {
   }
 
   set(value) {
+    this._checkForUndefinedPath();
     return this._tree.update(this, 'set', {[this.path]: value});
   }
 
   update(values) {
+    this._checkForUndefinedPath();
     return this._tree.update(this, 'update', values);
   }
 
   override(value) {
+    this._checkForUndefinedPath();
     return this._tree.update(this, 'override', {[this.path]: value});
   }
 
   commit(updateFunction) {
+    this._checkForUndefinedPath();
     return this._tree.commit(this, updateFunction);
+  }
+
+  _checkForUndefinedPath() {
+    if (this.path === '/undefined') throw new Error('Invalid path for operation: ' + this.path);
   }
 }
 
