@@ -408,7 +408,11 @@ export default class Tree {
     let object = parent.$data[key];
     if (!_.isArray(value) && !(local ? _.isPlainObject(value) : _.isObject(value))) {
       this._destroyObject(object);
-      this._setFirebaseProperty(parent, key, value);
+      if (value === null || value === undefined) {
+        this._deleteFirebaseProperty(parent, key);
+      } else {
+        this._setFirebaseProperty(parent, key, value);
+      }
       return;
     }
     let objectCreated = false;
