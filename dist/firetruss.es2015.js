@@ -3035,7 +3035,7 @@ class Tree {
     let object = parent.$data[key];
     if (!_.isArray(value) && !(local ? _.isPlainObject(value) : _.isObject(value))) {
       this._destroyObject(object);
-      if (value === null || value === undefined) {
+      if (!local && (value === null || value === undefined)) {
         this._deleteFirebaseProperty(parent, key);
       } else {
         this._setFirebaseProperty(parent, key, value);
@@ -3344,7 +3344,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '3.0.5';
+const VERSION = 'dev';
 
 
 class Truss {
