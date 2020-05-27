@@ -547,7 +547,7 @@ export default class Tree {
       if (lockedDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
         shouldDelete = false;
         valueLocked = true;
-      } else if (value.$truss) {
+      } else if (value !== null && value !== undefined && value.$truss) {
         const placeholder = this._modeler.isPlaceholder(value.$path);
         if (placeholder || _.has(lockedDescendantPaths, value.$path)) {
           valueLocked = this._pruneDescendants(value, lockedDescendantPaths);
