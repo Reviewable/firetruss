@@ -3521,7 +3521,7 @@
 	    if (lockedDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
 	      shouldDelete = false;
 	      valueLocked = true;
-	    } else if (value.$truss) {
+	    } else if (value !== null && value !== undefined && value.$truss) {
 	      var placeholder = this$1._modeler.isPlaceholder(value.$path);
 	      if (placeholder || _.has(lockedDescendantPaths, value.$path)) {
 	        valueLocked = this$1._pruneDescendants(value, lockedDescendantPaths);
@@ -3697,7 +3697,7 @@
 	var logging;
 	var workerFunctions = {};
 	// This version is filled in by the build, don't reformat the line.
-	var VERSION = '3.0.6';
+	var VERSION = '3.0.8';
 
 
 	var Truss = function Truss(rootUrl) {

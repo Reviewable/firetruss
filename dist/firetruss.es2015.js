@@ -3174,7 +3174,7 @@ class Tree {
       if (lockedDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
         shouldDelete = false;
         valueLocked = true;
-      } else if (value.$truss) {
+      } else if (value !== null && value !== undefined && value.$truss) {
         const placeholder = this._modeler.isPlaceholder(value.$path);
         if (placeholder || _.has(lockedDescendantPaths, value.$path)) {
           valueLocked = this._pruneDescendants(value, lockedDescendantPaths);
@@ -3344,7 +3344,7 @@ let bridge;
 let logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '3.0.6';
+const VERSION = '3.0.8';
 
 
 class Truss {
