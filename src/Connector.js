@@ -25,7 +25,8 @@ export default class Connector {
       refs: refs || {},
       values: _.mapValues(connections, _.constant(undefined))
     }});
-    this.destroy = this.destroy;  // allow instance-level overrides of destroy() method
+    // allow instance-level overrides of destroy() method
+    this.destroy = this.destroy;  // eslint-disable-line no-self-assign
     Object.seal(this);
 
     this._linkScopeProperties();

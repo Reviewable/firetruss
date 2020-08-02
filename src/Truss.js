@@ -144,7 +144,9 @@ export default class Truss {
     const usePreciseDefaults = _.isObject(options && options.precise);
     let numCallbacks = 0;
     let oldValueClone;
-    if (usePreciseDefaults) oldValueClone = _.clone(options.precise, options.deep);
+    if (usePreciseDefaults) {
+      oldValueClone = options.deep ? _.cloneDeep(options.precise) : _.clone(options.precise);
+    }
 
     const unwatch = this._vue.$watch(subjectFn, (newValue, oldValue) => {
       if (options && options.precise) {
@@ -152,7 +154,7 @@ export default class Truss {
           (options.deep ?
             _.defaultsDeep({}, newValue, options.precise) :
             _.defaults({}, newValue, options.precise)) :
-          _.clone(newValue, options.deep);
+          (options.deep ? _.cloneDeep(newValue) : _.clone(newValue));
         if (_.isEqual(newValueClone, oldValueClone)) return;
         oldValueClone = newValueClone;
       }

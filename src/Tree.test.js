@@ -11,8 +11,8 @@ import Dispatcher from './Dispatcher.js';
 test.beforeEach(t => {
   t.context = {
     rootUrl: 'https://example.firebaseio.com',
-    bridge: td.object(Bridge),
-    dispatcher: td.object(Dispatcher),
+    bridge: td.instance(Bridge),
+    dispatcher: td.instance(Dispatcher),
     truss: td.object()
   };
   t.context.tree = new Tree(
@@ -49,35 +49,35 @@ test('checkUpdateHasOnlyDescendantsWithNoOverlap', t => {
 
   t.throws(() => {
     checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'bar/baz': 1});
-  }, /absolute/);
+  }, {message: /absolute/});
 
   t.throws(() => {
     checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'/bar': 1});
-  }, /descendant/);
+  }, {message: /descendant/});
 
   t.throws(() => {
     checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'/': 1});
-  }, /descendant/);
+  }, {message: /descendant/});
 
   t.throws(() => {
     checkUpdateHasOnlyDescendantsWithNoOverlap('/foo/bar', {'/foo/baz': 1});
-  }, /descendant/);
+  }, {message: /descendant/});
 
   t.throws(() => {
     checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'bar/baz': 1});
-  }, /absolute/);
+  }, {message: /absolute/});
 
   t.throws(() => {
     checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'/foo': 1, '/foo/bar': 2});
-  }, /overlap/);
+  }, {message: /overlap/});
 
   t.throws(() => {
     checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'/foo/bar': 1, '/foo/bar/baz': 2});
-  }, /overlap/);
+  }, {message: /overlap/});
 
   t.throws(() => {
     checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'/foo/bar': 1, 'bar': 2});
-  }, /overlap/);
+  }, {message: /overlap/});
 
   checkUpdateHasOnlyDescendantsWithNoOverlap('/foo', {'/foo/bar': 1, '/foo/barz': 2});
 });

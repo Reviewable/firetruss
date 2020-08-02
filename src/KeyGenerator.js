@@ -30,7 +30,6 @@ export default class KeyGenerator {
     } else {
       this._lastUniqueKeyTime = now;
       if (getRandomValues) {
-        /* global Uint8Array */
         const array = new Uint8Array(12);
         getRandomValues(array);
         for (let i = 0; i < 12; i++) {

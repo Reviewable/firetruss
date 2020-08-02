@@ -4,7 +4,7 @@ import _ from 'lodash';
 export const SERVER_TIMESTAMP = Object.freeze({'.sv': 'timestamp'});
 
 export function isTrussEqual(a, b) {
-  return _.isEqual(a, b, isTrussValueEqual);
+  return _.isEqualWith(a, b, isTrussValueEqual);
 }
 
 function isTrussValueEqual(a, b) {

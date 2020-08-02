@@ -244,6 +244,9 @@ export default class Coupler {
     this._throttled = {processPendingSnapshots: this._processPendingSnapshots};
     this._prunePath = prunePath;
     this._vue = new Vue({data: {root: undefined, queryHandlers: {}}});
+    // Prevent Vue from instrumenting rendering since there's actually nothing to render, and the
+    // warnings cause false positives from Lodash primitives when running tests.
+    this._vue._renderProxy = this._vue;
     this._nodeIndex = Object.create(null);
     Object.freeze(this);
     // Set root node after freezing Coupler, otherwise it gets vue-ified too.

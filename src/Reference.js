@@ -37,7 +37,7 @@ export class Handle {
     if (!arguments.length) return this;
     const segments = [];
     for (const key of arguments) {
-      if (key === undefined || key === null) return;
+      if (_.isNil(key)) return;
       segments.push(escapeKey(key));
     }
     return new Reference(
@@ -63,7 +63,7 @@ export class Handle {
         }
         return mapping;
       }
-      if (arg === undefined || arg === null) return;
+      if (_.isNil(arg)) return;
       escapedKeys.push(escapeKey(arg));
     }
     return new Reference(

@@ -250,11 +250,11 @@ export default class Tree {
     // to unwind the change.  This should be very rare since it's always due to a developer mistake
     // so we don't need to be particularly efficient.
     const basePath = ref.path;
-    const paths = _(values).keys().map(key => {
+    const paths = _(values).keys().flatMap(key => {
       let path = basePath;
       if (key) path = joinPath(path, key);
       return _.keys(this._coupler.findCoupledDescendantPaths(path));
-    }).flatten().value();
+    }).value();
     return Promise.all(_.map(paths, path => {
       return this._bridge.once(this._rootUrl + path).then(snap => {
         this._integrateSnapshot(snap);
@@ -285,7 +285,7 @@ export default class Tree {
             if (subValue === undefined) break;
           }
         }
-        if (subValue === undefined || subValue === null) {
+        if (_.isNil(subValue)) {
           this._prune(descendantPath);
         } else {
           const key = _.last(splitPath(descendantPath));
@@ -400,7 +400,7 @@ export default class Tree {
   }
 
   _plantValue(path, key, value, parent, remoteWrite, override, local, createdObjects) {
-    if (remoteWrite && (value === null || value === undefined)) {
+    if (remoteWrite && _.isNil(value)) {
       throw new Error(`Snapshot includes invalid value at ${path}: ${value}`);
     }
     if (remoteWrite && this._localWrites[path || '/']) return;
@@ -408,7 +408,7 @@ export default class Tree {
     let object = parent.$data[key];
     if (!_.isArray(value) && !(local ? _.isPlainObject(value) : _.isObject(value))) {
       this._destroyObject(object);
-      if (!local && (value === null || value === undefined)) {
+      if (!local && _.isNil(value)) {
         this._deleteFirebaseProperty(parent, key);
       } else {
         this._setFirebaseProperty(parent, key, value);
@@ -531,7 +531,7 @@ export default class Tree {
   }
 
   _holdsConcreteData(object, ghostObjects) {
-    if (object === undefined || object === null) return false;
+    if (_.isNil(object)) return false;
     if (ghostObjects && _.includes(ghostObjects, object)) return false;
     if (!_.isObject(object) || !object.$truss) return true;
     return _.some(object.$data, value => this._holdsConcreteData(value, ghostObjects));
@@ -547,7 +547,7 @@ export default class Tree {
       if (lockedDescendantPaths[joinPath(object.$path, escapeKey(key))]) {
         shouldDelete = false;
         valueLocked = true;
-      } else if (value !== null && value !== undefined && value.$truss) {
+      } else if (!_.isNil(value) && value.$truss) {
         const placeholder = this._modeler.isPlaceholder(value.$path);
         if (placeholder || _.has(lockedDescendantPaths, value.$path)) {
           valueLocked = this._pruneDescendants(value, lockedDescendantPaths);

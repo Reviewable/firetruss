@@ -17,7 +17,7 @@ test('joinPath', t => {
 
 test('PathMatcher', t => {
   t.deepEqual(makePathMatcher('/foo/bar').match('/foo/bar'), {});
-  t.falsy(makePathMatcher('/foo/bar').match('/foo/qux'), {});
+  t.falsy(makePathMatcher('/foo/bar').match('/foo/qux'));
   t.deepEqual(makePathMatcher('/foo/$bar').match('/foo/qux'), {$bar: 'qux'});
   t.deepEqual(makePathMatcher('/foo/$bar/$*').match('/foo/qux/quuux'), {$bar: 'qux'});
 });

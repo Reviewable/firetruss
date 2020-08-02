@@ -8,7 +8,7 @@ module.exports = {
     sourceType: 'module'
   },
   plugins: ['lodash'],
-  extends: ['eslint:recommended', 'plugin:lodash/v3'],
+  extends: ['eslint:recommended', 'plugin:lodash/canonical'],
   rules: {
     'accessor-pairs': 'error',
     'array-bracket-spacing': 'warn',
@@ -35,13 +35,14 @@ module.exports = {
     'key-spacing': ['warn', {mode: 'minimum'}],
     'keyword-spacing': 'warn',
     'linebreak-style': 'warn',
-    'lodash/matches-prop-shorthand': 'off',
-    'lodash/no-commit': 'off',
+    'lodash/chaining': ['error', 'implicit'],
     'lodash/prefer-filter': 'off',
+    'lodash/prefer-immutable-method': 'off',
+    'lodash/prefer-invoke-map': 'off',
     'lodash/prefer-lodash-method': ['error', {
-      ignoreMethods: ['split'], ignoreObjects: [/^\$/, /element/i, /table/i, '^completions$']
+      ignoreMethods: ['split', 'replace'],
+      ignoreObjects: [/^\$/, /element/i, /table/i, '^completions$']
     }],
-    'lodash/prefer-map': 'off',
     'max-len': ['warn', {code: 100, ignoreUrls: true, ignoreRegExpLiterals: true}],
     'new-cap': 'error',
     'new-parens': 'error',
@@ -75,6 +76,7 @@ module.exports = {
     'no-new-wrappers': 'error',
     'no-octal-escape': 'error',
     'no-proto': 'error',
+    'no-prototype-builtins': 'off',
     'no-script-url': 'error',
     'no-self-compare': 'error',
     'no-sequences': 'error',

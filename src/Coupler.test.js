@@ -11,8 +11,8 @@ td.verifyNoCalls = call => td.verify(call, {times: 0, ignoreExtraArgs: true});
 test.beforeEach(t => {
   t.context = {
     rootUrl: 'https://example.firebaseio.com',
-    bridge: td.object(Bridge),
-    dispatcher: td.object(Dispatcher),
+    bridge: td.instance(Bridge),
+    dispatcher: td.instance(Dispatcher),
     applySnapshot: td.function(),
     prunePath: td.function()
   };

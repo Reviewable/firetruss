@@ -620,8 +620,9 @@ function wrapConnections(object, connections) {
 }
 
 function freeze(object) {
-  if (object === null || object === undefined || !_.isObject(object) || Object.isFrozen(object) ||
-      object.$truss) return object;
+  if (_.isNil(object) || !_.isObject(object) || Object.isFrozen(object) || object.$truss) {
+    return object;
+  }
   object = Object.freeze(object);
   if (_.isArray(object)) return _.map(object, value => freeze(value));
   return _.mapValues(object, value => freeze(value));

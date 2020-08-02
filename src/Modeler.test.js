@@ -53,8 +53,8 @@ class SubrootFoo {
 test.beforeEach(t => {
   t.context = {
     rootUrl: 'https://example.firebaseio.com',
-    bridge: td.object(Bridge),
-    dispatcher: td.object(Dispatcher),
+    bridge: td.instance(Bridge),
+    dispatcher: td.instance(Dispatcher),
     truss: {get root() {return t.context.tree.root;}}
   };
   t.context.tree = new Tree(
