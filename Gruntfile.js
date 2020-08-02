@@ -39,8 +39,7 @@ module.exports = function(grunt) {
 
     rollup: {
       options: {
-        sourceMap: true,
-        sourceMapRelativePaths: true,
+        sourcemap: true,
         globals: {
           vue: 'Vue',
           lodash: '_'
@@ -50,7 +49,6 @@ module.exports = function(grunt) {
         options: {
           format: 'umd',
           name: 'Truss',
-          sourcemap: true,
           plugins: [
             commonjs(),
             buble({
@@ -70,7 +68,6 @@ module.exports = function(grunt) {
       firetrussnext: {
         options: {
           format: 'es',
-          sourcemap: true,
           plugins: [
             commonjs(),
             buble({
