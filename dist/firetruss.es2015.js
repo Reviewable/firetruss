@@ -3609,7 +3609,7 @@ function toFirebaseJson(object) {
 var bridge, logging;
 var workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-var VERSION = '4.0.0';
+var VERSION = '4.0.1';
 
 
 var Truss = function Truss(rootUrl) {
