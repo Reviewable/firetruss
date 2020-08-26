@@ -47,7 +47,8 @@ export default class MetaTree {
     this._auth.serial++;
     return this._dispatcher.execute(
       'auth', 'authenticate', new Reference(this._tree, '/'), token, () => {
-        return this._bridge.authWithCustomToken(this._rootUrl, token);
+        if (token) return this._bridge.authWithCustomToken(this._rootUrl, token);
+        return this._bridge.authAnonymously(this._rootUrl);
       }
     );
   }

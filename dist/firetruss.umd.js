@@ -268,7 +268,7 @@
     return matcher;
   }
 
-  var MIN_WORKER_VERSION = '2.0.0';
+  var MIN_WORKER_VERSION = '2.2.0';
 
 
   var Snapshot = function Snapshot(ref) {
@@ -516,6 +516,10 @@
 
   Bridge.prototype.authWithCustomToken = function authWithCustomToken (url, authToken) {
     return this._send({msg: 'authWithCustomToken', url: url, authToken: authToken});
+  };
+
+  Bridge.prototype.authAnonymously = function authAnonymously (url) {
+    return this._send({msg: 'authAnonymously', url: url});
   };
 
   Bridge.prototype.unauth = function unauth (url) {
@@ -1716,7 +1720,8 @@
     this._auth.serial++;
     return this._dispatcher.execute(
       'auth', 'authenticate', new Reference(this._tree, '/'), token, function () {
-        return this$1._bridge.authWithCustomToken(this$1._rootUrl, token);
+        if (token) { return this$1._bridge.authWithCustomToken(this$1._rootUrl, token); }
+        return this$1._bridge.authAnonymously(this$1._rootUrl);
       }
     );
   };
@@ -3669,7 +3674,7 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  var VERSION = '4.0.1';
+  var VERSION = '3.0.7';
 
 
   var Truss = function Truss(rootUrl) {

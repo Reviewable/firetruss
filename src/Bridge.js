@@ -1,7 +1,7 @@
 import {unescapeKey} from './utils/paths.js';
 import _ from 'lodash';
 
-const MIN_WORKER_VERSION = '2.0.0';
+const MIN_WORKER_VERSION = '2.2.0';
 
 
 class Snapshot {
@@ -229,6 +229,10 @@ export default class Bridge {
 
   authWithCustomToken(url, authToken) {
     return this._send({msg: 'authWithCustomToken', url, authToken});
+  }
+
+  authAnonymously(url) {
+    return this._send({msg: 'authAnonymously', url});
   }
 
   unauth(url) {
