@@ -57,7 +57,7 @@ class Stats {
     lines.push(totals.toLogParts(totals));
     const widths = _.map(_.range(lines[0].length), i => _(lines).map(line => line[i].length).max());
     _.forEach(lines, line => {
-      console.log(_.map(line, (column, i) => _.padLeft(column, widths[i])).join(' '));
+      console.log(_.map(line, (column, i) => _.padStart(column, widths[i])).join(' '));
     });
   }
 

@@ -1052,7 +1052,7 @@
     lines.push(totals.toLogParts(totals));
     var widths = _.map(_.range(lines[0].length), function (i) { return _(lines).map(function (line) { return line[i].length; }).max(); });
     _.forEach(lines, function (line) {
-      console.log(_.map(line, function (column, i) { return _.padLeft(column, widths[i]); }).join(' '));
+      console.log(_.map(line, function (column, i) { return _.padStart(column, widths[i]); }).join(' '));
     });
   };
 
@@ -3675,7 +3675,7 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  var VERSION = '4.1.1';
+  var VERSION = '3.0.7';
 
 
   var Truss = function Truss(rootUrl) {
