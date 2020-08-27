@@ -9,8 +9,9 @@ const maxNumPathMatchers = 1000;
 
 export function escapeKey(key) {
   if (!key) return key;
-  return key.toString().replace(/[\\.$#[\]/]/g, function(char) {
-    return '\\' + char.charCodeAt(0).toString(16);
+  // eslint-disable-next-line no-control-regex
+  return key.toString().replace(/[\x00-\x1f\\.$#[\]\x7f/]/g, function(char) {
+    return '\\' + _.padStart(char.charCodeAt(0).toString(16), 2, '0');
   });
 }
 
