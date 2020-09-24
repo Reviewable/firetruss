@@ -2457,7 +2457,10 @@
   QueryHandler.prototype.attach = function attach (operation, keysCallback) {
     this._listen();
     this._listeners.push({operation: operation, keysCallback: keysCallback});
-    if (keysCallback) { keysCallback(this._keys); }
+    if (this.ready) {
+      this._coupler._dispatcher.markReady(operation);
+      if (keysCallback) { keysCallback(this._keys); }
+    }
   };
 
   QueryHandler.prototype.detach = function detach (operation) {
@@ -2495,8 +2498,7 @@
       // Order is important here: first couple any new subpaths so _handleSnapshot will update the
       // tree, then tell the client to update its keys, pulling values from the tree.
       if (!this$1._listeners.length || !this$1._listening) { return; }
-      var updatedKeys = this$1._updateKeys(snap);
-      this$1._coupler._applySnapshot(snap);
+      var updatedKeys = this$1._updateKeysAndApplySnapshot(snap);
       if (!this$1.ready) {
         this$1.ready = true;
         angularProxy.digest();
@@ -2516,7 +2518,7 @@
     });
   };
 
-  QueryHandler.prototype._updateKeys = function _updateKeys (snap) {
+  QueryHandler.prototype._updateKeysAndApplySnapshot = function _updateKeysAndApplySnapshot (snap) {
     var updatedKeys;
     if (snap.path === this._query.path) {
       updatedKeys = _.keys(snap.value);
@@ -2530,11 +2532,31 @@
             this._coupler._coupleSegments(this._segments.concat(key));
         }
         for (var i$1 = 0, list$1 = _.difference(this._keys, updatedKeys); i$1 < list$1.length; i$1 += 1) {
+          // Decoupling a segment will prune the tree at that location is there are no other
+          // listeners.
           var key$1 = list$1[i$1];
 
             this._coupler._decoupleSegments(this._segments.concat(key$1));
         }
         this._keys = updatedKeys;
+      }
+      // The snapshot may be partial, so create synthetic snapshots for subpaths and apply those to
+      // update / insert values.(Deleted ones got pruned above.)
+      if (snap.exists) {
+        var rootValue = snap.value;
+        var rootPath = snap.path;
+        for (var i$2 = 0, list$2 = this._keys; i$2 < list$2.length; i$2 += 1) {
+          var key$2 = list$2[i$2];
+
+            snap._path = rootPath + '/' + key$2;
+          snap._key = undefined;
+          snap._value = rootValue[key$2];
+          this._coupler._applySnapshot(snap);
+        }
+        // Restore original properties, just in case.
+        snap._path = rootPath;
+        snap._key = undefined;
+        snap._value = rootValue;
       }
     } else if (snap.path.replace(/\/[^/]+/, '') === this._query.path) {
       var hasKey = _.includes(this._keys, snap.key);
@@ -2551,6 +2573,9 @@
         this._keys.sort();
         updatedKeys = this._keys;
       }
+      // A snapshot under the query's level is guaranteed to be a full snapshot, so we can apply it
+      // directly.
+      this._coupler._applySnapshot(snap);
     }
     return updatedKeys;
   };
@@ -3675,7 +3700,7 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  var VERSION = '4.1.2';
+  var VERSION = '3.0.7';
 
 
   var Truss = function Truss(rootUrl) {

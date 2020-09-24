@@ -19,7 +19,10 @@ class QueryHandler {
   attach(operation, keysCallback) {
     this._listen();
     this._listeners.push({operation, keysCallback});
-    if (keysCallback) keysCallback(this._keys);
+    if (this.ready) {
+      this._coupler._dispatcher.markReady(operation);
+      if (keysCallback) keysCallback(this._keys);
+    }
   }
 
   detach(operation) {
@@ -53,8 +56,7 @@ class QueryHandler {
       // Order is important here: first couple any new subpaths so _handleSnapshot will update the
       // tree, then tell the client to update its keys, pulling values from the tree.
       if (!this._listeners.length || !this._listening) return;
-      const updatedKeys = this._updateKeys(snap);
-      this._coupler._applySnapshot(snap);
+      const updatedKeys = this._updateKeysAndApplySnapshot(snap);
       if (!this.ready) {
         this.ready = true;
         angular.digest();
@@ -70,7 +72,7 @@ class QueryHandler {
     });
   }
 
-  _updateKeys(snap) {
+  _updateKeysAndApplySnapshot(snap) {
     let updatedKeys;
     if (snap.path === this._query.path) {
       updatedKeys = _.keys(snap.value);
@@ -82,9 +84,27 @@ class QueryHandler {
           this._coupler._coupleSegments(this._segments.concat(key));
         }
         for (const key of _.difference(this._keys, updatedKeys)) {
+          // Decoupling a segment will prune the tree at that location is there are no other
+          // listeners.
           this._coupler._decoupleSegments(this._segments.concat(key));
         }
         this._keys = updatedKeys;
+      }
+      // The snapshot may be partial, so create synthetic snapshots for subpaths and apply those to
+      // update / insert values.  (Deleted ones got pruned above.)
+      if (snap.exists) {
+        const rootValue = snap.value;
+        const rootPath = snap.path;
+        for (const key of this._keys) {
+          snap._path = rootPath + '/' + key;
+          snap._key = undefined;
+          snap._value = rootValue[key];
+          this._coupler._applySnapshot(snap);
+        }
+        // Restore original properties, just in case.
+        snap._path = rootPath;
+        snap._key = undefined;
+        snap._value = rootValue;
       }
     } else if (snap.path.replace(/\/[^/]+/, '') === this._query.path) {
       const hasKey = _.includes(this._keys, snap.key);
@@ -101,6 +121,9 @@ class QueryHandler {
         this._keys.sort();
         updatedKeys = this._keys;
       }
+      // A snapshot under the query's level is guaranteed to be a full snapshot, so we can apply it
+      // directly.
+      this._coupler._applySnapshot(snap);
     }
     return updatedKeys;
   }
