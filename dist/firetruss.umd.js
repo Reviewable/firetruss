@@ -2129,14 +2129,12 @@
         targetMount, {Class: Class, matcher: matcher, computedProperties: computedProperties, escapedKey: escapedKey},
         _.pick(mount, 'placeholder', 'local', 'keysUnsafe', 'hidden'));
     });
-    _.forEach(allVariables, function (variable) {
-      if (!Class.prototype[variable]) {
-        Object.defineProperty(Class.prototype, variable, {get: function get() {
-          return creatingObjectProperties ?
-            creatingObjectProperties[variable] && creatingObjectProperties[variable].value :
-            undefined;
-        }});
-      }
+    _(allVariables).uniq().forEach(function (variable) {
+      Object.defineProperty(Class.prototype, variable, {get: function get() {
+        return creatingObjectProperties ?
+          creatingObjectProperties[variable] && creatingObjectProperties[variable].value :
+          undefined;
+      }});
     });
   };
 
@@ -3700,7 +3698,7 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  var VERSION = '4.1.3';
+  var VERSION = '4.1.4';
 
 
   var Truss = function Truss(rootUrl) {
