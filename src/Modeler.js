@@ -326,14 +326,12 @@ export default class Modeler {
         targetMount, {Class, matcher, computedProperties, escapedKey},
         _.pick(mount, 'placeholder', 'local', 'keysUnsafe', 'hidden'));
     });
-    _.forEach(allVariables, variable => {
-      if (!Class.prototype[variable]) {
-        Object.defineProperty(Class.prototype, variable, {get() {
-          return creatingObjectProperties ?
-            creatingObjectProperties[variable] && creatingObjectProperties[variable].value :
-            undefined;
-        }});
-      }
+    _(allVariables).uniq().forEach(variable => {
+      Object.defineProperty(Class.prototype, variable, {get() {
+        return creatingObjectProperties ?
+          creatingObjectProperties[variable] && creatingObjectProperties[variable].value :
+          undefined;
+      }});
     });
   }
 
