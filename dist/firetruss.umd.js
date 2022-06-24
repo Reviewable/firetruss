@@ -376,9 +376,13 @@
 
   Bridge.prototype.enableLogging = function enableLogging (fn) {
     if (fn) {
-      if (fn === true) { fn = console.log.bind(console); }
+      if (fn === true) {
+        fn = console.log.bind(console);
+        this._send({msg: 'enableFirebaseLogging', value: true});
+      }
       this._log = fn;
     } else {
+      this._send({msg: 'enableFirebaseLogging', value: false});
       this._log = _.noop;
     }
   };
@@ -3699,7 +3703,11 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
+<<<<<<< HEAD
   var VERSION = '4.1.5';
+=======
+  var VERSION = '3.0.7';
+>>>>>>> 94edf10 (Turn on low-level Firebase logging as part of enableLogging(true).)
 
 
   var Truss = function Truss(rootUrl) {
