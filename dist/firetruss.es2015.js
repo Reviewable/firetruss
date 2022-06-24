@@ -265,7 +265,7 @@ function makePathMatcher(pattern) {
   return matcher;
 }
 
-var MIN_WORKER_VERSION = '2.2.0';
+var MIN_WORKER_VERSION = '2.3.0';
 
 
 var Snapshot = function Snapshot(ref) {
@@ -3644,10 +3644,14 @@ var bridge, logging;
 var workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
 <<<<<<< HEAD
+<<<<<<< HEAD
 var VERSION = '4.1.5';
 =======
 var VERSION = '3.0.7';
 >>>>>>> 94edf10 (Turn on low-level Firebase logging as part of enableLogging(true).)
+=======
+var VERSION = '4.2.0';
+>>>>>>> 0c80c75 (release 4.2.0)
 
 
 var Truss = function Truss(rootUrl) {
