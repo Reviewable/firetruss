@@ -1,7 +1,7 @@
 import {unescapeKey} from './utils/paths.js';
 import _ from 'lodash';
 
-const MIN_WORKER_VERSION = '2.2.0';
+const MIN_WORKER_VERSION = '2.3.0';
 
 
 class Snapshot {
@@ -99,9 +99,13 @@ export default class Bridge {
 
   enableLogging(fn) {
     if (fn) {
-      if (fn === true) fn = console.log.bind(console);
+      if (fn === true) {
+        fn = console.log.bind(console);
+        this._send({msg: 'enableFirebaseLogging', value: true});
+      }
       this._log = fn;
     } else {
+      this._send({msg: 'enableFirebaseLogging', value: false});
       this._log = _.noop;
     }
   }

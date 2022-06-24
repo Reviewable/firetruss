@@ -370,9 +370,13 @@ Bridge.prototype.suspend = function suspend (suspended) {
 
 Bridge.prototype.enableLogging = function enableLogging (fn) {
   if (fn) {
-    if (fn === true) { fn = console.log.bind(console); }
+    if (fn === true) {
+      fn = console.log.bind(console);
+      this._send({msg: 'enableFirebaseLogging', value: true});
+    }
     this._log = fn;
   } else {
+    this._send({msg: 'enableFirebaseLogging', value: false});
     this._log = _.noop;
   }
 };
@@ -3640,7 +3644,7 @@ function toFirebaseJson(object) {
 var bridge, logging;
 var workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-var VERSION = '4.1.3';
+var VERSION = '3.0.7';
 
 
 var Truss = function Truss(rootUrl) {
