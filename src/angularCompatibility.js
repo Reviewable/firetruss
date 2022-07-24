@@ -68,8 +68,9 @@ function initAngular() {
             digestInProgress = false;
           }
         });
-        _.last(vue._watchers).id = Infinity;  // make sure watcher is scheduled last
-        patchRenderWatcherGet(Object.getPrototypeOf(_.last(vue._watchers)));
+        const watcher = _.last(vue._watchers || vue._scope.effects);
+        watcher.id = Infinity;  // make sure watcher is scheduled last
+        patchRenderWatcherGet(Object.getPrototypeOf(watcher));
         return rootScope;
       }
     ]);
