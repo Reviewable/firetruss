@@ -427,7 +427,7 @@ export default class Modeler {
       // Hack to change order of computed property watchers.  By flipping their ids to be negative,
       // we ensure that they will settle before all other watchers, and also that children
       // properties will settle before their parents since values are often aggregated upwards.
-      const watcher = _.last(vue._watchers);
+      const watcher = _.last(vue._watchers || vue._scope.effects);
       watcher.id = -watcher.id;
 
       function update(newValue) {

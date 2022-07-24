@@ -73,8 +73,9 @@
               digestInProgress = false;
             }
           });
-          _.last(vue._watchers).id = Infinity;  // make sure watcher is scheduled last
-          patchRenderWatcherGet(Object.getPrototypeOf(_.last(vue._watchers)));
+          var watcher = _.last(vue._watchers || vue._scope.effects);
+          watcher.id = Infinity;  // make sure watcher is scheduled last
+          patchRenderWatcherGet(Object.getPrototypeOf(watcher));
           return rootScope;
         }
       ]);
@@ -2233,7 +2234,7 @@
       // Hack to change order of computed property watchers.By flipping their ids to be negative,
       // we ensure that they will settle before all other watchers, and also that children
       // properties will settle before their parents since values are often aggregated upwards.
-      var watcher = _.last(vue._watchers);
+      var watcher = _.last(vue._watchers || vue._scope.effects);
       watcher.id = -watcher.id;
 
       function update(newValue) {
@@ -3698,7 +3699,7 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  var VERSION = '4.1.4';
+  var VERSION = 'dev';
 
 
   var Truss = function Truss(rootUrl) {
