@@ -438,7 +438,8 @@ export default class Coupler {
 
   throttleSnapshots(delay) {
     if (delay) {
-      this._throttled.processPendingSnapshots = _.throttle(this._processPendingSnapshots, delay);
+      this._throttled.processPendingSnapshots =
+        _.debounce(_.throttle(this._processPendingSnapshots, delay));
     } else {
       this._throttled.processPendingSnapshots = this._processPendingSnapshots;
     }
