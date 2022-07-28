@@ -2873,7 +2873,8 @@ Coupler.prototype._processPendingSnapshots = function _processPendingSnapshots (
 
 Coupler.prototype.throttleSnapshots = function throttleSnapshots (delay) {
   if (delay) {
-    this._throttled.processPendingSnapshots = _.throttle(this._processPendingSnapshots, delay);
+    this._throttled.processPendingSnapshots =
+      _.debounce(_.throttle(this._processPendingSnapshots, delay));
   } else {
     this._throttled.processPendingSnapshots = this._processPendingSnapshots;
   }
@@ -3643,7 +3644,7 @@ function toFirebaseJson(object) {
 var bridge, logging;
 var workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-var VERSION = '4.2.1';
+var VERSION = 'dev';
 
 
 var Truss = function Truss(rootUrl) {
