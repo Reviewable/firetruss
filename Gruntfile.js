@@ -1,4 +1,3 @@
-'use strict';
 /* eslint-env node */
 
 const buble = require('@rollup/plugin-buble');

@@ -217,13 +217,13 @@ function splitPath(path, leaveSegmentsEscaped) {
 
 
 var PathMatcher = function PathMatcher(pattern) {
-  var this$1 = this;
+  var this$1$1 = this;
 
   this.variables = [];
   var prefixMatch = _.endsWith(pattern, '/$*');
   if (prefixMatch) { pattern = pattern.slice(0, -3); }
   var pathTemplate = pattern.replace(/\/\$[^/]*/g, function (match) {
-    if (match.length > 1) { this$1.variables.push(match.slice(1)); }
+    if (match.length > 1) { this$1$1.variables.push(match.slice(1)); }
     return '\u0001';
   });
   Object.freeze(this.variables);
@@ -280,35 +280,35 @@ var Snapshot = function Snapshot(ref) {
   this._writeSerial = writeSerial;
 };
 
-var prototypeAccessors = { path: { configurable: true },exists: { configurable: true },value: { configurable: true },key: { configurable: true },writeSerial: { configurable: true } };
+var prototypeAccessors$9 = { path: { configurable: true },exists: { configurable: true },value: { configurable: true },key: { configurable: true },writeSerial: { configurable: true } };
 
-prototypeAccessors.path.get = function () {
+prototypeAccessors$9.path.get = function () {
   return this._path;
 };
 
-prototypeAccessors.exists.get = function () {
+prototypeAccessors$9.exists.get = function () {
   return this._exists;
 };
 
-prototypeAccessors.value.get = function () {
+prototypeAccessors$9.value.get = function () {
   if (this._value === undefined) { throw new Error('Value omitted from snapshot'); }
   return this._value;
 };
 
-prototypeAccessors.key.get = function () {
+prototypeAccessors$9.key.get = function () {
   if (this._key === undefined) { this._key = unescapeKey(this._path.replace(/.*\//, '')); }
   return this._key;
 };
 
-prototypeAccessors.writeSerial.get = function () {
+prototypeAccessors$9.writeSerial.get = function () {
   return this._writeSerial;
 };
 
-Object.defineProperties( Snapshot.prototype, prototypeAccessors );
+Object.defineProperties( Snapshot.prototype, prototypeAccessors$9 );
 
 
 var Bridge = function Bridge(webWorker) {
-  var this$1 = this;
+  var this$1$1 = this;
 
   this._idCounter = 0;
   this._deferreds = {};
@@ -323,7 +323,7 @@ var Bridge = function Bridge(webWorker) {
   this._shared = !!webWorker.port;
   Object.seal(this);
   this._port.onmessage = this._receive.bind(this);
-  window.addEventListener('unload', function () {this$1._send({msg: 'destroy'});});
+  window.addEventListener('unload', function () {this$1$1._send({msg: 'destroy'});});
 };
 
 Bridge.prototype.init = function init (webWorker, config) {
@@ -383,7 +383,7 @@ Bridge.prototype.enableLogging = function enableLogging (fn) {
 };
 
 Bridge.prototype._send = function _send (message) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   message.id = ++this._idCounter;
   var promise;
@@ -391,7 +391,7 @@ Bridge.prototype._send = function _send (message) {
     promise = Promise.resolve();
   } else {
     promise = new Promise(function (resolve, reject) {
-      this$1._deferreds[message.id] = {resolve: resolve, reject: reject};
+      this$1$1._deferreds[message.id] = {resolve: resolve, reject: reject};
     });
     var deferred = this._deferreds[message.id];
     deferred.promise = promise;
@@ -552,7 +552,7 @@ Bridge.prototype.on = function on (listenerKey, url, spec, eventType, snapshotCa
 };
 
 Bridge.prototype.off = function off (listenerKey, url, spec, eventType, snapshotCallback, context) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   var idsToDeregister = [];
   var callbackId;
@@ -584,7 +584,7 @@ Bridge.prototype.off = function off (listenerKey, url, spec, eventType, snapshot
     for (var i = 0, list = idsToDeregister; i < list.length; i += 1) {
         var id = list[i];
 
-        this$1._deregisterCallback(id);
+        this$1$1._deregisterCallback(id);
       }
   });
 };
@@ -697,20 +697,20 @@ var Handle = function Handle(tree, path, annotations) {
   }
 };
 
-var prototypeAccessors$1 = { $ref: { configurable: true },key: { configurable: true },path: { configurable: true },_pathPrefix: { configurable: true },parent: { configurable: true },annotations: { configurable: true } };
+var prototypeAccessors$8 = { $ref: { configurable: true },key: { configurable: true },path: { configurable: true },_pathPrefix: { configurable: true },parent: { configurable: true },annotations: { configurable: true } };
 
-prototypeAccessors$1.$ref.get = function () {return this;};
-prototypeAccessors$1.key.get = function () {
+prototypeAccessors$8.$ref.get = function () {return this;};
+prototypeAccessors$8.key.get = function () {
   if (!this._key) { this._key = unescapeKey(this._path.replace(/.*\//, '')); }
   return this._key;
 };
-prototypeAccessors$1.path.get = function () {return this._path;};
-prototypeAccessors$1._pathPrefix.get = function () {return this._path === '/' ? '' : this._path;};
-prototypeAccessors$1.parent.get = function () {
+prototypeAccessors$8.path.get = function () {return this._path;};
+prototypeAccessors$8._pathPrefix.get = function () {return this._path === '/' ? '' : this._path;};
+prototypeAccessors$8.parent.get = function () {
   return new Reference(this._tree, this._path.replace(/\/[^/]*$/, ''), this._annotations);
 };
 
-prototypeAccessors$1.annotations.get = function () {
+prototypeAccessors$8.annotations.get = function () {
   return this._annotations || EMPTY_ANNOTATIONS;
 };
 
@@ -779,7 +779,7 @@ Handle.prototype.belongsTo = function belongsTo (truss) {
   return this._tree.truss === truss;
 };
 
-Object.defineProperties( Handle.prototype, prototypeAccessors$1 );
+Object.defineProperties( Handle.prototype, prototypeAccessors$8 );
 
 
 var Query = /*@__PURE__*/(function (Handle) {
@@ -943,7 +943,7 @@ var StatItem = function StatItem(name) {
   _.assign(this, {name: name, numRecomputes: 0, numUpdates: 0, runtime: 0});
 };
 
-var prototypeAccessors$2 = { runtimePerRecompute: { configurable: true } };
+var prototypeAccessors$7 = { runtimePerRecompute: { configurable: true } };
 
 StatItem.prototype.add = function add (item) {
   this.runtime += item.runtime;
@@ -951,7 +951,7 @@ StatItem.prototype.add = function add (item) {
   this.numRecomputes += item.numRecomputes;
 };
 
-prototypeAccessors$2.runtimePerRecompute.get = function () {
+prototypeAccessors$7.runtimePerRecompute.get = function () {
   return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
 };
 
@@ -965,20 +965,20 @@ StatItem.prototype.toLogParts = function toLogParts (totals) {
   ];
 };
 
-Object.defineProperties( StatItem.prototype, prototypeAccessors$2 );
+Object.defineProperties( StatItem.prototype, prototypeAccessors$7 );
 
 var Stats = function Stats() {
   this._items = {};
 };
 
-var prototypeAccessors$1$1 = { list: { configurable: true } };
+var prototypeAccessors$1$4 = { list: { configurable: true } };
 
 Stats.prototype.for = function for$1 (name) {
   if (!this._items[name]) { this._items[name] = new StatItem(name); }
   return this._items[name];
 };
 
-prototypeAccessors$1$1.list.get = function () {
+prototypeAccessors$1$4.list.get = function () {
   return _(this._items).values().sortBy(function (item) { return -item.runtime; }).value();
 };
 
@@ -1018,12 +1018,12 @@ Stats.prototype.wrap = function wrap (getter, className, propName) {
   };
 };
 
-Object.defineProperties( Stats.prototype, prototypeAccessors$1$1 );
+Object.defineProperties( Stats.prototype, prototypeAccessors$1$4 );
 
 var stats = new Stats();
 
 var Connector = function Connector(scope, connections, tree, method, refs) {
-  var this$1 = this;
+  var this$1$1 = this;
 
   Object.freeze(connections);
   this._scope = scope;
@@ -1048,55 +1048,55 @@ var Connector = function Connector(scope, connections, tree, method, refs) {
 
   _.forEach(connections, function (descriptor, key) {
     if (_.isFunction(descriptor)) {
-      this$1._bindComputedConnection(key, descriptor);
+      this$1$1._bindComputedConnection(key, descriptor);
     } else {
-      this$1._connect(key, descriptor);
+      this$1$1._connect(key, descriptor);
     }
   });
 
   if (angularProxy.active && scope && scope.$on && scope.$id) {
-    scope.$on('$destroy', function () {this$1.destroy();});
+    scope.$on('$destroy', function () {this$1$1.destroy();});
   }
 };
 
-var prototypeAccessors$3 = { ready: { configurable: true },at: { configurable: true },data: { configurable: true } };
+var prototypeAccessors$6 = { ready: { configurable: true },at: { configurable: true },data: { configurable: true } };
 
-prototypeAccessors$3.ready.get = function () {
-    var this$1 = this;
+prototypeAccessors$6.ready.get = function () {
+    var this$1$1 = this;
 
   return _.every(this._connections, function (ignored, key) {
-    var descriptor = this$1._vue.descriptors[key];
+    var descriptor = this$1$1._vue.descriptors[key];
     if (!descriptor) { return false; }
     if (descriptor instanceof Handle) { return descriptor.ready; }
-    return this$1._subConnectors[key].ready;
+    return this$1$1._subConnectors[key].ready;
   });
 };
 
-prototypeAccessors$3.at.get = function () {
+prototypeAccessors$6.at.get = function () {
   return this._vue.refs;
 };
 
-prototypeAccessors$3.data.get = function () {
+prototypeAccessors$6.data.get = function () {
   return this._data;
 };
 
 Connector.prototype.destroy = function destroy () {
-    var this$1 = this;
+    var this$1$1 = this;
 
   this._unlinkScopeProperties();
   _.forEach(this._angularUnwatches, function (unwatch) {unwatch();});
-  _.forEach(this._connections, function (descriptor, key) {this$1._disconnect(key);});
+  _.forEach(this._connections, function (descriptor, key) {this$1$1._disconnect(key);});
   this._vue.$destroy();
 };
 
 Connector.prototype._linkScopeProperties = function _linkScopeProperties () {
-    var this$1 = this;
+    var this$1$1 = this;
 
   var dataProperties = _.mapValues(this._connections, function (unused, key) { return ({
     configurable: true, enumerable: false, get: function () {
-      var descriptor = this$1._vue.descriptors[key];
+      var descriptor = this$1$1._vue.descriptors[key];
       if (descriptor instanceof Reference) { return descriptor.value; }
-      return this$1._vue.values[key];
+      return this$1$1._vue.values[key];
     }
   }); });
   Object.defineProperties(this._data, dataProperties);
@@ -1112,11 +1112,11 @@ Connector.prototype._linkScopeProperties = function _linkScopeProperties () {
 };
 
 Connector.prototype._unlinkScopeProperties = function _unlinkScopeProperties () {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (!this._scope) { return; }
   _.forEach(this._connections, function (descriptor, key) {
-    delete this$1._scope[key];
+    delete this$1$1._scope[key];
   });
 };
 
@@ -1165,19 +1165,19 @@ Connector.prototype._updateComputedConnection = function _updateComputedConnecti
 };
 
 Connector.prototype._updateConnections = function _updateConnections (connections) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   _.forEach(connections, function (descriptor, key) {
-    this$1._updateComputedConnection(key, descriptor);
+    this$1$1._updateComputedConnection(key, descriptor);
   });
   _.forEach(this._connections, function (descriptor, key) {
-    if (!_.has(connections, key)) { this$1._updateComputedConnection(key); }
+    if (!_.has(connections, key)) { this$1$1._updateComputedConnection(key); }
   });
   this._connections = connections;
 };
 
 Connector.prototype._connect = function _connect (key, descriptor) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   Vue.set(this._vue.descriptors, key, descriptor);
   angularProxy.digest();
@@ -1203,8 +1203,8 @@ Connector.prototype._connect = function _connect (key, descriptor) {
       function (subReady) {
         if (!subReady) { return; }
         unobserve();
-        delete this$1._disconnects[key];
-        Vue.set(this$1._vue.values, key, subScope);
+        delete this$1$1._disconnects[key];
+        Vue.set(this$1$1._vue.values, key, subScope);
         angularProxy.digest();
       }
     );
@@ -1254,7 +1254,7 @@ Connector.prototype._updateQueryValue = function _updateQueryValue (key, childKe
   }
 };
 
-Object.defineProperties( Connector.prototype, prototypeAccessors$3 );
+Object.defineProperties( Connector.prototype, prototypeAccessors$6 );
 
 function flattenRefs(refs) {
   if (!refs) { return; }
@@ -1327,14 +1327,14 @@ var SlowHandle = function SlowHandle(operation, delay, callback) {
 };
 
 SlowHandle.prototype.initiate = function initiate () {
-    var this$1 = this;
+    var this$1$1 = this;
 
   this.cancel();
   this._fired = false;
   var elapsed = Date.now() - this._operation._startTimestamp;
   this._timeoutId = setTimeout(function () {
-    this$1._fired = true;
-    this$1._callback(this$1._operation);
+    this$1$1._fired = true;
+    this$1$1._callback(this$1$1._operation);
   }, this._delay - elapsed);
 };
 
@@ -1357,27 +1357,27 @@ var Operation = function Operation(type, method, target, operand) {
   this._slowHandles = [];
 };
 
-var prototypeAccessors$4 = { type: { configurable: true },method: { configurable: true },target: { configurable: true },targets: { configurable: true },operand: { configurable: true },ready: { configurable: true },running: { configurable: true },ended: { configurable: true },tries: { configurable: true },error: { configurable: true } };
+var prototypeAccessors$5 = { type: { configurable: true },method: { configurable: true },target: { configurable: true },targets: { configurable: true },operand: { configurable: true },ready: { configurable: true },running: { configurable: true },ended: { configurable: true },tries: { configurable: true },error: { configurable: true } };
 
-prototypeAccessors$4.type.get = function () {return this._type;};
-prototypeAccessors$4.method.get = function () {return this._method;};
-prototypeAccessors$4.target.get = function () {return this._target;};
-prototypeAccessors$4.targets.get = function () {
-    var this$1 = this;
+prototypeAccessors$5.type.get = function () {return this._type;};
+prototypeAccessors$5.method.get = function () {return this._method;};
+prototypeAccessors$5.target.get = function () {return this._target;};
+prototypeAccessors$5.targets.get = function () {
+    var this$1$1 = this;
 
   if (this._method !== 'update') { return [this._target]; }
   return _.map(this._operand, function (value, escapedPathFragment) {
     return new Reference(
-      this$1._target._tree, joinPath(this$1._target.path, escapedPathFragment),
-      this$1._target._annotations);
+      this$1$1._target._tree, joinPath(this$1$1._target.path, escapedPathFragment),
+      this$1$1._target._annotations);
   });
 };
-prototypeAccessors$4.operand.get = function () {return this._operand;};
-prototypeAccessors$4.ready.get = function () {return this._ready;};
-prototypeAccessors$4.running.get = function () {return this._running;};
-prototypeAccessors$4.ended.get = function () {return this._ended;};
-prototypeAccessors$4.tries.get = function () {return this._tries;};
-prototypeAccessors$4.error.get = function () {return this._error;};
+prototypeAccessors$5.operand.get = function () {return this._operand;};
+prototypeAccessors$5.ready.get = function () {return this._ready;};
+prototypeAccessors$5.running.get = function () {return this._running;};
+prototypeAccessors$5.ended.get = function () {return this._ended;};
+prototypeAccessors$5.tries.get = function () {return this._tries;};
+prototypeAccessors$5.error.get = function () {return this._error;};
 
 Operation.prototype.onSlow = function onSlow (delay, callback) {
   var handle = new SlowHandle(this, delay, callback);
@@ -1409,7 +1409,7 @@ Operation.prototype._incrementTries = function _incrementTries () {
   this._tries++;
 };
 
-Object.defineProperties( Operation.prototype, prototypeAccessors$4 );
+Object.defineProperties( Operation.prototype, prototypeAccessors$5 );
 
 
 var Dispatcher = function Dispatcher(bridge) {
@@ -1451,10 +1451,10 @@ Dispatcher.prototype._removeCallback = function _removeCallback (stage, intercep
 };
 
 Dispatcher.prototype._removeCallbacks = function _removeCallbacks (interceptKey, wrappedCallbacks) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   _.forEach(wrappedCallbacks, function (wrappedCallback, stage) {
-    this$1._removeCallback(stage, interceptKey, wrappedCallback);
+    this$1$1._removeCallback(stage, interceptKey, wrappedCallback);
   });
 };
 
@@ -1471,16 +1471,16 @@ Dispatcher.prototype._getCallbacksKey = function _getCallbacksKey (stage, interc
 };
 
 Dispatcher.prototype.execute = function execute (operationType, method, target, operand, executor) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   executor = wrapPromiseCallback(executor);
   var operation = this.createOperation(operationType, method, target, operand);
   return this.begin(operation).then(function () {
     var executeWithRetries = function () {
-      return executor().catch(function (e) { return this$1._retryOrEnd(operation, e).then(executeWithRetries); });
+      return executor().catch(function (e) { return this$1$1._retryOrEnd(operation, e).then(executeWithRetries); });
     };
     return executeWithRetries();
-  }).then(function (result) { return this$1.end(operation).then(function () { return result; }); });
+  }).then(function (result) { return this$1$1.end(operation).then(function () { return result; }); });
 };
 
 Dispatcher.prototype.createOperation = function createOperation (operationType, method, target, operand) {
@@ -1488,14 +1488,14 @@ Dispatcher.prototype.createOperation = function createOperation (operationType, 
 };
 
 Dispatcher.prototype.begin = function begin (operation) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   return Promise.all(_.map(
     this._getCallbacks('onBefore', operation.type, operation.method),
     function (onBefore) { return onBefore(operation); }
   )).then(function () {
     if (!operation.ended) { operation._setRunning(true); }
-  }, function (e) { return this$1.end(operation, e); });
+  }, function (e) { return this$1$1.end(operation, e); });
 };
 
 Dispatcher.prototype.markReady = function markReady (operation) {
@@ -1524,15 +1524,15 @@ Dispatcher.prototype.retry = function retry (operation, error) {
 };
 
 Dispatcher.prototype._retryOrEnd = function _retryOrEnd (operation, error) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   return this.retry(operation, error).then(function (result) {
-    if (!result) { return this$1.end(operation, error); }
-  }, function (e) { return this$1.end(operation, e); });
+    if (!result) { return this$1$1.end(operation, error); }
+  }, function (e) { return this$1$1.end(operation, e); });
 };
 
 Dispatcher.prototype.end = function end (operation, error) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (operation.ended) { return Promise.resolve(); }
   operation._setRunning(false);
@@ -1547,10 +1547,10 @@ Dispatcher.prototype.end = function end (operation, error) {
     this._getCallbacks('onAfter', operation.type, operation.method),
     function (onAfter) { return onAfter(operation); }
   )).then(
-    function () { return this$1._afterEnd(operation); },
+    function () { return this$1$1._afterEnd(operation); },
     function (e) {
       operation._error = e;
-      return this$1._afterEnd(operation);
+      return this$1$1._afterEnd(operation);
     }
   );
 };
@@ -1625,12 +1625,12 @@ var MetaTree = function MetaTree(rootUrl, tree, bridge, dispatcher) {
   this._vue = new Vue({data: {$root: {
     connected: undefined, timeOffset: 0, user: undefined, userid: undefined,
     nowAtInterval: function nowAtInterval(intervalMillis) {
-      var this$1 = this;
+      var this$1$1 = this;
 
       var key = 'now' + intervalMillis;
       if (!this.hasOwnProperty(key)) {
         var update = function () {
-          Vue.set(this$1, key, Date.now() + this$1.timeOffset);
+          Vue.set(this$1$1, key, Date.now() + this$1$1.timeOffset);
           angularProxy.digest();
         };
         update();
@@ -1649,9 +1649,9 @@ var MetaTree = function MetaTree(rootUrl, tree, bridge, dispatcher) {
   Object.freeze(this);
 };
 
-var prototypeAccessors$5 = { root: { configurable: true } };
+var prototypeAccessors$4 = { root: { configurable: true } };
 
-prototypeAccessors$5.root.get = function () {
+prototypeAccessors$4.root.get = function () {
   return this._vue.$data.$root;
 };
 
@@ -1661,19 +1661,19 @@ MetaTree.prototype.destroy = function destroy () {
 };
 
 MetaTree.prototype.authenticate = function authenticate (token) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   this._auth.serial++;
   return this._dispatcher.execute(
     'auth', 'authenticate', new Reference(this._tree, '/'), token, function () {
-      if (token) { return this$1._bridge.authWithCustomToken(this$1._rootUrl, token); }
-      return this$1._bridge.authAnonymously(this$1._rootUrl);
+      if (token) { return this$1$1._bridge.authWithCustomToken(this$1$1._rootUrl, token); }
+      return this$1$1._bridge.authAnonymously(this$1$1._rootUrl);
     }
   );
 };
 
 MetaTree.prototype.unauthenticate = function unauthenticate () {
-    var this$1 = this;
+    var this$1$1 = this;
 
   // Signal user change to null pre-emptively.This is what the Firebase SDK does as well, since
   // it lets the app tear down user-required connections before the user is actually deauthed,
@@ -1683,16 +1683,16 @@ MetaTree.prototype.unauthenticate = function unauthenticate () {
     // Bail if auth change callback initiated another authentication, since it will have already
     // sent the command to the bridge and sending our own now would incorrectly override it.
     if (!approved) { return; }
-    return this$1._dispatcher.execute(
-      'auth', 'unauthenticate', new Reference(this$1._tree, '/'), undefined, function () {
-        return this$1._bridge.unauth(this$1._rootUrl);
+    return this$1$1._dispatcher.execute(
+      'auth', 'unauthenticate', new Reference(this$1$1._tree, '/'), undefined, function () {
+        return this$1$1._bridge.unauth(this$1$1._rootUrl);
       }
     );
   });
 };
 
 MetaTree.prototype._handleAuthChange = function _handleAuthChange (user) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   var supersededChange = !this._auth.initialAuthChangeReceived && this._auth.serial;
   if (user !== undefined) { this._auth.initialAuthChangeReceived = true; }
@@ -1700,10 +1700,10 @@ MetaTree.prototype._handleAuthChange = function _handleAuthChange (user) {
   var authSerial = this._auth.serial;
   if (this.root.user === user) { return Promise.resolve(false); }
   return this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, function () {
-    if (this$1.root.user === user || authSerial !== this$1._auth.serial) { return false; }
+    if (this$1$1.root.user === user || authSerial !== this$1$1._auth.serial) { return false; }
     if (user) { Object.freeze(user); }
-    this$1.root.user = user;
-    this$1.root.userid = user && user.uid;
+    this$1$1.root.user = user;
+    this$1$1.root.userid = user && user.uid;
     angularProxy.digest();
     return true;
   });
@@ -1714,16 +1714,16 @@ MetaTree.prototype._isAuthChangeStale = function _isAuthChangeStale (user) {
 };
 
 MetaTree.prototype._connectInfoProperty = function _connectInfoProperty (property, attribute) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   var propertyUrl = (this._rootUrl) + "/.info/" + property;
   this._bridge.on(propertyUrl, propertyUrl, null, 'value', function (snap) {
-    this$1.root[attribute] = snap.value;
+    this$1$1.root[attribute] = snap.value;
     angularProxy.digest();
   });
 };
 
-Object.defineProperties( MetaTree.prototype, prototypeAccessors$5 );
+Object.defineProperties( MetaTree.prototype, prototypeAccessors$4 );
 
 // These are defined separately for each object so they're not included in Value below.
 var RESERVED_VALUE_PROPERTY_NAMES = {$$$trussCheck: true, __ob__: true};
@@ -1738,29 +1738,29 @@ var currentPropertyFrozen;
 
 var BaseValue = function BaseValue () {};
 
-var prototypeAccessors$6 = { $meta: { configurable: true },$store: { configurable: true },$now: { configurable: true },$$finalizers: { configurable: true } };
+var prototypeAccessors$3 = { $meta: { configurable: true },$store: { configurable: true },$now: { configurable: true },$$finalizers: { configurable: true } };
 
-prototypeAccessors$6.$meta.get = function () {return this.$truss.meta;};
-prototypeAccessors$6.$store.get = function () {return this.$truss.store;};// access indirectly to leave dependency trace
-prototypeAccessors$6.$now.get = function () {return this.$truss.now;};
+prototypeAccessors$3.$meta.get = function () {return this.$truss.meta;};
+prototypeAccessors$3.$store.get = function () {return this.$truss.store;};// access indirectly to leave dependency trace
+prototypeAccessors$3.$now.get = function () {return this.$truss.now;};
 
 BaseValue.prototype.$newKey = function $newKey () {return this.$truss.newKey();};
 
 BaseValue.prototype.$intercept = function $intercept (actionType, callbacks) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (this.$destroyed) { throw new Error('Object already destroyed'); }
   var unintercept = this.$truss.intercept(actionType, callbacks);
   var uninterceptAndRemoveFinalizer = function () {
     unintercept();
-    _.pull(this$1.$$finalizers, uninterceptAndRemoveFinalizer);
+    _.pull(this$1$1.$$finalizers, uninterceptAndRemoveFinalizer);
   };
   this.$$finalizers.push(uninterceptAndRemoveFinalizer);
   return uninterceptAndRemoveFinalizer;
 };
 
 BaseValue.prototype.$connect = function $connect (scope, connections) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (this.$destroyed) { throw new Error('Object already destroyed'); }
   if (!connections) {
@@ -1770,7 +1770,7 @@ BaseValue.prototype.$connect = function $connect (scope, connections) {
   var connector = this.$truss.connect(scope, wrapConnections(this, connections));
   var originalDestroy = connector.destroy;
   var destroy = function () {
-    _.pull(this$1.$$finalizers, destroy);
+    _.pull(this$1$1.$$finalizers, destroy);
     return originalDestroy.call(connector);
   };
   this.$$finalizers.push(destroy);
@@ -1779,91 +1779,91 @@ BaseValue.prototype.$connect = function $connect (scope, connections) {
 };
 
 BaseValue.prototype.$peek = function $peek (target, callback) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (this.$destroyed) { throw new Error('Object already destroyed'); }
   var promise = promiseFinally(
-    this.$truss.peek(target, callback), function () {_.pull(this$1.$$finalizers, promise.cancel);}
+    this.$truss.peek(target, callback), function () {_.pull(this$1$1.$$finalizers, promise.cancel);}
   );
   this.$$finalizers.push(promise.cancel);
   return promise;
 };
 
 BaseValue.prototype.$observe = function $observe (subjectFn, callbackFn, options) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (this.$destroyed) { throw new Error('Object already destroyed'); }
   var unobserveAndRemoveFinalizer;
 
   var unobserve = this.$truss.observe(function () {
-    this$1.$$touchThis();
-    return subjectFn.call(this$1);
+    this$1$1.$$touchThis();
+    return subjectFn.call(this$1$1);
   }, callbackFn.bind(this), options);
 
   unobserveAndRemoveFinalizer = function () {// eslint-disable-line prefer-const
     unobserve();
-    _.pull(this$1.$$finalizers, unobserveAndRemoveFinalizer);
+    _.pull(this$1$1.$$finalizers, unobserveAndRemoveFinalizer);
   };
   this.$$finalizers.push(unobserveAndRemoveFinalizer);
   return unobserveAndRemoveFinalizer;
 };
 
 BaseValue.prototype.$when = function $when (expression, options) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (this.$destroyed) { throw new Error('Object already destroyed'); }
   var promise = this.$truss.when(function () {
-    this$1.$$touchThis();
-    return expression.call(this$1);
+    this$1$1.$$touchThis();
+    return expression.call(this$1$1);
   }, options);
-  promiseFinally(promise, function () {_.pull(this$1.$$finalizers, promise.cancel);});
+  promiseFinally(promise, function () {_.pull(this$1$1.$$finalizers, promise.cancel);});
   this.$$finalizers.push(promise.cancel);
   return promise;
 };
 
-prototypeAccessors$6.$$finalizers.get = function () {
+prototypeAccessors$3.$$finalizers.get = function () {
   Object.defineProperty(this, '$$finalizers', {
     value: [], writable: false, enumerable: false, configurable: false});
   return this.$$finalizers;
 };
 
-Object.defineProperties( BaseValue.prototype, prototypeAccessors$6 );
+Object.defineProperties( BaseValue.prototype, prototypeAccessors$3 );
 
 
 var Value = function Value () {};
 
-var prototypeAccessors$1$2 = { $parent: { configurable: true },$path: { configurable: true },$truss: { configurable: true },$ref: { configurable: true },$refs: { configurable: true },$key: { configurable: true },$data: { configurable: true },$hidden: { configurable: true },$empty: { configurable: true },$keys: { configurable: true },$values: { configurable: true },$ready: { configurable: true },$overridden: { configurable: true },$$initializers: { configurable: true },$destroyed: { configurable: true } };
+var prototypeAccessors$1$3 = { $parent: { configurable: true },$path: { configurable: true },$truss: { configurable: true },$ref: { configurable: true },$refs: { configurable: true },$key: { configurable: true },$data: { configurable: true },$hidden: { configurable: true },$empty: { configurable: true },$keys: { configurable: true },$values: { configurable: true },$ready: { configurable: true },$overridden: { configurable: true },$$initializers: { configurable: true },$destroyed: { configurable: true } };
 
-prototypeAccessors$1$2.$parent.get = function () {return creatingObjectProperties.$parent.value;};
-prototypeAccessors$1$2.$path.get = function () {return creatingObjectProperties.$path.value;};
-prototypeAccessors$1$2.$truss.get = function () {
+prototypeAccessors$1$3.$parent.get = function () {return creatingObjectProperties.$parent.value;};
+prototypeAccessors$1$3.$path.get = function () {return creatingObjectProperties.$path.value;};
+prototypeAccessors$1$3.$truss.get = function () {
   Object.defineProperty(this, '$truss', {value: this.$parent.$truss});
   return this.$truss;
 };
-prototypeAccessors$1$2.$ref.get = function () {
+prototypeAccessors$1$3.$ref.get = function () {
   Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
   return this.$ref;
 };
-prototypeAccessors$1$2.$refs.get = function () {return this.$ref;};
-prototypeAccessors$1$2.$key.get = function () {
+prototypeAccessors$1$3.$refs.get = function () {return this.$ref;};
+prototypeAccessors$1$3.$key.get = function () {
   Object.defineProperty(
     this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
   return this.$key;
 };
-prototypeAccessors$1$2.$data.get = function () {return this;};
-prototypeAccessors$1$2.$hidden.get = function () {return false;};// eslint-disable-line lodash/prefer-constant
-prototypeAccessors$1$2.$empty.get = function () {return _.isEmpty(this.$data);};
-prototypeAccessors$1$2.$keys.get = function () {return _.keys(this.$data);};
-prototypeAccessors$1$2.$values.get = function () {return _.values(this.$data);};
-prototypeAccessors$1$2.$ready.get = function () {return this.$ref.ready;};
-prototypeAccessors$1$2.$overridden.get = function () {return false;};// eslint-disable-line lodash/prefer-constant
+prototypeAccessors$1$3.$data.get = function () {return this;};
+prototypeAccessors$1$3.$hidden.get = function () {return false;};// eslint-disable-line lodash/prefer-constant
+prototypeAccessors$1$3.$empty.get = function () {return _.isEmpty(this.$data);};
+prototypeAccessors$1$3.$keys.get = function () {return _.keys(this.$data);};
+prototypeAccessors$1$3.$values.get = function () {return _.values(this.$data);};
+prototypeAccessors$1$3.$ready.get = function () {return this.$ref.ready;};
+prototypeAccessors$1$3.$overridden.get = function () {return false;};// eslint-disable-line lodash/prefer-constant
 
 Value.prototype.$nextTick = function $nextTick () {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (this.$destroyed) { throw new Error('Object already destroyed'); }
   var promise = this.$truss.nextTick();
-  promiseFinally(promise, function () {_.pull(this$1.$$finalizers, promise.cancel);});
+  promiseFinally(promise, function () {_.pull(this$1$1.$$finalizers, promise.cancel);});
   this.$$finalizers.push(promise.cancel);
   return promise;
 };
@@ -1892,17 +1892,17 @@ Value.prototype.$$touchThis = function $$touchThis () {
   /* eslint-enable no-unused-expressions */
 };
 
-prototypeAccessors$1$2.$$initializers.get = function () {
+prototypeAccessors$1$3.$$initializers.get = function () {
   Object.defineProperty(this, '$$initializers', {
     value: [], writable: false, enumerable: false, configurable: true});
   return this.$$initializers;
 };
 
-prototypeAccessors$1$2.$destroyed.get = function () {// eslint-disable-line lodash/prefer-constant
+prototypeAccessors$1$3.$destroyed.get = function () {// eslint-disable-line lodash/prefer-constant
   return false;
 };
 
-Object.defineProperties( Value.prototype, prototypeAccessors$1$2 );
+Object.defineProperties( Value.prototype, prototypeAccessors$1$3 );
 
 copyPrototype(BaseValue, Value);
 
@@ -1929,7 +1929,7 @@ var Modeler = function Modeler(debug) {
 };
 
 Modeler.prototype.init = function init (classes, rootAcceptable) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (_.isPlainObject(classes)) {
     _.forEach(classes, function (Class, path) {
@@ -1946,7 +1946,7 @@ Modeler.prototype.init = function init (classes, rootAcceptable) {
     });
   }
   classes = _.uniq(classes);
-  _.forEach(classes, function (Class) { return this$1._mountClass(Class, rootAcceptable); });
+  _.forEach(classes, function (Class) { return this$1$1._mountClass(Class, rootAcceptable); });
   this._decorateTrie(this._trie);
 };
 
@@ -1984,10 +1984,10 @@ Modeler.prototype._findMount = function _findMount (predicate, node) {
 };
 
 Modeler.prototype._decorateTrie = function _decorateTrie (node) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   _.forEach(node.children, function (child) {
-    this$1._decorateTrie(child);
+    this$1$1._decorateTrie(child);
     if (child.local || child.localDescendants) { node.localDescendants = true; }
   });
 };
@@ -2027,7 +2027,7 @@ Modeler.prototype._augmentClass = function _augmentClass (Class) {
 };
 
 Modeler.prototype._mountClass = function _mountClass (Class, rootAcceptable) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   var computedProperties = this._augmentClass(Class);
   var allVariables = [];
@@ -2062,7 +2062,7 @@ Modeler.prototype._mountClass = function _mountClass (Class, rootAcceptable) {
     } else if (!_.has(mount, 'placeholder')) {
       mount.placeholder = {};
     }
-    var targetMount = this$1._getMount(mount.path.replace(/\$[^/]*/g, '$'), true);
+    var targetMount = this$1$1._getMount(mount.path.replace(/\$[^/]*/g, '$'), true);
     if (targetMount.matcher && (
       targetMount.escapedKey === escapedKey ||
       targetMount.escapedKey.charAt(0) === '$' && escapedKey.charAt(0) === '$'
@@ -2089,7 +2089,7 @@ Modeler.prototype._mountClass = function _mountClass (Class, rootAcceptable) {
  * them up and make the reactive.
  */
 Modeler.prototype.createObject = function createObject (path, properties) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   var mount = this._getMount(path) || {Class: Value};
   try {
@@ -2112,7 +2112,7 @@ Modeler.prototype.createObject = function createObject (path, properties) {
     if (mount.hidden) { properties.$hidden = {value: true}; }
     if (mount.computedProperties) {
       _.forEach(mount.computedProperties, function (prop) {
-        properties[prop.name] = this$1._buildComputedPropertyDescriptor(object, prop);
+        properties[prop.name] = this$1$1._buildComputedPropertyDescriptor(object, prop);
       });
     }
 
@@ -2137,7 +2137,7 @@ Modeler.prototype._wrapProperties = function _wrapProperties (object) {
 };
 
 Modeler.prototype._buildComputedPropertyDescriptor = function _buildComputedPropertyDescriptor (object, prop) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   var propertyStats = stats.for(prop.fullName);
 
@@ -2147,7 +2147,7 @@ Modeler.prototype._buildComputedPropertyDescriptor = function _buildComputedProp
   object.$$initializers.push(function (vue) {
     var unwatchNow = false;
     var compute = computeValue.bind(object, prop, propertyStats);
-    if (this$1._debug) { compute.toString = function () {return prop.fullName;}; }
+    if (this$1$1._debug) { compute.toString = function () {return prop.fullName;}; }
     var unwatch = function () {unwatchNow = true;};
     unwatch = vue.$watch(compute, function (newValue) {
       if (object.$destroyed) {
@@ -2435,24 +2435,24 @@ QueryHandler.prototype.destroy = function destroy () {
 };
 
 QueryHandler.prototype._handleSnapshot = function _handleSnapshot (snap) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   this._coupler._queueSnapshotCallback(function () {
     // Order is important here: first couple any new subpaths so _handleSnapshot will update the
     // tree, then tell the client to update its keys, pulling values from the tree.
-    if (!this$1._listeners.length || !this$1._listening) { return; }
-    var updatedKeys = this$1._updateKeysAndApplySnapshot(snap);
-    if (!this$1.ready) {
-      this$1.ready = true;
+    if (!this$1$1._listeners.length || !this$1$1._listening) { return; }
+    var updatedKeys = this$1$1._updateKeysAndApplySnapshot(snap);
+    if (!this$1$1.ready) {
+      this$1$1.ready = true;
       angularProxy.digest();
-      for (var i = 0, list = this$1._listeners; i < list.length; i += 1) {
+      for (var i = 0, list = this$1$1._listeners; i < list.length; i += 1) {
         var listener = list[i];
 
-          this$1._coupler._dispatcher.markReady(listener.operation);
+          this$1$1._coupler._dispatcher.markReady(listener.operation);
       }
     }
     if (updatedKeys) {
-      for (var i$1 = 0, list$1 = this$1._listeners; i$1 < list$1.length; i$1 += 1) {
+      for (var i$1 = 0, list$1 = this$1$1._listeners; i$1 < list$1.length; i$1 += 1) {
         var listener$1 = list$1[i$1];
 
           if (listener$1.keysCallback) { listener$1.keysCallback(updatedKeys); }
@@ -2524,23 +2524,23 @@ QueryHandler.prototype._updateKeysAndApplySnapshot = function _updateKeysAndAppl
 };
 
 QueryHandler.prototype._handleError = function _handleError (error) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (!this._listeners.length || !this._listening) { return; }
   this._listening = false;
   this.ready = false;
   angularProxy.digest();
   Promise.all(_.map(this._listeners, function (listener) {
-    this$1._coupler._dispatcher.clearReady(listener.operation);
-    return this$1._coupler._dispatcher.retry(listener.operation, error).catch(function (e) {
+    this$1$1._coupler._dispatcher.clearReady(listener.operation);
+    return this$1$1._coupler._dispatcher.retry(listener.operation, error).catch(function (e) {
       listener.operation._disconnect(e);
       return false;
     });
   })).then(function (results) {
     if (_.some(results)) {
-      if (this$1._listeners.length) { this$1._listen(); }
+      if (this$1$1._listeners.length) { this$1$1._listen(); }
     } else {
-      for (var i = 0, list = this$1._listeners; i < list.length; i += 1) {
+      for (var i = 0, list = this$1$1._listeners; i < list.length; i += 1) {
           var listener = list[i];
 
           listener.operation._disconnect(error);
@@ -2562,22 +2562,22 @@ var Node = function Node(coupler, path, parent) {
   this.children = {};
 };
 
-var prototypeAccessors$7 = { active: { configurable: true },count: { configurable: true } };
+var prototypeAccessors$2 = { active: { configurable: true },count: { configurable: true } };
 
-prototypeAccessors$7.active.get = function () {
+prototypeAccessors$2.active.get = function () {
   return this.count || this.queryCount;
 };
 
-prototypeAccessors$7.count.get = function () {
+prototypeAccessors$2.count.get = function () {
   return this.operations.length;
 };
 
 Node.prototype.listen = function listen (skip) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (!skip && this.count) {
     if (this.listening) { return; }
-    _.forEach(this.operations, function (op) {this$1._coupler._dispatcher.clearReady(op);});
+    _.forEach(this.operations, function (op) {this$1$1._coupler._dispatcher.clearReady(op);});
     this._coupler._bridge.on(
       this.url, this.url, null, 'value', this._handleSnapshot, this._handleError, this,
       {sync: true});
@@ -2604,20 +2604,20 @@ Node.prototype.unlisten = function unlisten (skip) {
 };
 
 Node.prototype._handleSnapshot = function _handleSnapshot (snap) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   this._coupler._queueSnapshotCallback(function () {
-    if (!this$1.listening || !this$1._coupler.isTrunkCoupled(snap.path)) { return; }
-    this$1._coupler._applySnapshot(snap);
-    if (!this$1.ready && snap.path === this$1.path) {
-      this$1.ready = true;
+    if (!this$1$1.listening || !this$1$1._coupler.isTrunkCoupled(snap.path)) { return; }
+    this$1$1._coupler._applySnapshot(snap);
+    if (!this$1$1.ready && snap.path === this$1$1.path) {
+      this$1$1.ready = true;
       angularProxy.digest();
-      this$1.unlisten(true);
-      this$1._forAllDescendants(function (node) {
+      this$1$1.unlisten(true);
+      this$1$1._forAllDescendants(function (node) {
         for (var i = 0, list = node.operations; i < list.length; i += 1) {
             var op = list[i];
 
-            this$1._coupler._dispatcher.markReady(op);
+            this$1$1._coupler._dispatcher.markReady(op);
           }
       });
     }
@@ -2625,7 +2625,7 @@ Node.prototype._handleSnapshot = function _handleSnapshot (snap) {
 };
 
 Node.prototype._handleError = function _handleError (error) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (!this.count || !this.listening) { return; }
   this.listening = false;
@@ -2638,19 +2638,19 @@ Node.prototype._handleError = function _handleError (error) {
     for (var i = 0, list = node.operations; i < list.length; i += 1) {
         var op = list[i];
 
-        this$1._coupler._dispatcher.clearReady(op);
+        this$1$1._coupler._dispatcher.clearReady(op);
       }
   });
   return Promise.all(_.map(this.operations, function (op) {
-    return this$1._coupler._dispatcher.retry(op, error).catch(function (e) {
+    return this$1$1._coupler._dispatcher.retry(op, error).catch(function (e) {
       op._disconnect(e);
       return false;
     });
   })).then(function (results) {
     if (_.some(results)) {
-      if (this$1.count) { this$1.listen(); }
+      if (this$1$1.count) { this$1$1.listen(); }
     } else {
-      for (var i = 0, list = this$1.operations; i < list.length; i += 1) {
+      for (var i = 0, list = this$1$1.operations; i < list.length; i += 1) {
           var op = list[i];
 
           op._disconnect(error);
@@ -2674,7 +2674,7 @@ Node.prototype.collectCoupledDescendantPaths = function collectCoupledDescendant
   return paths;
 };
 
-Object.defineProperties( Node.prototype, prototypeAccessors$7 );
+Object.defineProperties( Node.prototype, prototypeAccessors$2 );
 
 
 var Coupler = function Coupler(rootUrl, bridge, dispatcher, applySnapshot, prunePath) {
@@ -2696,13 +2696,13 @@ var Coupler = function Coupler(rootUrl, bridge, dispatcher, applySnapshot, prune
   this._nodeIndex['/'] = this._root;
 };
 
-var prototypeAccessors$1$3 = { _root: { configurable: true },_queryHandlers: { configurable: true } };
+var prototypeAccessors$1$2 = { _root: { configurable: true },_queryHandlers: { configurable: true } };
 
-prototypeAccessors$1$3._root.get = function () {
+prototypeAccessors$1$2._root.get = function () {
   return this._vue.$data.root;
 };
 
-prototypeAccessors$1$3._queryHandlers.get = function () {
+prototypeAccessors$1$2._queryHandlers.get = function () {
   return this._vue.$data.queryHandlers;
 };
 
@@ -2880,7 +2880,7 @@ Coupler.prototype.throttleSnapshots = function throttleSnapshots (delay) {
   }
 };
 
-Object.defineProperties( Coupler.prototype, prototypeAccessors$1$3 );
+Object.defineProperties( Coupler.prototype, prototypeAccessors$1$2 );
 
 var Transaction = function Transaction(ref) {
   this._ref = ref;
@@ -2888,11 +2888,11 @@ var Transaction = function Transaction(ref) {
   this._values = undefined;
 };
 
-var prototypeAccessors$8 = { currentValue: { configurable: true },outcome: { configurable: true },values: { configurable: true } };
+var prototypeAccessors$1 = { currentValue: { configurable: true },outcome: { configurable: true },values: { configurable: true } };
 
-prototypeAccessors$8.currentValue.get = function () {return this._ref.value;};
-prototypeAccessors$8.outcome.get = function () {return this._outcome;};
-prototypeAccessors$8.values.get = function () {return this._values;};
+prototypeAccessors$1.currentValue.get = function () {return this._ref.value;};
+prototypeAccessors$1.outcome.get = function () {return this._outcome;};
+prototypeAccessors$1.values.get = function () {return this._values;};
 
 Transaction.prototype._setOutcome = function _setOutcome (value) {
   if (this._outcome) { throw new Error('Transaction already resolved with ' + this._outcome); }
@@ -2920,7 +2920,7 @@ Transaction.prototype.update = function update (values) {
   this._values = values;
 };
 
-Object.defineProperties( Transaction.prototype, prototypeAccessors$8 );
+Object.defineProperties( Transaction.prototype, prototypeAccessors$1 );
 
 
 var Tree = function Tree(truss, rootUrl, bridge, dispatcher) {
@@ -2943,9 +2943,9 @@ var Tree = function Tree(truss, rootUrl, bridge, dispatcher) {
   // access the tree root via truss.
 };
 
-var prototypeAccessors$1$4 = { root: { configurable: true },truss: { configurable: true } };
+var prototypeAccessors$1$1 = { root: { configurable: true },truss: { configurable: true } };
 
-prototypeAccessors$1$4.root.get = function () {
+prototypeAccessors$1$1.root.get = function () {
   if (!this._vue.$data.$root) {
     this._vue.$data.$root = this._createObject('/');
     this._fixObject(this._vue.$data.$root);
@@ -2955,7 +2955,7 @@ prototypeAccessors$1$4.root.get = function () {
   return this._vue.$data.$root;
 };
 
-prototypeAccessors$1$4.truss.get = function () {
+prototypeAccessors$1$1.truss.get = function () {
   return this._truss;
 };
 
@@ -2981,7 +2981,7 @@ Tree.prototype.destroy = function destroy () {
 };
 
 Tree.prototype.connectReference = function connectReference (ref, method) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   this._checkHandle(ref);
   var operation = this._dispatcher.createOperation('read', method, ref);
@@ -2989,7 +2989,7 @@ Tree.prototype.connectReference = function connectReference (ref, method) {
   operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
   this._dispatcher.begin(operation).then(function () {
     if (operation.running && !operation._disconnected) {
-      this$1._coupler.couple(ref.path, operation);
+      this$1$1._coupler.couple(ref.path, operation);
       operation._coupled = true;
     }
   }).catch(_.noop);// ignore exception, let onFailure handlers deal with it
@@ -3013,14 +3013,14 @@ Tree.prototype.isReferenceReady = function isReferenceReady (ref) {
 };
 
 Tree.prototype.connectQuery = function connectQuery (query, keysCallback, method) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   this._checkHandle(query);
   var operation = this._dispatcher.createOperation('read', method, query);
   operation._disconnect = this._disconnectQuery.bind(this, query, operation);
   this._dispatcher.begin(operation).then(function () {
     if (operation.running && !operation._disconnected) {
-      this$1._coupler.subscribe(query, operation, keysCallback);
+      this$1$1._coupler.subscribe(query, operation, keysCallback);
       operation._coupled = true;
     }
   }).catch(_.noop);// ignore exception, let onFailure handlers deal with it
@@ -3052,7 +3052,7 @@ Tree.prototype.throttleRemoteDataUpdates = function throttleRemoteDataUpdates (d
 };
 
 Tree.prototype.update = function update (ref, method, values) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   values = _.mapValues(values, function (value) { return escapeKeys(value); });
   var numValues = _.size(values);
@@ -3069,16 +3069,16 @@ Tree.prototype.update = function update (ref, method, values) {
   var set = numValues === 1;
   var operand = set ? values[''] : values;
   return this._dispatcher.execute('write', set ? 'set' : 'update', ref, operand, function () {
-    var promise = this$1._bridge[set ? 'set' : 'update'](url, operand, writeSerial);
+    var promise = this$1$1._bridge[set ? 'set' : 'update'](url, operand, writeSerial);
     return promise.catch(function (e) {
       if (!e.immediateFailure) { return Promise.reject(e); }
-      return promiseFinally(this$1._repair(ref, values), function () { return Promise.reject(e); });
+      return promiseFinally(this$1$1._repair(ref, values), function () { return Promise.reject(e); });
     });
   });
 };
 
 Tree.prototype.commit = function commit (ref, updateFunction) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   var tries = 0;
   updateFunction = wrapPromiseCallback(updateFunction);
@@ -3104,24 +3104,24 @@ Tree.prototype.commit = function commit (ref, updateFunction) {
         case 'cancel':
           break;
         case 'set':
-          if (this$1._applyLocalWrite(( obj = {}, obj[ref.path] = values[''], obj ))) { return Promise.resolve(); }
+          if (this$1$1._applyLocalWrite(( obj = {}, obj[ref.path] = values[''], obj ))) { return Promise.resolve(); }
           break;
         case 'update':
           checkUpdateHasOnlyDescendantsWithNoOverlap(ref.path, values);
-          if (this$1._applyLocalWrite(values)) { return Promise.resolve(); }
+          if (this$1$1._applyLocalWrite(values)) { return Promise.resolve(); }
           relativizePaths(ref.path, values);
           break;
         default:
           throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
       }
-      return this$1._bridge.transaction(
-        this$1._rootUrl + ref.path, oldValue, values, this$1._writeSerial
+      return this$1$1._bridge.transaction(
+        this$1$1._rootUrl + ref.path, oldValue, values, this$1$1._writeSerial
       ).then(function (result) {
-        _.forEach(result.snapshots, function (snapshot) { return this$1._integrateSnapshot(snapshot); });
+        _.forEach(result.snapshots, function (snapshot) { return this$1$1._integrateSnapshot(snapshot); });
         return result.committed ? txn : attemptTransaction();
       }, function (e) {
         if (e.immediateFailure && (txn.outcome === 'set' || txn.outcome === 'update')) {
-          return promiseFinally(this$1._repair(ref, values), function () { return Promise.reject(e); });
+          return promiseFinally(this$1$1._repair(ref, values), function () { return Promise.reject(e); });
         }
         return Promise.reject(e);
       });
@@ -3129,12 +3129,12 @@ Tree.prototype.commit = function commit (ref, updateFunction) {
   };
 
   return this._truss.peek(ref, function () {
-    return this$1._dispatcher.execute('write', 'commit', ref, undefined, attemptTransaction);
+    return this$1$1._dispatcher.execute('write', 'commit', ref, undefined, attemptTransaction);
   });
 };
 
 Tree.prototype._repair = function _repair (ref, values) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   // If a write fails early -- that is, before it gets applied to the Firebase client's local
   // tree -- then we need to repair our own local tree manually since Firebase won't send events
@@ -3144,17 +3144,17 @@ Tree.prototype._repair = function _repair (ref, values) {
   var paths = _(values).keys().flatMap(function (key) {
     var path = basePath;
     if (key) { path = joinPath(path, key); }
-    return _.keys(this$1._coupler.findCoupledDescendantPaths(path));
+    return _.keys(this$1$1._coupler.findCoupledDescendantPaths(path));
   }).value();
   return Promise.all(_.map(paths, function (path) {
-    return this$1._bridge.once(this$1._rootUrl + path).then(function (snap) {
-      this$1._integrateSnapshot(snap);
+    return this$1$1._bridge.once(this$1$1._rootUrl + path).then(function (snap) {
+      this$1$1._integrateSnapshot(snap);
     });
   }));
 };
 
 Tree.prototype._applyLocalWrite = function _applyLocalWrite (values, override) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   // TODO: correctly apply local writes that impact queries.Currently, a local write will update
   // any objects currently selected by a query, but won't add or remove results.
@@ -3165,10 +3165,10 @@ Tree.prototype._applyLocalWrite = function _applyLocalWrite (values, override) {
   _.forEach(values, function (value, path) {
       var obj;
 
-    var local = this$1._modeler.isLocal(path, value);
+    var local = this$1$1._modeler.isLocal(path, value);
     if (local) { numLocal++; }
     var coupledDescendantPaths =
-      local ? ( obj = {}, obj[path] = true, obj ) : this$1._coupler.findCoupledDescendantPaths(path);
+      local ? ( obj = {}, obj[path] = true, obj ) : this$1$1._coupler.findCoupledDescendantPaths(path);
     if (_.isEmpty(coupledDescendantPaths)) { return; }
     var offset = (path === '/' ? 0 : path.length) + 1;
     for (var descendantPath in coupledDescendantPaths) {
@@ -3183,16 +3183,16 @@ Tree.prototype._applyLocalWrite = function _applyLocalWrite (values, override) {
         }
       }
       if (_.isNil(subValue)) {
-        this$1._prune(descendantPath);
+        this$1$1._prune(descendantPath);
       } else {
         var key = _.last(splitPath(descendantPath));
-        this$1._plantValue(
+        this$1$1._plantValue(
           descendantPath, key, subValue,
-          this$1._scaffoldAncestors(descendantPath, false, createdObjects), false, override, local,
+          this$1$1._scaffoldAncestors(descendantPath, false, createdObjects), false, override, local,
           createdObjects
         );
       }
-      if (!override && !local) { this$1._localWrites[descendantPath] = this$1._writeSerial; }
+      if (!override && !local) { this$1$1._localWrites[descendantPath] = this$1$1._writeSerial; }
     }
   });
   for (var i = 0, list = createdObjects; i < list.length; i += 1) {
@@ -3271,10 +3271,10 @@ Tree.prototype._destroyObject = function _destroyObject (object) {
 };
 
 Tree.prototype._integrateSnapshot = function _integrateSnapshot (snap) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   _.forEach(this._localWrites, function (writeSerial, path) {
-    if (snap.writeSerial >= writeSerial) { delete this$1._localWrites[path]; }
+    if (snap.writeSerial >= writeSerial) { delete this$1$1._localWrites[path]; }
   });
   if (snap.exists) {
     var createdObjects = [];
@@ -3315,7 +3315,7 @@ Tree.prototype._scaffoldAncestors = function _scaffoldAncestors (path, remoteWri
 };
 
 Tree.prototype._plantValue = function _plantValue (path, key, value, parent, remoteWrite, override, local, createdObjects) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (remoteWrite && _.isNil(value)) {
     throw new Error(("Snapshot includes invalid value at " + path + ": " + value));
@@ -3356,7 +3356,7 @@ Tree.prototype._plantValue = function _plantValue (path, key, value, parent, rem
   // hidden.
   if (objectCreated) { this._plantPlaceholders(object, path, true, createdObjects); }
   _.forEach(value, function (item, escapedChildKey) {
-    this$1._plantValue(
+    this$1$1._plantValue(
       joinPath(path, escapedChildKey), unescapeKey(escapedChildKey), item, object, remoteWrite,
       override, local, createdObjects
     );
@@ -3367,7 +3367,7 @@ Tree.prototype._plantValue = function _plantValue (path, key, value, parent, rem
     _.forEach(object.$data, function (item, childKey) {
       var escapedChildKey = escapeKey(childKey);
       if (!value.hasOwnProperty(escapedChildKey)) {
-        this$1._prune(joinPath(path, escapedChildKey), null, remoteWrite);
+        this$1$1._prune(joinPath(path, escapedChildKey), null, remoteWrite);
       }
     });
   }
@@ -3375,13 +3375,13 @@ Tree.prototype._plantValue = function _plantValue (path, key, value, parent, rem
 };
 
 Tree.prototype._plantPlaceholders = function _plantPlaceholders (object, path, hidden, createdObjects) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   this._modeler.forEachPlaceholderChild(path, function (mount) {
     if (hidden !== undefined && hidden !== !!mount.hidden) { return; }
     var key = unescapeKey(mount.escapedKey);
     if (!object.$data.hasOwnProperty(key)) {
-      this$1._plantValue(
+      this$1$1._plantValue(
         joinPath(path, mount.escapedKey), key, mount.placeholder, object, false, false, false,
         createdObjects);
     }
@@ -3450,16 +3450,16 @@ Tree.prototype._pruneAncestors = function _pruneAncestors (targetPath, targetObj
 };
 
 Tree.prototype._holdsConcreteData = function _holdsConcreteData (object, ghostObjects) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (_.isNil(object)) { return false; }
   if (ghostObjects && _.includes(ghostObjects, object)) { return false; }
   if (!_.isObject(object) || !object.$truss) { return true; }
-  return _.some(object.$data, function (value) { return this$1._holdsConcreteData(value, ghostObjects); });
+  return _.some(object.$data, function (value) { return this$1$1._holdsConcreteData(value, ghostObjects); });
 };
 
 Tree.prototype._pruneDescendants = function _pruneDescendants (object, lockedDescendantPaths) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   if (lockedDescendantPaths[object.$path]) { return true; }
   if (object.$overridden) { delete object.$overridden; }
@@ -3471,13 +3471,13 @@ Tree.prototype._pruneDescendants = function _pruneDescendants (object, lockedDes
       shouldDelete = false;
       valueLocked = true;
     } else if (!_.isNil(value) && value.$truss) {
-      var placeholder = this$1._modeler.isPlaceholder(value.$path);
+      var placeholder = this$1$1._modeler.isPlaceholder(value.$path);
       if (placeholder || _.has(lockedDescendantPaths, value.$path)) {
-        valueLocked = this$1._pruneDescendants(value, lockedDescendantPaths);
+        valueLocked = this$1$1._pruneDescendants(value, lockedDescendantPaths);
         shouldDelete = !placeholder && !valueLocked;
       }
     }
-    if (shouldDelete) { this$1._deleteFirebaseProperty(object, key); }
+    if (shouldDelete) { this$1$1._deleteFirebaseProperty(object, key); }
     coupledDescendantFound = coupledDescendantFound || valueLocked;
   });
   return coupledDescendantFound;
@@ -3565,7 +3565,7 @@ Tree.prototype.checkVueObject = function checkVueObject (object, path) {
   this._modeler.checkVueObject(object, path);
 };
 
-Object.defineProperties( Tree.prototype, prototypeAccessors$1$4 );
+Object.defineProperties( Tree.prototype, prototypeAccessors$1$1 );
 
 
 function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
@@ -3644,7 +3644,7 @@ function toFirebaseJson(object) {
 var bridge, logging;
 var workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-var VERSION = '4.2.2';
+var VERSION = 'dev';
 
 
 var Truss = function Truss(rootUrl) {
@@ -3664,11 +3664,11 @@ var Truss = function Truss(rootUrl) {
   Object.freeze(this);
 };
 
-var prototypeAccessors$9 = { meta: { configurable: true },store: { configurable: true },now: { configurable: true },SERVER_TIMESTAMP: { configurable: true },VERSION: { configurable: true },FIREBASE_SDK_VERSION: { configurable: true } };
+var prototypeAccessors = { meta: { configurable: true },store: { configurable: true },now: { configurable: true },SERVER_TIMESTAMP: { configurable: true },VERSION: { configurable: true },FIREBASE_SDK_VERSION: { configurable: true } };
 var staticAccessors = { computedPropertyStats: { configurable: true },worker: { configurable: true } };
 
-prototypeAccessors$9.meta.get = function () {return this._metaTree.root;};
-prototypeAccessors$9.store.get = function () {return this._tree.root;};
+prototypeAccessors.meta.get = function () {return this._metaTree.root;};
+prototypeAccessors.store.get = function () {return this._tree.root;};
 
 /**
  * Mount a set of classes against the datastore structure.Must be called at most once, and
@@ -3690,7 +3690,7 @@ Truss.prototype.destroy = function destroy () {
   this._metaTree.destroy();
 };
 
-prototypeAccessors$9.now.get = function () {return Date.now() + this.meta.timeOffset;};
+prototypeAccessors.now.get = function () {return Date.now() + this.meta.timeOffset;};
 Truss.prototype.newKey = function newKey () {return this._keyGenerator.generateUniqueKey(this.now);};
 
 Truss.prototype.authenticate = function authenticate (token) {
@@ -3717,7 +3717,7 @@ Truss.prototype.connect = function connect (scope, connections) {
 
 // target is Reference, Query, or connection Object like above
 Truss.prototype.peek = function peek (target, callback) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   callback = wrapPromiseCallback(callback || _.identity);
   var cleanup, cancel;
@@ -3725,9 +3725,9 @@ Truss.prototype.peek = function peek (target, callback) {
     var scope = {};
     var callbackPromise;
 
-    var connector = new Connector(scope, {result: target}, this$1._tree, 'peek');
+    var connector = new Connector(scope, {result: target}, this$1$1._tree, 'peek');
 
-    var unintercept = this$1.intercept('peek', {onFailure: function (op) {
+    var unintercept = this$1$1.intercept('peek', {onFailure: function (op) {
       function match(descriptor) {
         if (!descriptor) { return; }
         if (descriptor instanceof Handle) { return op.target.isEqual(descriptor); }
@@ -3739,7 +3739,7 @@ Truss.prototype.peek = function peek (target, callback) {
       }
     }});
 
-    var unobserve = this$1.observe(function () { return connector.ready; }, function (ready) {
+    var unobserve = this$1$1.observe(function () { return connector.ready; }, function (ready) {
       if (!ready) { return; }
       unobserve();
       unobserve = null;
@@ -3800,11 +3800,11 @@ Truss.prototype.observe = function observe (subjectFn, callbackFn, options) {
 };
 
 Truss.prototype.when = function when (expression, options) {
-    var this$1 = this;
+    var this$1$1 = this;
 
   var cleanup, timeoutHandle;
   var promise = new Promise(function (resolve, reject) {
-    var unobserve = this$1.observe(expression, function (value) {
+    var unobserve = this$1$1.observe(expression, function (value) {
       if (!value) { return; }
       // Wait for computed properties to settle and double-check.
       Vue.nextTick(function () {
@@ -3905,11 +3905,11 @@ Truss.enableLogging = function enableLogging (fn) {
 };
 
 // Duplicate static constants on instance for convenience.
-prototypeAccessors$9.SERVER_TIMESTAMP.get = function () {return Truss.SERVER_TIMESTAMP;};
-prototypeAccessors$9.VERSION.get = function () {return Truss.VERSION;};
-prototypeAccessors$9.FIREBASE_SDK_VERSION.get = function () {return Truss.FIREBASE_SDK_VERSION;};
+prototypeAccessors.SERVER_TIMESTAMP.get = function () {return Truss.SERVER_TIMESTAMP;};
+prototypeAccessors.VERSION.get = function () {return Truss.VERSION;};
+prototypeAccessors.FIREBASE_SDK_VERSION.get = function () {return Truss.FIREBASE_SDK_VERSION;};
 
-Object.defineProperties( Truss.prototype, prototypeAccessors$9 );
+Object.defineProperties( Truss.prototype, prototypeAccessors );
 Object.defineProperties( Truss, staticAccessors );
 
 Object.defineProperties(Truss, {
@@ -3953,6 +3953,6 @@ Object.defineProperties(Truss, {
 
 angularProxy.defineModule(Truss);
 
-export default Truss;
+export { Truss as default };
 
 //# sourceMappingURL=firetruss.es2015.js.map

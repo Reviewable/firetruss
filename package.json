@@ -4,7 +4,8 @@
   "description": "Advanced data sync layer for Firebase and Vue.js",
   "scripts": {
     "setup": "rm -rf bower_components; rm -rf node_modules; npm install; bower install;",
-    "test": "node node_modules/ava/cli.js --watch"
+    "update": "yarn upgrade-interactive --latest",
+    "test": "ava --watch"
   },
   "repository": {
     "type": "git",
@@ -28,21 +29,21 @@
     "@babel/preset-env": "^7.11.0",
     "@babel/register": "^7.10.5",
     "@rollup/plugin-buble": "^0.21.3",
-    "@rollup/plugin-commonjs": "^14.0.0",
-    "@rollup/plugin-node-resolve": "^8.4.0",
-    "ava": "3",
+    "@rollup/plugin-commonjs": "^22.0.2",
+    "@rollup/plugin-node-resolve": "^13.3.0",
+    "ava": "4.3.1",
     "compose-source-map": "^1.0.0",
-    "eslint": "7",
+    "eslint": "^8.22.0",
     "eslint-plugin-lodash": "7",
     "grunt": "^1.0.0",
     "grunt-contrib-clean": "2",
     "grunt-contrib-uglify": "5",
     "grunt-contrib-watch": "^1.0.0",
-    "grunt-eslint": "23",
+    "grunt-eslint": "^24.0.0",
     "grunt-exec": "^3.0.0",
     "grunt-git": "^1.0.1",
     "grunt-release": "reviewable/grunt-release#master",
-    "grunt-rollup": "11",
+    "grunt-rollup": "^12.0.0",
     "grunt-text-replace": "^0.4.0",
     "load-grunt-tasks": "5",
     "rollup": "2",
@@ -51,9 +52,6 @@
   "ava": {
     "files": [
       "src/**/*.test.js"
-    ],
-    "source": [
-      "src/**/*.js"
     ],
     "require": [
       "@babel/register"
