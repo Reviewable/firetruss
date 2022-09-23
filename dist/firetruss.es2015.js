@@ -1640,7 +1640,7 @@ var MetaTree = function MetaTree(rootUrl, tree, bridge, dispatcher) {
     }
   }}});
 
-  this._auth = {serial: 0, initialAuthChangeReceived: false};
+  this._auth = {serial: 0, initialAuthChangeReceived: false, changePromise: Promise.resolve()};
 
   bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
@@ -1666,8 +1666,10 @@ MetaTree.prototype.authenticate = function authenticate (token) {
   this._auth.serial++;
   return this._dispatcher.execute(
     'auth', 'authenticate', new Reference(this._tree, '/'), token, function () {
-      if (token) { return this$1$1._bridge.authWithCustomToken(this$1$1._rootUrl, token); }
-      return this$1$1._bridge.authAnonymously(this$1$1._rootUrl);
+      var promise = token ?
+        this$1$1._bridge.authWithCustomToken(this$1$1._rootUrl, token) :
+        this$1$1._bridge.authAnonymously(this$1$1._rootUrl);
+      return promise.then(function () { return this$1$1._auth.changePromise; });
     }
   );
 };
@@ -1699,14 +1701,18 @@ MetaTree.prototype._handleAuthChange = function _handleAuthChange (user) {
   if (supersededChange) { return; }
   var authSerial = this._auth.serial;
   if (this.root.user === user) { return Promise.resolve(false); }
-  return this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, function () {
-    if (this$1$1.root.user === user || authSerial !== this$1$1._auth.serial) { return false; }
-    if (user) { Object.freeze(user); }
-    this$1$1.root.user = user;
-    this$1$1.root.userid = user && user.uid;
-    angularProxy.digest();
-    return true;
-  });
+  var promise = this._dispatcher.execute(
+    'auth', 'certify', new Reference(this._tree, '/'), user, function () {
+      if (this$1$1.root.user === user || authSerial !== this$1$1._auth.serial) { return false; }
+      if (user) { Object.freeze(user); }
+      this$1$1.root.user = user;
+      this$1$1.root.userid = user && user.uid;
+      angularProxy.digest();
+      return true;
+    }
+  );
+  this._auth.changePromise = this._auth.changePromise.then(function () { return promise; }).catch();
+  return promise;
 };
 
 MetaTree.prototype._isAuthChangeStale = function _isAuthChangeStale (user) {
@@ -3644,7 +3650,7 @@ function toFirebaseJson(object) {
 var bridge, logging;
 var workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-var VERSION = '4.2.3';
+var VERSION = 'dev';
 
 
 var Truss = function Truss(rootUrl) {

@@ -25,7 +25,7 @@ export default class MetaTree {
       }
     }}});
 
-    this._auth = {serial: 0, initialAuthChangeReceived: false};
+    this._auth = {serial: 0, initialAuthChangeReceived: false, changePromise: Promise.resolve()};
 
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
@@ -47,8 +47,10 @@ export default class MetaTree {
     this._auth.serial++;
     return this._dispatcher.execute(
       'auth', 'authenticate', new Reference(this._tree, '/'), token, () => {
-        if (token) return this._bridge.authWithCustomToken(this._rootUrl, token);
-        return this._bridge.authAnonymously(this._rootUrl);
+        const promise = token ?
+          this._bridge.authWithCustomToken(this._rootUrl, token) :
+          this._bridge.authAnonymously(this._rootUrl);
+        return promise.then(() => this._auth.changePromise);
       }
     );
   }
@@ -76,14 +78,18 @@ export default class MetaTree {
     if (supersededChange) return;
     const authSerial = this._auth.serial;
     if (this.root.user === user) return Promise.resolve(false);
-    return this._dispatcher.execute('auth', 'certify', new Reference(this._tree, '/'), user, () => {
-      if (this.root.user === user || authSerial !== this._auth.serial) return false;
-      if (user) Object.freeze(user);
-      this.root.user = user;
-      this.root.userid = user && user.uid;
-      angular.digest();
-      return true;
-    });
+    const promise = this._dispatcher.execute(
+      'auth', 'certify', new Reference(this._tree, '/'), user, () => {
+        if (this.root.user === user || authSerial !== this._auth.serial) return false;
+        if (user) Object.freeze(user);
+        this.root.user = user;
+        this.root.userid = user && user.uid;
+        angular.digest();
+        return true;
+      }
+    );
+    this._auth.changePromise = this._auth.changePromise.then(() => promise).catch();
+    return promise;
   }
 
   _isAuthChangeStale(user) {
