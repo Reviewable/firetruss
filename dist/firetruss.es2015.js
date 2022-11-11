@@ -3650,7 +3650,7 @@ function toFirebaseJson(object) {
 var bridge, logging;
 var workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-var VERSION = '4.3.0';
+var VERSION = '4.3.1';
 
 
 var Truss = function Truss(rootUrl) {
@@ -3891,7 +3891,7 @@ staticAccessors.worker.get = function () {return workerFunctions;};
 Truss.preExpose = function preExpose (functionName) {
   var segments = functionName.split('.');
   var obj = Truss.worker;
-  for (var i = 0, list = segments.slice(-1); i < list.length; i += 1) {
+  for (var i = 0, list = segments.slice(0, -1); i < list.length; i += 1) {
     var segment = list[i];
 
       if (!Object.hasOwnProperty.call(obj, segment)) { obj[segment] = {}; }

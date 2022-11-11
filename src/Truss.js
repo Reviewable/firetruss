@@ -253,7 +253,7 @@ export default class Truss {
   static preExpose(functionName) {
     const segments = functionName.split('.');
     let obj = Truss.worker;
-    for (const segment of segments.slice(-1)) {
+    for (const segment of segments.slice(0, -1)) {
       if (!Object.hasOwnProperty.call(obj, segment)) obj[segment] = {};
       obj = obj[segment];
     }
