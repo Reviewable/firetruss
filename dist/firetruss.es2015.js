@@ -3650,7 +3650,7 @@ function toFirebaseJson(object) {
 var bridge, logging;
 var workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-var VERSION = '4.2.4';
+var VERSION = '4.3.0';
 
 
 var Truss = function Truss(rootUrl) {
@@ -3878,17 +3878,26 @@ Truss.connectWorker = function connectWorker (webWorker, config) {
 
       Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
       for (var i = 0, list = exposedFunctionNames; i < list.length; i += 1) {
-        var name = list[i];
+          var name = list[i];
 
-          Truss.worker[name] = bridge.bindExposedFunction(name);
-      }
+          Truss.preExpose(name);
+        }
     }
   );
 };
 
 staticAccessors.worker.get = function () {return workerFunctions;};
+
 Truss.preExpose = function preExpose (functionName) {
-  Truss.worker[functionName] = bridge.bindExposedFunction(functionName);
+  var segments = functionName.split('.');
+  var obj = Truss.worker;
+  for (var i = 0, list = segments.slice(-1); i < list.length; i += 1) {
+    var segment = list[i];
+
+      if (!Object.hasOwnProperty.call(obj, segment)) { obj[segment] = {}; }
+    obj = obj[segment];
+  }
+  obj[segments[segments.length - 1]] = bridge.bindExposedFunction(functionName);
 };
 
 Truss.bounceConnection = function bounceConnection () {return bridge.bounceConnection();};
