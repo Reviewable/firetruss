@@ -243,16 +243,21 @@ export default class Truss {
     return bridge.init(webWorker, config).then(
       ({exposedFunctionNames, firebaseSdkVersion}) => {
         Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
-        for (const name of exposedFunctionNames) {
-          Truss.worker[name] = bridge.bindExposedFunction(name);
-        }
+        for (const name of exposedFunctionNames) Truss.preExpose(name);
       }
     );
   }
 
   static get worker() {return workerFunctions;}
+
   static preExpose(functionName) {
-    Truss.worker[functionName] = bridge.bindExposedFunction(functionName);
+    const segments = functionName.split('.');
+    let obj = Truss.worker;
+    for (const segment of segments.slice(-1)) {
+      if (!Object.hasOwnProperty.call(obj, segment)) obj[segment] = {};
+      obj = obj[segment];
+    }
+    obj[segments[segments.length - 1]] = bridge.bindExposedFunction(functionName);
   }
 
   static bounceConnection() {return bridge.bounceConnection();}
