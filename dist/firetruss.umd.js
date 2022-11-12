@@ -3696,7 +3696,7 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  var VERSION = 'dev';
+  var VERSION = '5.0.0';
 
 
   var Truss = function Truss(rootUrl) {
