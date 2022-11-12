@@ -1790,9 +1790,9 @@
 
   var BaseValue = function BaseValue () {};
 
-  var prototypeAccessors$3 = { $meta: { configurable: true },$store: { configurable: true },$now: { configurable: true },$$finalizers: { configurable: true } };
+  var prototypeAccessors$3 = { $info: { configurable: true },$store: { configurable: true },$now: { configurable: true },$$finalizers: { configurable: true } };
 
-  prototypeAccessors$3.$meta.get = function () {return this.$truss.meta;};
+  prototypeAccessors$3.$info.get = function () {return this.$truss.meta;};
   prototypeAccessors$3.$store.get = function () {return this.$truss.store;};// access indirectly to leave dependency trace
   prototypeAccessors$3.$now.get = function () {return this.$truss.now;};
 
@@ -3696,7 +3696,7 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  var VERSION = '4.3.1';
+  var VERSION = 'dev';
 
 
   var Truss = function Truss(rootUrl) {
