@@ -20,7 +20,7 @@ let currentPropertyFrozen;
 
 
 export class BaseValue {
-  get $info() {return this.$truss.meta;}
+  get $info() {return this.$truss.info;}
   get $store() {return this.$truss.store;}  // access indirectly to leave dependency trace
   get $now() {return this.$truss.now;}
 

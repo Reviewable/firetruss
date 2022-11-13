@@ -46,7 +46,7 @@ export default class Truss {
     Object.freeze(this);
   }
 
-  get meta() {return this._metaTree.root;}
+  get info() {return this._metaTree.root;}
   get store() {return this._tree.root;}
 
   /**
@@ -69,7 +69,7 @@ export default class Truss {
     this._metaTree.destroy();
   }
 
-  get now() {return Date.now() + this.meta.timeOffset;}
+  get now() {return Date.now() + this.info.timeOffset;}
   newKey() {return this._keyGenerator.generateUniqueKey(this.now);}
 
   authenticate(token) {

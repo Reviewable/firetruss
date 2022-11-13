@@ -1746,7 +1746,7 @@ var BaseValue = function BaseValue () {};
 
 var prototypeAccessors$3 = { $info: { configurable: true },$store: { configurable: true },$now: { configurable: true },$$finalizers: { configurable: true } };
 
-prototypeAccessors$3.$info.get = function () {return this.$truss.meta;};
+prototypeAccessors$3.$info.get = function () {return this.$truss.info;};
 prototypeAccessors$3.$store.get = function () {return this.$truss.store;};// access indirectly to leave dependency trace
 prototypeAccessors$3.$now.get = function () {return this.$truss.now;};
 
@@ -3650,7 +3650,7 @@ function toFirebaseJson(object) {
 var bridge, logging;
 var workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-var VERSION = '5.0.0';
+var VERSION = 'dev';
 
 
 var Truss = function Truss(rootUrl) {
@@ -3670,10 +3670,10 @@ var Truss = function Truss(rootUrl) {
   Object.freeze(this);
 };
 
-var prototypeAccessors = { meta: { configurable: true },store: { configurable: true },now: { configurable: true },SERVER_TIMESTAMP: { configurable: true },VERSION: { configurable: true },FIREBASE_SDK_VERSION: { configurable: true } };
+var prototypeAccessors = { info: { configurable: true },store: { configurable: true },now: { configurable: true },SERVER_TIMESTAMP: { configurable: true },VERSION: { configurable: true },FIREBASE_SDK_VERSION: { configurable: true } };
 var staticAccessors = { computedPropertyStats: { configurable: true },worker: { configurable: true } };
 
-prototypeAccessors.meta.get = function () {return this._metaTree.root;};
+prototypeAccessors.info.get = function () {return this._metaTree.root;};
 prototypeAccessors.store.get = function () {return this._tree.root;};
 
 /**
@@ -3696,7 +3696,7 @@ Truss.prototype.destroy = function destroy () {
   this._metaTree.destroy();
 };
 
-prototypeAccessors.now.get = function () {return Date.now() + this.meta.timeOffset;};
+prototypeAccessors.now.get = function () {return Date.now() + this.info.timeOffset;};
 Truss.prototype.newKey = function newKey () {return this._keyGenerator.generateUniqueKey(this.now);};
 
 Truss.prototype.authenticate = function authenticate (token) {
