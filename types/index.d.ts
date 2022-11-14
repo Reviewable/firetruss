@@ -1,4 +1,4 @@
-export default class Truss {
+declare class Truss {
   static readonly SERVER_TIMESTAMP: any;
   static readonly VERSION: string;
   static readonly FIREBASE_SDK_VERSION: string;
@@ -6,8 +6,7 @@ export default class Truss {
   readonly VERSION: string;
   readonly FIREBASE_SDK_VERSION: string;
 
-  static readonly Model: typeof Model;
-  static readonly ComponentPlugin: {install(vue: any, {truss: Truss})};
+  static readonly ComponentPlugin: {install(vue: any, {truss: Truss}): void;};
 
   static readonly computedPropertyStats: Stats;
   static readonly worker: WorkerFunctions;
@@ -25,7 +24,7 @@ export default class Truss {
 
   readonly now: number;
   readonly info: Info;
-  readonly store: Model;
+  readonly store: Truss.Model;
 
   constructor(rootUrl: string);
 
@@ -33,7 +32,7 @@ export default class Truss {
   destroy(): void;
   newKey(): string;
   nextTick(): Promise<void>;
-  throttleRemoteDataUpdates(delay: number);
+  throttleRemoteDataUpdates(delay: number): void;
   checkObjectsForRogueProperties(): void;
   authenticate(token: string): Promise<void>;
   unauthenticate(): Promise<void>;
@@ -54,16 +53,48 @@ export default class Truss {
   when(expression: () => any, options?: {timeout?: number, scope?: any}): Promise<any>;
 }
 
-type Node = undefined | boolean | number | string | Model;
+declare namespace Truss {
+  class Model extends BaseModel {
+    readonly $parent: Model | undefined;
+    readonly $path: string;
+    readonly $ref: Reference;
+    readonly $refs: Reference;
+    readonly $key: string;
+    readonly $data: Record<string, Node>;
+    readonly $hidden: boolean;
+    readonly $empty: boolean;
+    readonly $keys: string[];
+    readonly $values: string[];
+    readonly $ready: boolean;
+    readonly $overridden: boolean;
+
+    $nextTick(): Promise<void>;
+    $freezeComputedProperty(): void;
+
+    $set(value: any): Promise<void>;
+    $update(values: Record<string, any>): Promise<void>;
+    $override(values: Record<string, any>): Promise<void>;
+    $commit(updateFunction: (txn: Transaction) => void): Promise<Transaction>;
+
+    // This should have a value type of Node, but there appears to be no way to specify an indexed
+    // property solely as a fallback (with a type other than any or unknown), so it ends up clashing
+    // with all the other properties instead.
+    [key: string]: any;
+  }
+}
+
+export default Truss;
+
+type Node = undefined | boolean | number | string | Truss.Model;
 
 interface ModelConstructor {
-  new(): Model;
+  new(): Truss.Model;
 }
 
 declare class BaseModel {
   readonly $truss: Truss;
   readonly $info: Info;
-  readonly $store: Model;
+  readonly $store: Truss.Model;
   readonly $now: number;
   readonly $newKey: string;
   readonly $destroyed: boolean;
@@ -78,34 +109,6 @@ declare class BaseModel {
     precise?: boolean, deep?: boolean, scope?: any
   }): () => void;
   $when(expression: () => any, options?: {timeout?: number, scope?: any}): Promise<any>;
-}
-
-declare class Model extends BaseModel {
-  readonly $parent: Model | undefined;
-  readonly $path: string;
-  readonly $ref: Reference;
-  readonly $refs: Reference;
-  readonly $key: string;
-  readonly $data: Record<string, Node>;
-  readonly $hidden: boolean;
-  readonly $empty: boolean;
-  readonly $keys: string[];
-  readonly $values: string[];
-  readonly $ready: boolean;
-  readonly $overridden: boolean;
-
-  $nextTick(): Promise<void>;
-  $freezeComputedProperty(): void;
-
-  $set(value: any): Promise<void>;
-  $update(values: Record<string, any>): Promise<void>;
-  $override(values: Record<string, any>): Promise<void>;
-  $commit(updateFunction: (txn: Transaction) => void): Promise<Transaction>;
-
-  // This should have a value type of Node, but there appears to be no way to specify an indexed
-  // property solely as a fallback (with a type other than any or unknown), so it ends up clashing
-  // with all the other properties instead.
-  [key: string]: any;
 }
 
 interface Connector {
@@ -124,7 +127,7 @@ interface Handle {
   readonly annotations: Record<string, any>;
   child(...segments: string[]): Reference | undefined;
   children(...segments: string[]): References;
-  peek(callback: (value: any) => Promise<any> | void);
+  peek(callback: (value: any) => Promise<any> | void): Promise<any>;
   match(pattern: string): Record<string, string> | undefined;
   test(pattern: string): boolean;
   isEqual(other: Reference | Query): boolean;
@@ -224,7 +227,7 @@ interface Connections {
 }
 
 interface WorkerFunctions {
-  [key: string]: (...args) => Promise<any> | WorkerFunctions;
+  [key: string]: (...args: any[]) => Promise<any> | WorkerFunctions;
 }
 
 
