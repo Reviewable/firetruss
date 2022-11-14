@@ -322,3 +322,4 @@ Object.defineProperties(Truss, {
 
 angular.defineModule(Truss);
 
+export class Model {}

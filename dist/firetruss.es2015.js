@@ -3968,6 +3968,8 @@ Object.defineProperties(Truss, {
 
 angularProxy.defineModule(Truss);
 
-export { Truss as default };
+var Model = function Model () {};
+
+export { Model, Truss as default };
 
 //# sourceMappingURL=firetruss.es2015.js.map
