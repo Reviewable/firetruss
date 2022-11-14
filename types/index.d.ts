@@ -1,4 +1,4 @@
-export declare class Truss {
+export default class Truss {
   static readonly SERVER_TIMESTAMP: any;
   static readonly VERSION: string;
   static readonly FIREBASE_SDK_VERSION: string;
@@ -6,6 +6,7 @@ export declare class Truss {
   readonly VERSION: string;
   readonly FIREBASE_SDK_VERSION: string;
 
+  static readonly Model: typeof Model;
   static readonly ComponentPlugin: {install(vue: any, {truss: Truss})};
 
   static readonly computedPropertyStats: Stats;
@@ -53,8 +54,6 @@ export declare class Truss {
   when(expression: () => any, options?: {timeout?: number, scope?: any}): Promise<any>;
 }
 
-export default Truss;
-
 type Node = undefined | boolean | number | string | Model;
 
 interface ModelConstructor {
@@ -81,7 +80,7 @@ declare class BaseModel {
   $when(expression: () => any, options?: {timeout?: number, scope?: any}): Promise<any>;
 }
 
-export declare class Model extends BaseModel {
+declare class Model extends BaseModel {
   readonly $parent: Model | undefined;
   readonly $path: string;
   readonly $ref: Reference;

@@ -288,6 +288,7 @@ export default class Truss {
 Object.defineProperties(Truss, {
   SERVER_TIMESTAMP: {value: SERVER_TIMESTAMP},
   VERSION: {value: VERSION},
+  Model: {value: Object},
 
   ComponentPlugin: {value: {
     install(Vue2, pluginOptions) {
