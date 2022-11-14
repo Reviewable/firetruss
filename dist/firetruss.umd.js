@@ -1,8 +1,8 @@
 (function (global, factory) {
-  typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports, require('lodash'), require('vue')) :
-  typeof define === 'function' && define.amd ? define(['exports', 'lodash', 'vue'], factory) :
-  (global = typeof globalThis !== 'undefined' ? globalThis : global || self, factory(global.Truss = {}, global._, global.Vue));
-})(this, (function (exports, _, Vue) { 'use strict';
+  typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory(require('lodash'), require('vue')) :
+  typeof define === 'function' && define.amd ? define(['lodash', 'vue'], factory) :
+  (global = typeof globalThis !== 'undefined' ? globalThis : global || self, global.Truss = factory(global._, global.Vue));
+})(this, (function (_, Vue) { 'use strict';
 
   function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { default: e }; }
 
@@ -3696,7 +3696,7 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  var VERSION = '5.2.0';
+  var VERSION = 'dev';
 
 
   var Truss = function Truss(rootUrl) {
@@ -4013,13 +4013,8 @@
   });
 
   angularProxy.defineModule(Truss);
-  var Model = function Model () {};
 
-  exports.Model = Model;
-  exports.Truss = Truss;
-  exports.default = Truss;
-
-  Object.defineProperty(exports, '__esModule', { value: true });
+  return Truss;
 
 }));
 
