@@ -3696,7 +3696,7 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  var VERSION = '5.2.1';
+  var VERSION = '5.2.2';
 
 
   var Truss = function Truss(rootUrl) {
@@ -3976,6 +3976,7 @@
   Object.defineProperties(Truss, {
     SERVER_TIMESTAMP: {value: SERVER_TIMESTAMP},
     VERSION: {value: VERSION},
+    Model: {value: Object},
 
     ComponentPlugin: {value: {
       install: function install(Vue2, pluginOptions) {
