@@ -21,7 +21,7 @@ const workerFunctions = {};
 const VERSION = 'dev';
 
 
-export default class Truss {
+export class Truss {
 
   /**
    * Create a new Truss instance, specific to a given datastore.  To avoid confusion there should be
@@ -322,4 +322,5 @@ Object.defineProperties(Truss, {
 
 angular.defineModule(Truss);
 
+export default Truss;
 export class Model {}

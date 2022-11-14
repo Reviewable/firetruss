@@ -3650,7 +3650,7 @@ function toFirebaseJson(object) {
 var bridge, logging;
 var workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-var VERSION = '5.1.0';
+var VERSION = '5.2.0';
 
 
 var Truss = function Truss(rootUrl) {
@@ -3967,9 +3967,8 @@ Object.defineProperties(Truss, {
 });
 
 angularProxy.defineModule(Truss);
-
 var Model = function Model () {};
 
-export { Model, Truss as default };
+export { Model, Truss, Truss as default };
 
 //# sourceMappingURL=firetruss.es2015.js.map

@@ -3696,7 +3696,7 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  var VERSION = '5.1.0';
+  var VERSION = '5.2.0';
 
 
   var Truss = function Truss(rootUrl) {
@@ -4013,10 +4013,10 @@
   });
 
   angularProxy.defineModule(Truss);
-
   var Model = function Model () {};
 
   exports.Model = Model;
+  exports.Truss = Truss;
   exports.default = Truss;
 
   Object.defineProperty(exports, '__esModule', { value: true });
