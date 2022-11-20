@@ -34,7 +34,7 @@ declare class Truss {
   nextTick(): Promise<void>;
   throttleRemoteDataUpdates(delay: number): void;
   checkObjectsForRogueProperties(): void;
-  authenticate(token: string): Promise<void>;
+  authenticate(token?: string): Promise<void>;
   unauthenticate(): Promise<void>;
 
   intercept(actionType: InterceptActionKey, callbacks: InterceptCallbacks): () => void;
