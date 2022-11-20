@@ -43,10 +43,10 @@ declare class Truss {
   connect(scope: any, connections: Connections | (() => Connections)): Connector;
 
   peek(
-    target: Query | Reference | Connections, callback: (value: any) => Promise<any> | void
+    target: Query | Reference | Connections, callback?: (value: any) => Promise<any> | void
   ): Promise<any>;
 
-  observe(subject: () => any, callback: (newValue: any, oldValue: any) => void, options: {
+  observe(subject: () => any, callback: (newValue: any, oldValue: any) => void, options?: {
     precise?: boolean, deep?: boolean, scope?: any
   }): () => void;
 
@@ -103,9 +103,9 @@ declare class BaseModel {
   $connect(connections: Connections | (() => Connections)): Connector;
   $connect(scope: any, connections: Connections | (() => Connections)): Connector;
   $peek(
-    target: Query | Reference | Connections, callback: (value: any) => Promise<any> | void
+    target: Query | Reference | Connections, callback?: (value: any) => Promise<any> | void
   ): Promise<any>;
-  $observe(subject: () => any, callback: (newValue: any, oldValue: any) => void, options: {
+  $observe(subject: () => any, callback: (newValue: any, oldValue: any) => void, options?: {
     precise?: boolean, deep?: boolean, scope?: any
   }): () => void;
   $when(expression: () => any, options?: {timeout?: number, scope?: any}): Promise<any>;
@@ -127,7 +127,7 @@ interface Handle {
   readonly annotations: Record<string, any>;
   child(...segments: string[]): Reference | undefined;
   children(...segments: string[]): References;
-  peek(callback: (value: any) => Promise<any> | void): Promise<any>;
+  peek(callback?: (value: any) => Promise<any> | void): Promise<any>;
   match(pattern: string): Record<string, string> | undefined;
   test(pattern: string): boolean;
   isEqual(other: Reference | Query): boolean;
