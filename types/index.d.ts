@@ -39,11 +39,14 @@ declare class Truss {
 
   intercept(actionType: InterceptActionKey, callbacks: InterceptCallbacks): () => void;
 
-  connect(connections: Connections | (() => Connections)): Connector;
-  connect(scope: any, connections: Connections | (() => Connections)): Connector;
+  connect(
+    connections: Truss.Query | Truss.Reference | Connections | (() => Connections)
+  ): Truss.Connector;
+  connect(scope: any, connections: Connections | (() => Connections)): Truss.Connector;
 
   peek(
-    target: Query | Reference | Connections, callback?: (value: any) => Promise<any> | void
+    target: Truss.Query | Truss.Reference | Connections,
+    callback?: (value: any) => Promise<any> | void
   ): Promise<any>;
 
   observe(subject: () => any, callback: (newValue: any, oldValue: any) => void, options?: {
@@ -81,6 +84,45 @@ declare namespace Truss {
     // with all the other properties instead.
     [key: string]: any;
   }
+
+  interface Connector {
+    readonly ready: boolean;
+    readonly at: Connections;
+    readonly data: Record<string, any>;
+    destroy(): void;
+  }
+
+  interface Query extends Handle {
+    readonly constraints: QuerySpec;
+    annotate(annotations: any): Query;
+  }
+
+  interface Reference extends Handle {
+    readonly value: any;
+    annotate(annotations: any): Reference;
+    query(spec: QuerySpec): Query;
+    set(value: any): Promise<void>;
+    update(values: Record<string, any>): Promise<void>;
+    override(value: any): Promise<void>;
+    commit(updateFunction: (txn: Transaction) => void): Promise<Transaction>;
+  }
+
+  interface Operation {
+    readonly type: 'read' | 'write' | ' auth';
+    readonly method:
+    'set' | 'update' | 'commit' | 'peek' | 'authenticate' | 'unauthenticate' | 'certify';
+    readonly target: Reference;
+    readonly targets: Reference[];
+    readonly operand: any;
+    readonly ready: boolean;
+    readonly running: boolean;
+    readonly ended: boolean;
+    readonly tries: number;
+    readonly error: Error | undefined;
+
+    onSlow(delay: number, callback: (op: Operation) => void);
+  }
+
 }
 
 export default Truss;
@@ -100,10 +142,13 @@ declare class BaseModel {
   readonly $destroyed: boolean;
 
   $intercept(actionType: InterceptActionKey, callbacks: InterceptCallbacks): () => void;
-  $connect(connections: Connections | (() => Connections)): Connector;
-  $connect(scope: any, connections: Connections | (() => Connections)): Connector;
+  $connect(
+    connections: Truss.Query | Truss.Reference | Connections | (() => Connections)
+  ): Truss.Connector;
+  $connect(scope: any, connections: Connections | (() => Connections)): Truss.Connector;
   $peek(
-    target: Query | Reference | Connections, callback?: (value: any) => Promise<any> | void
+    target: Truss.Query | Truss.Reference | Connections,
+    callback?: (value: any) => Promise<any> | void
   ): Promise<any>;
   $observe(subject: () => any, callback: (newValue: any, oldValue: any) => void, options?: {
     precise?: boolean, deep?: boolean, scope?: any
@@ -111,56 +156,34 @@ declare class BaseModel {
   $when(expression: () => any, options?: {timeout?: number, scope?: any}): Promise<any>;
 }
 
-interface Connector {
-  readonly ready: boolean;
-  readonly at: Connections;
-  readonly data: Record<string, any>;
-  destroy(): void;
-}
-
 interface Handle {
-  readonly $ref: Reference;
+  readonly $ref: Truss.Reference;
   readonly ready: boolean;
   readonly key: string;
   readonly path: string;
-  readonly parent: Reference;
+  readonly parent: Truss.Reference;
   readonly annotations: Record<string, any>;
-  child(...segments: string[]): Reference | undefined;
+  child(...segments: string[]): Truss.Reference | undefined;
   children(...segments: string[]): References;
   peek(callback?: (value: any) => Promise<any> | void): Promise<any>;
   match(pattern: string): Record<string, string> | undefined;
   test(pattern: string): boolean;
-  isEqual(other: Reference | Query): boolean;
+  isEqual(other: Truss.Reference | Truss.Query): boolean;
   belongsTo(truss: Truss): boolean;
 }
 
-type References = Reference | ReferencesObject | undefined;
+type References = Truss.Reference | ReferencesObject | undefined;
 interface ReferencesObject {
   [key: string]: References;
 }
 
-interface Query extends Handle {
-  readonly constraints: QuerySpec;
-  annotate(annotations: any): Query;
-}
-
 interface QuerySpec {
-  readonly by: '$key' | '$value' | Reference;
+  readonly by: '$key' | '$value' | Truss.Reference;
   readonly at?: any;
   readonly from?: any;
   readonly to?: any;
   readonly first?: number;
   readonly last?: number;
-}
-
-interface Reference extends Handle {
-  readonly value: any;
-  annotate(annotations: any): Reference;
-  query(spec: QuerySpec): Query;
-  set(value: any): Promise<void>;
-  update(values: Record<string, any>): Promise<void>;
-  override(value: any): Promise<void>;
-  commit(updateFunction: (txn: Transaction) => void): Promise<Transaction>;
 }
 
 interface Transaction {
@@ -195,35 +218,19 @@ interface StatItem {
   runtimePerRecompute: number;
 }
 
-interface Operation {
-  readonly type: 'read' | 'write' | ' auth';
-  readonly method:
-  'set' | 'update' | 'commit' | 'peek' | 'authenticate' | 'unauthenticate' | 'certify';
-  readonly target: Reference;
-  readonly targets: Reference[];
-  readonly operand: any;
-  readonly ready: boolean;
-  readonly running: boolean;
-  readonly ended: boolean;
-  readonly tries: number;
-  readonly error: Error | undefined;
-
-  onSlow(delay: number, callback: (op: Operation) => void);
-}
-
 type InterceptActionKey =
   'read' | 'write' | 'auth' | 'set' | 'update' | 'commit' | 'connect' | 'peek' | 'authenticate' |
   'unathenticate' | 'certify' | 'all';
 
 interface InterceptCallbacks {
-  onBefore?: (op: Operation) => Promise<void> | undefined,
-  onAfter?: (op: Operation) => Promise<void> | undefined,
-  onError?: (op: Operation, error: Error) => Promise<boolean> | boolean | undefined,
-  onFailure?: (op: Operation) => Promise<void> | undefined
+  onBefore?: (op: Truss.Operation) => Promise<void> | undefined,
+  onAfter?: (op: Truss.Operation) => Promise<void> | undefined,
+  onError?: (op: Truss.Operation, error: Error) => Promise<boolean> | boolean | undefined,
+  onFailure?: (op: Truss.Operation) => Promise<void> | undefined
 }
 
 interface Connections {
-  [key: string]: Query | Reference | Connections;
+  [key: string]: Truss.Query | Truss.Reference | Connections;
 }
 
 interface WorkerFunctions {
