@@ -20,7 +20,7 @@ declare class Truss {
   static debounceAngularDigest(wait: number): void;
   static escapeKey(key: string): string;
   static unescapeKey(escapedKey: string): string;
-  static enableLogging(fn: (msg: string) => void): void;
+  static enableLogging(fn: boolean | ((msg: string) => void)): void;
 
   readonly now: number;
   readonly info: Info;
