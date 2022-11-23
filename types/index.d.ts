@@ -39,10 +39,8 @@ declare class Truss {
 
   intercept(actionType: InterceptActionKey, callbacks: InterceptCallbacks): () => void;
 
-  connect(
-    connections: Truss.Query | Truss.Reference | Connections | (() => Connections | undefined)
-  ): Truss.Connector;
-  connect(scope: any, connections: Connections | (() => Connections | undefined)): Truss.Connector;
+  connect(connections: Connection | (() => Connection | undefined)): Truss.Connector;
+  connect(scope: any, connections: Connections | (() => Connections)): Truss.Connector;
 
   peek(
     target: Truss.Query | Truss.Reference | Connections,
@@ -142,10 +140,8 @@ declare class BaseModel {
   readonly $destroyed: boolean;
 
   $intercept(actionType: InterceptActionKey, callbacks: InterceptCallbacks): () => void;
-  $connect(
-    connections: Truss.Query | Truss.Reference | Connections | (() => Connections | undefined)
-  ): Truss.Connector;
-  $connect(scope: any, connections: Connections | (() => Connections | undefined)): Truss.Connector;
+  $connect(connections: Connection | (() => Connection | undefined)): Truss.Connector;
+  $connect(scope: any, connections: Connections | (() => Connections)): Truss.Connector;
   $peek(
     target: Truss.Query | Truss.Reference | Connections,
     callback?: (value: any) => Promise<any> | void
@@ -164,7 +160,7 @@ interface Handle {
   readonly parent: Truss.Reference;
   readonly annotations: Record<string, any>;
   child(...segments: string[]): Truss.Reference | undefined;
-  children(...segments: string[]): References;
+  children(...segments: string[]): References | undefined;
   peek(callback?: (value: any) => Promise<any> | void): Promise<any>;
   match(pattern: string): Record<string, string> | undefined;
   test(pattern: string): boolean;
@@ -172,9 +168,9 @@ interface Handle {
   belongsTo(truss: Truss): boolean;
 }
 
-type References = Truss.Reference | ReferencesObject | undefined;
+type References = Truss.Reference | ReferencesObject;
 interface ReferencesObject {
-  [key: string]: References;
+  [key: string]: References | undefined;
 }
 
 interface QuerySpec {
@@ -229,8 +225,10 @@ interface InterceptCallbacks {
   onFailure?: (op: Truss.Operation) => Promise<void> | undefined
 }
 
+type Connection = Truss.Query | References | Connections;
+
 interface Connections {
-  [key: string]: Truss.Query | Truss.Reference | Connections | References | undefined;
+  [key: string]: Connection | undefined | (() => Connection | undefined);
 }
 
 interface WorkerFunctions {
