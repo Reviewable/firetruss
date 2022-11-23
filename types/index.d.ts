@@ -40,9 +40,9 @@ declare class Truss {
   intercept(actionType: InterceptActionKey, callbacks: InterceptCallbacks): () => void;
 
   connect(
-    connections: Truss.Query | Truss.Reference | Connections | (() => Connections)
+    connections: Truss.Query | Truss.Reference | Connections | (() => Connections | undefined)
   ): Truss.Connector;
-  connect(scope: any, connections: Connections | (() => Connections)): Truss.Connector;
+  connect(scope: any, connections: Connections | (() => Connections | undefined)): Truss.Connector;
 
   peek(
     target: Truss.Query | Truss.Reference | Connections,
@@ -143,9 +143,9 @@ declare class BaseModel {
 
   $intercept(actionType: InterceptActionKey, callbacks: InterceptCallbacks): () => void;
   $connect(
-    connections: Truss.Query | Truss.Reference | Connections | (() => Connections)
+    connections: Truss.Query | Truss.Reference | Connections | (() => Connections | undefined)
   ): Truss.Connector;
-  $connect(scope: any, connections: Connections | (() => Connections)): Truss.Connector;
+  $connect(scope: any, connections: Connections | (() => Connections | undefined)): Truss.Connector;
   $peek(
     target: Truss.Query | Truss.Reference | Connections,
     callback?: (value: any) => Promise<any> | void
@@ -230,7 +230,7 @@ interface InterceptCallbacks {
 }
 
 interface Connections {
-  [key: string]: Truss.Query | Truss.Reference | Connections;
+  [key: string]: Truss.Query | Truss.Reference | Connections | References | undefined;
 }
 
 interface WorkerFunctions {
