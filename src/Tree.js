@@ -52,7 +52,7 @@ class Transaction {
 export default class Tree {
   constructor(truss, rootUrl, bridge, dispatcher) {
     this._truss = truss;
-    this._rootUrl = rootUrl;
+    this._url = new URL(rootUrl);
     this._bridge = bridge;
     this._dispatcher = dispatcher;
     this._firebasePropertyEditAllowed = false;
@@ -179,7 +179,8 @@ export default class Tree {
     const pathPrefix = extractCommonPathPrefix(values);
     relativizePaths(pathPrefix, values);
     if (pathPrefix !== ref.path) ref = new Reference(ref._tree, pathPrefix, ref._annotations);
-    const url = this._rootUrl + pathPrefix;
+    this._url.pathname = pathPrefix;
+    const url = this._url.toString();
     const writeSerial = this._writeSerial;
     const set = numValues === 1;
     const operand = set ? values[''] : values;
@@ -225,8 +226,9 @@ export default class Tree {
           default:
             throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
         }
+        this._url.pathname = ref.path;
         return this._bridge.transaction(
-          this._rootUrl + ref.path, oldValue, values, this._writeSerial
+          this._url.toString(), oldValue, values, this._writeSerial
         ).then(result => {
           _.forEach(result.snapshots, snapshot => this._integrateSnapshot(snapshot));
           return result.committed ? txn : attemptTransaction();
@@ -256,7 +258,8 @@ export default class Tree {
       return _.keys(this._coupler.findCoupledDescendantPaths(path));
     }).value();
     return Promise.all(_.map(paths, path => {
-      return this._bridge.once(this._rootUrl + path).then(snap => {
+      this._url.pathname = path;
+      return this._bridge.once(this._url.toString()).then(snap => {
         this._integrateSnapshot(snap);
       });
     }));

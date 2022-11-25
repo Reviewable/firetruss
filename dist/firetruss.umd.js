@@ -1768,8 +1768,9 @@
   MetaTree.prototype._connectInfoProperty = function _connectInfoProperty (property, attribute) {
       var this$1$1 = this;
 
-    var propertyUrl = (this._rootUrl) + "/.info/" + property;
-    this._bridge.on(propertyUrl, propertyUrl, null, 'value', function (snap) {
+    var url = new URL(this._rootUrl);
+    url.pathname = "/.info/" + property;
+    this._bridge.on(url.href, url.href, null, 'value', function (snap) {
       this$1$1.root[attribute] = snap.value;
       angularProxy.digest();
     });
@@ -2443,7 +2444,8 @@
     this._query = query;
     this._listeners = [];
     this._keys = [];
-    this._url = this._coupler._rootUrl + query.path;
+    this._coupler._url.pathname = query.path;
+    this._url = this._coupler._url.toString();
     this._segments = splitPath(query.path, true);
     this._listening = false;
     this.ready = false;
@@ -2606,7 +2608,8 @@
     this._coupler = coupler;
     this.path = path;
     this.parent = parent;
-    this.url = this._coupler._rootUrl + path;
+    this._coupler._url.pathname = path;
+    this.url = this._coupler._url.toString();
     this.operations = [];
     this.queryCount = 0;
     this.listening = false;
@@ -2730,7 +2733,7 @@
 
 
   var Coupler = function Coupler(rootUrl, bridge, dispatcher, applySnapshot, prunePath) {
-    this._rootUrl = rootUrl;
+    this._url = new URL(rootUrl);
     this._bridge = bridge;
     this._dispatcher = dispatcher;
     this._applySnapshot = applySnapshot;
@@ -2977,7 +2980,7 @@
 
   var Tree = function Tree(truss, rootUrl, bridge, dispatcher) {
     this._truss = truss;
-    this._rootUrl = rootUrl;
+    this._url = new URL(rootUrl);
     this._bridge = bridge;
     this._dispatcher = dispatcher;
     this._firebasePropertyEditAllowed = false;
@@ -3116,7 +3119,8 @@
     var pathPrefix = extractCommonPathPrefix(values);
     relativizePaths(pathPrefix, values);
     if (pathPrefix !== ref.path) { ref = new Reference(ref._tree, pathPrefix, ref._annotations); }
-    var url = this._rootUrl + pathPrefix;
+    this._url.pathname = pathPrefix;
+    var url = this._url.toString();
     var writeSerial = this._writeSerial;
     var set = numValues === 1;
     var operand = set ? values[''] : values;
@@ -3166,8 +3170,9 @@
           default:
             throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
         }
+        this$1$1._url.pathname = ref.path;
         return this$1$1._bridge.transaction(
-          this$1$1._rootUrl + ref.path, oldValue, values, this$1$1._writeSerial
+          this$1$1._url.toString(), oldValue, values, this$1$1._writeSerial
         ).then(function (result) {
           ___default.default.forEach(result.snapshots, function (snapshot) { return this$1$1._integrateSnapshot(snapshot); });
           return result.committed ? txn : attemptTransaction();
@@ -3199,7 +3204,8 @@
       return ___default.default.keys(this$1$1._coupler.findCoupledDescendantPaths(path));
     }).value();
     return Promise.all(___default.default.map(paths, function (path) {
-      return this$1$1._bridge.once(this$1$1._rootUrl + path).then(function (snap) {
+      this$1$1._url.pathname = path;
+      return this$1$1._bridge.once(this$1$1._url.toString()).then(function (snap) {
         this$1$1._integrateSnapshot(snap);
       });
     }));
@@ -3696,7 +3702,7 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  var VERSION = '5.2.10';
+  var VERSION = 'dev';
 
 
   var Truss = function Truss(rootUrl) {

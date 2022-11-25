@@ -10,7 +10,8 @@ class QueryHandler {
     this._query = query;
     this._listeners = [];
     this._keys = [];
-    this._url = this._coupler._rootUrl + query.path;
+    this._coupler._url.pathname = query.path;
+    this._url = this._coupler._url.toString();
     this._segments = splitPath(query.path, true);
     this._listening = false;
     this.ready = false;
@@ -155,7 +156,8 @@ class Node {
     this._coupler = coupler;
     this.path = path;
     this.parent = parent;
-    this.url = this._coupler._rootUrl + path;
+    this._coupler._url.pathname = path;
+    this.url = this._coupler._url.toString();
     this.operations = [];
     this.queryCount = 0;
     this.listening = false;
@@ -259,7 +261,7 @@ class Node {
 
 export default class Coupler {
   constructor(rootUrl, bridge, dispatcher, applySnapshot, prunePath) {
-    this._rootUrl = rootUrl;
+    this._url = new URL(rootUrl);
     this._bridge = bridge;
     this._dispatcher = dispatcher;
     this._applySnapshot = applySnapshot;
