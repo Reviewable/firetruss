@@ -159,8 +159,10 @@ interface Handle {
   readonly path: string;
   readonly parent: Truss.Reference;
   readonly annotations: Record<string, any>;
-  child(...segments: string[]): Truss.Reference | undefined;
-  children(...segments: (string | string[])[]): References | undefined;
+  child(...segments: string[]): Truss.Reference;
+  child(...segments: (string | null | undefined)[]): Truss.Reference | undefined;
+  children(...segments: (string | string[])[]): References;
+  children(...segments: (string | null | undefined | string[])[]): References | undefined;
   peek(callback?: (value: any) => Promise<any> | void): Promise<any>;
   match(pattern: string): Record<string, string> | undefined;
   test(pattern: string): boolean;
