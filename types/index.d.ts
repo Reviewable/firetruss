@@ -168,7 +168,7 @@ interface Handle {
   peek(callback?: (value: any) => Promise<any> | void): Promise<any>;
   match(pattern: string): Record<string, string> | undefined;
   test(pattern: string): boolean;
-  isEqual(other: Truss.Reference | Truss.Query): boolean;
+  isEqual(other: Truss.Reference | Truss.Query | null | undefined): boolean;
   belongsTo(truss: Truss): boolean;
 }
 
