@@ -47,7 +47,7 @@ declare class Truss {
     callback?: (value: any) => Promise<any> | void
   ): Promise<any>;
 
-  observe(subject: () => any, callback: (newValue: any, oldValue: any) => void, options?: {
+  observe<T>(subject: () => T, callback: (newValue: T, oldValue: T | undefined) => void, options?: {
     precise?: boolean, deep?: boolean, scope?: any
   }): () => void;
 
@@ -146,10 +146,12 @@ declare class BaseModel {
     target: Truss.Query | Truss.Reference | Connections,
     callback?: (value: any) => Promise<any> | void
   ): Promise<any>;
-  $observe(subject: () => any, callback: (newValue: any, oldValue: any) => void, options?: {
-    precise?: boolean, deep?: boolean, scope?: any
-  }): () => void;
-  $when(expression: () => any, options?: {timeout?: number, scope?: any}): Promise<any>;
+  $observe<T>(
+    subject: () => T, callback: (newValue: T, oldValue: T | undefined) => void, options?: {
+      precise?: boolean, deep?: boolean
+    }
+  ): () => void;
+  $when(expression: () => any, options?: {timeout?: number}): Promise<any>;
 }
 
 interface Handle {
