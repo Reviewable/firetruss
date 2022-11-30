@@ -223,10 +223,10 @@ type InterceptActionKey =
   'unathenticate' | 'certify' | 'all';
 
 interface InterceptCallbacks {
-  onBefore?: (op: Truss.Operation) => Promise<void> | undefined,
-  onAfter?: (op: Truss.Operation) => Promise<void> | undefined,
-  onError?: (op: Truss.Operation, error: Error) => Promise<boolean> | boolean | undefined,
-  onFailure?: (op: Truss.Operation) => Promise<void> | undefined
+  onBefore?: (op: Truss.Operation) => Promise<void> | void,
+  onAfter?: (op: Truss.Operation) => Promise<void> | void,
+  onError?: (op: Truss.Operation, error: Error) => Promise<boolean> | boolean | void,
+  onFailure?: (op: Truss.Operation) => Promise<void> | void
 }
 
 type Connection = Truss.Query | References | Connections;
