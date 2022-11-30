@@ -2368,20 +2368,17 @@ function computeValue(prop, propertyStats) {
 
 function wrapConnections(object, connections) {
   if (!connections || connections instanceof Handle) { return connections; }
-  return _.mapValues(connections, function (descriptor) {
-    if (descriptor instanceof Handle) { return descriptor; }
-    if (_.isFunction(descriptor)) {
-      var fn = function() {
-        /* eslint-disable no-invalid-this */
-        object.$$touchThis();
-        return wrapConnections(object, descriptor.call(this));
-        /* eslint-enable no-invalid-this */
-      };
-      fn.angularWatchSuppressed = true;
-      return fn;
-    }
-    return wrapConnections(object, descriptor);
-  });
+  if (_.isFunction(connections)) {
+    var fn = function() {
+      /* eslint-disable no-invalid-this */
+      object.$$touchThis();
+      return wrapConnections(object, connections.call(this));
+      /* eslint-enable no-invalid-this */
+    };
+    fn.angularWatchSuppressed = true;
+    return fn;
+  }
+  return _.mapValues(connections, function (descriptor) { return wrapConnections(object, descriptor); });
 }
 
 function freeze(object) {
@@ -3656,7 +3653,7 @@ function toFirebaseJson(object) {
 var bridge, logging;
 var workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-var VERSION = '5.2.15';
+var VERSION = '5.2.16';
 
 
 var Truss = function Truss(rootUrl) {
@@ -3723,7 +3720,7 @@ Truss.prototype.connect = function connect (scope, connections) {
     connections = scope;
     scope = undefined;
   }
-  if (connections instanceof Handle) { connections = {_: connections}; }
+  if (connections instanceof Handle || _.isFunction(connections)) { connections = {_: connections}; }
   return new Connector(scope, connections, this._tree, 'connect');
 };
 
