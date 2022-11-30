@@ -601,20 +601,17 @@ function computeValue(prop, propertyStats) {
 
 function wrapConnections(object, connections) {
   if (!connections || connections instanceof Handle) return connections;
-  return _.mapValues(connections, descriptor => {
-    if (descriptor instanceof Handle) return descriptor;
-    if (_.isFunction(descriptor)) {
-      const fn = function() {
-        /* eslint-disable no-invalid-this */
-        object.$$touchThis();
-        return wrapConnections(object, descriptor.call(this));
-        /* eslint-enable no-invalid-this */
-      };
-      fn.angularWatchSuppressed = true;
-      return fn;
-    }
-    return wrapConnections(object, descriptor);
-  });
+  if (_.isFunction(connections)) {
+    const fn = function() {
+      /* eslint-disable no-invalid-this */
+      object.$$touchThis();
+      return wrapConnections(object, connections.call(this));
+      /* eslint-enable no-invalid-this */
+    };
+    fn.angularWatchSuppressed = true;
+    return fn;
+  }
+  return _.mapValues(connections, descriptor => wrapConnections(object, descriptor));
 }
 
 function freeze(object) {

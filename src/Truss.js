@@ -90,7 +90,7 @@ export default class Truss {
       connections = scope;
       scope = undefined;
     }
-    if (connections instanceof Handle) connections = {_: connections};
+    if (connections instanceof Handle || _.isFunction(connections)) connections = {_: connections};
     return new Connector(scope, connections, this._tree, 'connect');
   }
 
