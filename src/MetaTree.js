@@ -98,7 +98,7 @@ export default class MetaTree {
 
   _connectInfoProperty(property, attribute) {
     const url = new URL(this._rootUrl);
-    url.pathname = `/.info/${property}`;
+    url.pathname = encodeURI(`/.info/${property}`);
     this._bridge.on(url.href, url.href, null, 'value', snap => {
       this.root[attribute] = snap.value;
       angular.digest();

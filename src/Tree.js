@@ -179,7 +179,7 @@ export default class Tree {
     const pathPrefix = extractCommonPathPrefix(values);
     relativizePaths(pathPrefix, values);
     if (pathPrefix !== ref.path) ref = new Reference(ref._tree, pathPrefix, ref._annotations);
-    this._url.pathname = pathPrefix;
+    this._url.pathname = encodeURI(pathPrefix);
     const url = this._url.toString();
     const writeSerial = this._writeSerial;
     const set = numValues === 1;
@@ -258,7 +258,7 @@ export default class Tree {
       return _.keys(this._coupler.findCoupledDescendantPaths(path));
     }).value();
     return Promise.all(_.map(paths, path => {
-      this._url.pathname = path;
+      this._url.pathname = encodeURI(path);
       return this._bridge.once(this._url.toString()).then(snap => {
         this._integrateSnapshot(snap);
       });

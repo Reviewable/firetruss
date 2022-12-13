@@ -10,7 +10,7 @@ class QueryHandler {
     this._query = query;
     this._listeners = [];
     this._keys = [];
-    this._coupler._url.pathname = query.path;
+    this._coupler._url.pathname = encodeURI(query.path);
     this._url = this._coupler._url.toString();
     this._segments = splitPath(query.path, true);
     this._listening = false;
@@ -156,7 +156,7 @@ class Node {
     this._coupler = coupler;
     this.path = path;
     this.parent = parent;
-    this._coupler._url.pathname = path;
+    this._coupler._url.pathname = encodeURI(path);
     this.url = this._coupler._url.toString();
     this.operations = [];
     this.queryCount = 0;

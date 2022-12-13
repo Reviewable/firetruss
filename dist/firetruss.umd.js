@@ -1769,7 +1769,7 @@
       var this$1$1 = this;
 
     var url = new URL(this._rootUrl);
-    url.pathname = "/.info/" + property;
+    url.pathname = encodeURI(("/.info/" + property));
     this._bridge.on(url.href, url.href, null, 'value', function (snap) {
       this$1$1.root[attribute] = snap.value;
       angularProxy.digest();
@@ -2441,7 +2441,7 @@
     this._query = query;
     this._listeners = [];
     this._keys = [];
-    this._coupler._url.pathname = query.path;
+    this._coupler._url.pathname = encodeURI(query.path);
     this._url = this._coupler._url.toString();
     this._segments = splitPath(query.path, true);
     this._listening = false;
@@ -2605,7 +2605,7 @@
     this._coupler = coupler;
     this.path = path;
     this.parent = parent;
-    this._coupler._url.pathname = path;
+    this._coupler._url.pathname = encodeURI(path);
     this.url = this._coupler._url.toString();
     this.operations = [];
     this.queryCount = 0;
@@ -3116,7 +3116,7 @@
     var pathPrefix = extractCommonPathPrefix(values);
     relativizePaths(pathPrefix, values);
     if (pathPrefix !== ref.path) { ref = new Reference(ref._tree, pathPrefix, ref._annotations); }
-    this._url.pathname = pathPrefix;
+    this._url.pathname = encodeURI(pathPrefix);
     var url = this._url.toString();
     var writeSerial = this._writeSerial;
     var set = numValues === 1;
@@ -3201,7 +3201,7 @@
       return ___default.default.keys(this$1$1._coupler.findCoupledDescendantPaths(path));
     }).value();
     return Promise.all(___default.default.map(paths, function (path) {
-      this$1$1._url.pathname = path;
+      this$1$1._url.pathname = encodeURI(path);
       return this$1$1._bridge.once(this$1$1._url.toString()).then(function (snap) {
         this$1$1._integrateSnapshot(snap);
       });
@@ -3699,7 +3699,7 @@
   var bridge, logging;
   var workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  var VERSION = '5.2.16';
+  var VERSION = 'dev';
 
 
   var Truss = function Truss(rootUrl) {
