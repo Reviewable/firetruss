@@ -85,7 +85,7 @@ class QueryHandler {
           this._coupler._coupleSegments(this._segments.concat(key));
         }
         for (const key of _.difference(this._keys, updatedKeys)) {
-          // Decoupling a segment will prune the tree at that location is there are no other
+          // Decoupling a segment will prune the tree at that location if there are no other
           // listeners.
           this._coupler._decoupleSegments(this._segments.concat(key));
         }
@@ -133,6 +133,8 @@ class QueryHandler {
     if (!this._listeners.length || !this._listening) return;
     this._listening = false;
     this.ready = false;
+    for (const key of this._keys) this._coupler._decoupleSegments(this._segments.concat(key));
+    this._keys = [];
     angular.digest();
     Promise.all(_.map(this._listeners, listener => {
       this._coupler._dispatcher.clearReady(listener.operation);
@@ -228,6 +230,12 @@ class Node {
       }
       for (const op of node.operations) this._coupler._dispatcher.clearReady(op);
     });
+    // Immediately prune all data below this node. We don't want to decouple it since the operation
+    // may want to retry. We also don't want to look for other coupled paths below (that may not be
+    // subject to the permission denied error) since they're not listening and the data would get
+    // stale. If this node doesn't retry and gets decoupled we'll automatically start listening on
+    // descendants and (try to) refill the subtrees.
+    this._coupler._prunePath(this.path);
     return Promise.all(_.map(this.operations, op => {
       return this._coupler._dispatcher.retry(op, error).catch(e => {
         op._disconnect(e);
