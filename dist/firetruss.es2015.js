@@ -2480,7 +2480,7 @@ QueryHandler.prototype._updateKeysAndApplySnapshot = function _updateKeysAndAppl
           this._coupler._coupleSegments(this._segments.concat(key));
       }
       for (var i$1 = 0, list$1 = _.difference(this._keys, updatedKeys); i$1 < list$1.length; i$1 += 1) {
-        // Decoupling a segment will prune the tree at that location is there are no other
+        // Decoupling a segment will prune the tree at that location if there are no other
         // listeners.
         var key$1 = list$1[i$1];
 
@@ -2534,6 +2534,12 @@ QueryHandler.prototype._handleError = function _handleError (error) {
   if (!this._listeners.length || !this._listening) { return; }
   this._listening = false;
   this.ready = false;
+  for (var i = 0, list = this._keys; i < list.length; i += 1) {
+      var key = list[i];
+
+      this._coupler._decoupleSegments(this._segments.concat(key));
+    }
+  this._keys = [];
   angularProxy.digest();
   Promise.all(_.map(this._listeners, function (listener) {
     this$1$1._coupler._dispatcher.clearReady(listener.operation);
@@ -2647,6 +2653,12 @@ Node.prototype._handleError = function _handleError (error) {
         this$1$1._coupler._dispatcher.clearReady(op);
       }
   });
+  // Immediately prune all data below this node. We don't want to decouple it since the operation
+  // may want to retry. We also don't want to look for other coupled paths below (that may not be
+  // subject to the permission denied error) since they're not listening and the data would get
+  // stale. If this node doesn't retry and gets decoupled we'll automatically start listening on
+  // descendants and (try to) refill the subtrees.
+  this._coupler._prunePath(this.path);
   return Promise.all(_.map(this.operations, function (op) {
     return this$1$1._coupler._dispatcher.retry(op, error).catch(function (e) {
       op._disconnect(e);
@@ -3653,7 +3665,7 @@ function toFirebaseJson(object) {
 var bridge, logging;
 var workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-var VERSION = '5.2.17';
+var VERSION = '5.2.18';
 
 
 var Truss = function Truss(rootUrl) {
