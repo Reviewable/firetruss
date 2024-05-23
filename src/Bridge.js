@@ -1,7 +1,7 @@
 import {unescapeKey} from './utils/paths.js';
 import _ from 'lodash';
 
-const MIN_WORKER_VERSION = '2.3.0';
+const MIN_WORKER_VERSION = '3.0.0';
 
 
 class Snapshot {

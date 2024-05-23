@@ -523,48 +523,70 @@ export default class Modeler {
 
   checkVueObject(object, path, checkedObjects) {
     const top = !checkedObjects;
-    if (top) checkedObjects = [];
-    try {
-      for (const key of Object.getOwnPropertyNames(object)) {
-        if (RESERVED_VALUE_PROPERTY_NAMES[key] || Value.prototype.hasOwnProperty(key) ||
-            /^\$_/.test(key)) continue;
-        // eslint-disable-next-line no-shadow
-        const mount = this._findMount(mount => mount.Class === object.constructor);
-        if (mount && mount.matcher && _.includes(mount.matcher.variables, key)) continue;
+    if (top) checkedObjects = new Set();
+    const objectPropertyValues = new Map();
+    let mount;
+    const targetProperties = _(object)
+      .thru(Object.getOwnPropertyNames)
+      .reject(key =>
+        RESERVED_VALUE_PROPERTY_NAMES[key] || Value.prototype.hasOwnProperty(key) ||
+        /^\$_/.test(key)
+      )
+      .reject(key => {
+        if (!mount) mount = this._findMount(candidate => candidate.Class === object.constructor);
+        return mount && mount.matcher && _.includes(mount.matcher.variables, key);
+      })
+      .map(key => {
         let value;
         try {
           value = object[key];
         } catch (e) {
           // Ignore any values that hold exceptions, or otherwise throw on access -- we won't be
           // able to check them anyway.
-          continue;
+          return;
         }
-        if (!(_.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
-          const descriptor = Object.getOwnPropertyDescriptor(object, key);
-          if ('value' in descriptor || !descriptor.get) {
+        const descriptor = Object.getOwnPropertyDescriptor(object, key);
+        const computed =
+          !descriptor.enumerable && descriptor.set && !Object.hasOwn(object, '$_' + key);
+        return {key, value, descriptor, computed};
+      })
+      .compact()
+      .value();
+
+    for (const {key, value, descriptor, computed} of targetProperties) {
+      if (!(_.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
+        if ('value' in descriptor || !descriptor.get) {
+          throw new Error(
+            `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
+        }
+        if (object.$truss && descriptor.enumerable) {
+          try {
+            object[key] = value;
             throw new Error(
-              `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
+              `Firetruss object at ${path} has an enumerable non-Firebase property: ${key}`);
+          } catch (e) {
+            if (e.trussCode !== 'firebase_overwrite') throw e;
           }
-          if (object.$truss && descriptor.enumerable) {
-            try {
-              object[key] = value;
-              throw new Error(
-                `Firetruss object at ${path} has an enumerable non-Firebase property: ${key}`);
-            } catch (e) {
-              if (e.trussCode !== 'firebase_overwrite') throw e;
-            }
-          }
-        }
-        if (_.isObject(value) && !value.$$$trussCheck && Object.isExtensible(value) &&
-            !(_.isFunction(value) || value instanceof Promise)) {
-          value.$$$trussCheck = true;
-          checkedObjects.push(value);
-          this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
         }
       }
-    } finally {
-      if (top) {
-        for (const item of checkedObjects) delete item.$$$trussCheck;
+      if (_.isObject(value)) {
+        if (!checkedObjects.has(value) && !Object.isSealed(value) &&
+            !(_.isFunction(value) || value instanceof Promise)) {
+          checkedObjects.add(value);
+          this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
+        }
+        if (!computed && !value.$truss) objectPropertyValues.set(value, key);
+      }
+    }
+
+    for (const {key, value, computed} of targetProperties) {
+      if (computed && _.isObject(value) && !value.$truss) {
+        const otherKey = objectPropertyValues.get(value);
+        if (otherKey) {
+          throw new Error(
+            `Firetruss object at ${path} has properties ${key} ` +
+            `and ${otherKey} with an aliased value`);
+        }
       }
     }
   }
