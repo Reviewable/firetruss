@@ -148,7 +148,11 @@ export default class Truss {
       oldValueClone = options.deep ? _.cloneDeep(options.precise) : _.clone(options.precise);
     }
 
-    const unwatch = this._vue.$watch(subjectFn, (newValue, oldValue) => {
+    // This needs to be a `let` instead of a `const` to avoid a "Cannot access before
+    // initialization" error.
+    let unwatch;
+    // eslint-disable-next-line prefer-const
+    unwatch = this._vue.$watch(subjectFn, (newValue, oldValue) => {
       if (options && options.precise) {
         const newValueClone = usePreciseDefaults ?
           (options.deep ?
