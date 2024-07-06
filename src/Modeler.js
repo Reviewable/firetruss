@@ -572,12 +572,14 @@ export default class Modeler {
           checkedObjects.add(value);
           this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
         }
-        if (!computed && !value.$truss) objectPropertyValues.set(value, key);
+        if (!computed && !value.$truss && !Object.isFrozen(value)) {
+          objectPropertyValues.set(value, key);
+        }
       }
     }
 
     for (const {key, value, computed} of targetProperties) {
-      if (computed && _.isObject(value) && !value.$truss) {
+      if (computed && _.isObject(value) && !value.$truss && !Object.isFrozen(value)) {
         const otherKey = objectPropertyValues.get(value);
         if (otherKey) {
           throw new Error(

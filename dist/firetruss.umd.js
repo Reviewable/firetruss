@@ -2237,12 +2237,14 @@
             checkedObjects.add(value);
             this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
           }
-          if (!computed && !value.$truss) objectPropertyValues.set(value, key);
+          if (!computed && !value.$truss && !Object.isFrozen(value)) {
+            objectPropertyValues.set(value, key);
+          }
         }
       }
 
       for (const {key, value, computed} of targetProperties) {
-        if (computed && ___default.default.isObject(value) && !value.$truss) {
+        if (computed && ___default.default.isObject(value) && !value.$truss && !Object.isFrozen(value)) {
           const otherKey = objectPropertyValues.get(value);
           if (otherKey) {
             throw new Error(
@@ -3468,7 +3470,7 @@
   let bridge, logging;
   const workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  const VERSION = '6.0.0';
+  const VERSION = '5.2.19';
 
 
   class Truss {
