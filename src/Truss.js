@@ -313,14 +313,6 @@ Object.defineProperties(Truss, {
       }
       Object.defineProperties(Vue.prototype, prototypeExtension);
       copyPrototype(BaseValue, Vue);
-      Vue.mixin({
-        destroyed() {
-          if (_.has(this, '$$finalizers')) {
-            // Some finalizers remove themselves from the array, so clone it before iterating.
-            for (const fn of _.clone(this.$$finalizers)) fn();
-          }
-        }
-      });
     }
   }}
 });

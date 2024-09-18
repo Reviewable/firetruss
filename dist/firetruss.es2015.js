@@ -1641,9 +1641,9 @@ class BaseValue {
     const unintercept = this.$truss.intercept(actionType, callbacks);
     const uninterceptAndRemoveFinalizer = () => {
       unintercept();
-      _.pull(this.$$finalizers, uninterceptAndRemoveFinalizer);
+      this.$off('hook:destroyed', uninterceptAndRemoveFinalizer);
     };
-    this.$$finalizers.push(uninterceptAndRemoveFinalizer);
+    this.$on('hook:destroyed', uninterceptAndRemoveFinalizer);
     return uninterceptAndRemoveFinalizer;
   }
 
@@ -1656,10 +1656,10 @@ class BaseValue {
     const connector = this.$truss.connect(scope, wrapConnections(this, connections));
     const originalDestroy = connector.destroy;
     const destroy = () => {
-      _.pull(this.$$finalizers, destroy);
+      this.$off('hook:destroyed', destroy);
       return originalDestroy.call(connector);
     };
-    this.$$finalizers.push(destroy);
+    this.$on('hook:destroyed', destroy);
     connector.destroy = destroy;
     return connector;
   }
@@ -1667,9 +1667,9 @@ class BaseValue {
   $peek(target, callback) {
     if (this.$destroyed) throw new Error('Object already destroyed');
     const promise = promiseFinally(
-      this.$truss.peek(target, callback), () => {_.pull(this.$$finalizers, promise.cancel);}
+      this.$truss.peek(target, callback), () => {this.$off('hook:destroyed', promise.cancel);}
     );
-    this.$$finalizers.push(promise.cancel);
+    this.$on('hook:destroyed', promise.cancel);
     return promise;
   }
 
@@ -1684,9 +1684,9 @@ class BaseValue {
 
     unobserveAndRemoveFinalizer = () => {  // eslint-disable-line prefer-const
       unobserve();
-      _.pull(this.$$finalizers, unobserveAndRemoveFinalizer);
+      this.$off('hook:destroyed', unobserveAndRemoveFinalizer);
     };
-    this.$$finalizers.push(unobserveAndRemoveFinalizer);
+    this.$on('hook:destroyed', unobserveAndRemoveFinalizer);
     return unobserveAndRemoveFinalizer;
   }
 
@@ -1696,15 +1696,9 @@ class BaseValue {
       this.$$touchThis();
       return expression.call(this);
     }, options);
-    promiseFinally(promise, () => {_.pull(this.$$finalizers, promise.cancel);});
-    this.$$finalizers.push(promise.cancel);
+    promiseFinally(promise, () => {this.$off('hook:destroyed', promise.cancel);});
+    this.$on('hook:destroyed', promise.cancel);
     return promise;
-  }
-
-  get $$finalizers() {
-    Object.defineProperty(this, '$$finalizers', {
-      value: [], writable: false, enumerable: false, configurable: false});
-    return this.$$finalizers;
   }
 }
 
@@ -1737,8 +1731,8 @@ class Value {
   $nextTick() {
     if (this.$destroyed) throw new Error('Object already destroyed');
     const promise = this.$truss.nextTick();
-    promiseFinally(promise, () => {_.pull(this.$$finalizers, promise.cancel);});
-    this.$$finalizers.push(promise.cancel);
+    promiseFinally(promise, () => {this.$off('hook:destroyed', promise.cancel);});
+    this.$on('hook:destroyed', promise.cancel);
     return promise;
   }
 
@@ -1766,14 +1760,54 @@ class Value {
     /* eslint-enable no-unused-expressions */
   }
 
-  get $$initializers() {
-    Object.defineProperty(this, '$$initializers', {
-      value: [], writable: false, enumerable: false, configurable: true});
-    return this.$$initializers;
-  }
-
   get $destroyed() {  // eslint-disable-line lodash/prefer-constant
     return false;
+  }
+
+  $on(event, callback) {
+    if (this.$destroyed) throw new Error('Object already destroyed');
+    const list = this.$$hooks[event] = this.$$hooks[event] || [];
+    list.push(callback);
+  }
+
+  $once(event, callback) {
+    callback.$once = callback.$once || {};
+    callback.$once[event] = callback.$once[event] || 0;
+    callback.$once[event] += 1;
+    this.$on(event, callback);
+  }
+
+  $off(event, callback) {
+    if (event) {
+      if (callback) {
+        if (_.isArray(callback)) _.pullAll(this.$$hooks[event], callback);
+        else _.pull(this.$$hooks[event], callback);
+      } else {
+        delete this.$$hooks[event];
+      }
+    } else {
+      for (const key of _.keys(this.$$hooks)) delete this.$$hooks[key];
+    }
+  }
+
+  $emit(event, ...args) {
+    if (_.has(this, '$$hooks')) {
+      // Some callbacks remove themselves from the array, so clone it before iterating.
+      _.forEach(_.clone(this.$$hooks[event]), callback => {
+        if (callback.$once && callback.$once[event]) {
+          callback.$once[event] -= 1;
+          this.$off(event, callback);
+        }
+        callback(...args);
+      });
+    }
+  }
+
+  get $$hooks() {
+    Object.defineProperty(this, '$$hooks', {
+      value: {}, writable: false, enumerable: false, configurable: false
+    });
+    return this.$$hooks;
   }
 }
 
@@ -1800,7 +1834,8 @@ class FrozenWrapper {
 
 
 class Modeler {
-  constructor(debug) {
+  constructor(vue, debug) {
+    this._vue = vue;
     this._trie = {Class: Value};
     this._debug = debug;
     Object.freeze(this);
@@ -1869,7 +1904,6 @@ class Modeler {
       for (const name of Object.getOwnPropertyNames(proto)) {
         const descriptor = Object.getOwnPropertyDescriptor(proto, name);
         if (name.charAt(0) === '$') {
-          if (name === '$finalize') continue;
           if (_.isEqual(descriptor, Object.getOwnPropertyDescriptor(Value.prototype, name))) {
             continue;
           }
@@ -2003,12 +2037,12 @@ class Modeler {
     let value, pendingPromise;
     let writeAllowed = false;
 
-    object.$$initializers.push(vue => {
+    const initialize = () => {
       let unwatchNow = false;
       const compute = computeValue.bind(object, prop, propertyStats);
       if (this._debug) compute.toString = () => {return prop.fullName;};
       let unwatch = () => {unwatchNow = true;};
-      unwatch = vue.$watch(compute, newValue => {
+      unwatch = this._vue.$watch(compute, newValue => {
         if (object.$destroyed) {
           unwatch();
           return;
@@ -2037,14 +2071,14 @@ class Modeler {
       // Hack to change order of computed property watchers.  By flipping their ids to be negative,
       // we ensure that they will settle before all other watchers, and also that children
       // properties will settle before their parents since values are often aggregated upwards.
-      const watcher = _.last(vue._watchers || vue._scope.effects);
+      const watcher = _.last(this._vue._watchers || this._vue._scope.effects);
       watcher.id = -watcher.id;
 
       function update(newValue) {
         if (newValue instanceof FrozenWrapper) {
           newValue = newValue.value;
           unwatch();
-          _.pull(object.$$finalizers, unwatch);
+          object.$off('hook:destroyed', unwatch);
         }
         if (isTrussEqual(value, newValue)) return;
         // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
@@ -2066,9 +2100,13 @@ class Modeler {
       if (unwatchNow) {
         unwatch();
       } else {
-        object.$$finalizers.push(unwatch);
+        object.$on('hook:destroyed', unwatch);
       }
-    });
+
+      object.$off('hook:created', initialize);
+    };
+    object.$on('hook:created', initialize);
+
     return {
       enumerable: true, configurable: true,
       get() {
@@ -2088,13 +2126,13 @@ class Modeler {
   }
 
   destroyObject(object) {
-    if (_.has(object, '$$finalizers')) {
-      // Some finalizers remove themselves from the array, so clone it before iterating.
-      for (const fn of _.clone(object.$$finalizers)) fn();
-    }
-    if (_.isFunction(object.$finalize)) object.$finalize();
     Object.defineProperty(
       object, '$destroyed', {value: true, enumerable: false, configurable: false});
+  }
+
+  emitLifecycleHook(object, hook) {
+    if (_.isFunction(object[hook])) object[hook]();
+    object.$emit(`hook:${hook}`);
   }
 
   isPlaceholder(path) {
@@ -2754,10 +2792,10 @@ class Tree {
     this._localWrites = {};
     this._localWriteTimestamp = null;
     this._initialized = false;
-    this._modeler = new Modeler(truss.constructor.VERSION === 'dev');
+    this._vue = new Vue({data: {$root: undefined}});
+    this._modeler = new Modeler(this._vue, truss.constructor.VERSION === 'dev');
     this._coupler = new Coupler(
       rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
-    this._vue = new Vue({data: {$root: undefined}});
     Object.seal(this);
     // Call this.init(classes) to complete initialization; we need two phases so that truss can bind
     // the tree into its own accessors prior to defining computed functions, which may try to
@@ -3018,6 +3056,7 @@ class Tree {
     if (path === '/') properties.$truss = {value: this._truss};
 
     const object = this._modeler.createObject(path, properties);
+    this._modeler.emitLifecycleHook(object, 'beforeCreate');
     Object.defineProperties(object, properties);
     return object;
   }
@@ -3036,16 +3075,14 @@ class Tree {
   }
 
   // To be called on the result of _createObject after _fixObject, and after any additional Firebase
-  // properties have been set, to run initialiers.
+  // properties have been set, to run initializers.
   _completeCreateObject(object) {
-    if (object.hasOwnProperty('$$initializers')) {
-      for (const fn of object.$$initializers) fn(this._vue);
-      delete object.$$initializers;
-    }
+    this._modeler.emitLifecycleHook(object, 'created');
   }
 
   _destroyObject(object) {
     if (!(object && object.$truss) || object.$destroyed) return;
+    this._modeler.emitLifecycleHook(object, 'beforeDestroy');
     this._modeler.destroyObject(object);
     // Normally we'd only destroy enumerable children, which are the Firebase properties.  However,
     // clients have the option of creating hidden placeholders, so we need to scan non-enumerable
@@ -3056,6 +3093,7 @@ class Tree {
       const child = object.$data[key];
       if (child && child.$parent === object) this._destroyObject(child);
     }
+    this._modeler.emitLifecycleHook(object, 'destroyed');
   }
 
   _integrateSnapshot(snap) {
@@ -3413,7 +3451,7 @@ function toFirebaseJson(object) {
 let bridge, logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '6.0.0';
+const VERSION = '5.2.19';
 
 
 class Truss {
@@ -3708,14 +3746,6 @@ Object.defineProperties(Truss, {
       }
       Object.defineProperties(Vue.prototype, prototypeExtension);
       copyPrototype(BaseValue, Vue);
-      Vue.mixin({
-        destroyed() {
-          if (_.has(this, '$$finalizers')) {
-            // Some finalizers remove themselves from the array, so clone it before iterating.
-            for (const fn of _.clone(this.$$finalizers)) fn();
-          }
-        }
-      });
     }
   }}
 });
