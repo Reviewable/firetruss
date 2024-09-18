@@ -60,10 +60,10 @@ export default class Tree {
     this._localWrites = {};
     this._localWriteTimestamp = null;
     this._initialized = false;
-    this._modeler = new Modeler(truss.constructor.VERSION === 'dev');
+    this._vue = new Vue({data: {$root: undefined}});
+    this._modeler = new Modeler(this._vue, truss.constructor.VERSION === 'dev');
     this._coupler = new Coupler(
       rootUrl, bridge, dispatcher, this._integrateSnapshot.bind(this), this._prune.bind(this));
-    this._vue = new Vue({data: {$root: undefined}});
     Object.seal(this);
     // Call this.init(classes) to complete initialization; we need two phases so that truss can bind
     // the tree into its own accessors prior to defining computed functions, which may try to
@@ -324,6 +324,7 @@ export default class Tree {
     if (path === '/') properties.$truss = {value: this._truss};
 
     const object = this._modeler.createObject(path, properties);
+    this._modeler.emitLifecycleHook(object, 'beforeCreate');
     Object.defineProperties(object, properties);
     return object;
   }
@@ -342,16 +343,14 @@ export default class Tree {
   }
 
   // To be called on the result of _createObject after _fixObject, and after any additional Firebase
-  // properties have been set, to run initialiers.
+  // properties have been set, to run initializers.
   _completeCreateObject(object) {
-    if (object.hasOwnProperty('$$initializers')) {
-      for (const fn of object.$$initializers) fn(this._vue);
-      delete object.$$initializers;
-    }
+    this._modeler.emitLifecycleHook(object, 'created');
   }
 
   _destroyObject(object) {
     if (!(object && object.$truss) || object.$destroyed) return;
+    this._modeler.emitLifecycleHook(object, 'beforeDestroy');
     this._modeler.destroyObject(object);
     // Normally we'd only destroy enumerable children, which are the Firebase properties.  However,
     // clients have the option of creating hidden placeholders, so we need to scan non-enumerable
@@ -362,6 +361,7 @@ export default class Tree {
       const child = object.$data[key];
       if (child && child.$parent === object) this._destroyObject(child);
     }
+    this._modeler.emitLifecycleHook(object, 'destroyed');
   }
 
   _integrateSnapshot(snap) {
