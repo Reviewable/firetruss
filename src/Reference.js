@@ -23,6 +23,7 @@ export class Handle {
     if (!this._key) this._key = unescapeKey(this._path.replace(/.*\//, ''));
     return this._key;
   }
+
   get path() {return this._path;}
   get _pathPrefix() {return this._path === '/' ? '' : this._path;}
   get parent() {

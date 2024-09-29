@@ -10,16 +10,16 @@ const maxNumPathMatchers = 1000;
 export function escapeKey(key) {
   if (!key) return key;
   // eslint-disable-next-line no-control-regex
-  return key.toString().replace(/[\x00-\x1f\\.$#[\]\x7f/]/g, function(char) {
-    return '\\' + _.padStart(char.charCodeAt(0).toString(16), 2, '0');
-  });
+  return key.toString().replace(/[\x00-\x1f\\.$#[\]\x7f/]/g, char =>
+    '\\' + _.padStart(char.charCodeAt(0).toString(16), 2, '0')
+  );
 }
 
 export function unescapeKey(key) {
   if (!key) return key;
-  return key.toString().replace(/\\[0-9a-f]{2}/gi, function(code) {
-    return String.fromCharCode(parseInt(code.slice(1), 16));
-  });
+  return key.toString().replace(/\\[0-9a-f]{2}/gi, code =>
+    String.fromCharCode(parseInt(code.slice(1), 16))
+  );
 }
 
 export function escapeKeys(object) {
@@ -27,7 +27,7 @@ export function escapeKeys(object) {
   if (!(_.isObject(object) && Object.isExtensible(object))) return object;
   let result = object;
   for (const key in object) {
-    if (!object.hasOwnProperty(key)) continue;
+    if (!Object.hasOwn(object, key)) continue;
     const value = object[key];
     const escapedKey = escapeKey(key);
     const escapedValue = escapeKeys(value);

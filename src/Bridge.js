@@ -63,7 +63,7 @@ export default class Bridge {
         const key = storage.key(i);
         items.push({key, value: storage.getItem(key)});
       }
-    } catch (e) {
+    } catch {
       // Some browsers don't like us accessing local storage -- nothing we can do.
     }
     return this._send({msg: 'init', storage: items, config}).then(response => {
@@ -191,13 +191,13 @@ export default class Bridge {
           storage.setItem(item.key, item.value);
         }
       }
-    } catch (e) {
+    } catch {
       // If we're denied access, there's nothing we can do.
     }
   }
 
   trackServer(rootUrl) {
-    if (this._servers.hasOwnProperty(rootUrl)) return Promise.resolve();
+    if (Object.hasOwn(this._servers, rootUrl)) return Promise.resolve();
     const server = this._servers[rootUrl] = {authListeners: []};
     const authCallbackId = this._registerCallback(this._authCallback.bind(this, server));
     this._send({msg: 'onAuth', url: rootUrl, callbackId: authCallbackId});
@@ -373,10 +373,10 @@ function errorFromJson(json, params) {
   const error = new Error(json.message);
   error.params = params;
   for (const propertyName in json) {
-    if (propertyName === 'message' || !json.hasOwnProperty(propertyName)) continue;
+    if (propertyName === 'message' || !Object.hasOwn(json, propertyName)) continue;
     try {
       error[propertyName] = json[propertyName];
-    } catch (e) {
+    } catch {
       error.extra = error.extra || {};
       error.extra[propertyName] = json[propertyName];
     }
