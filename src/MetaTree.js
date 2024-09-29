@@ -13,7 +13,7 @@ export default class MetaTree {
       connected: undefined, timeOffset: 0, user: undefined, userid: undefined,
       nowAtInterval(intervalMillis) {
         const key = 'now' + intervalMillis;
-        if (!this.hasOwnProperty(key)) {
+        if (!Object.hasOwn(this, key)) {
           const update = () => {
             Vue.set(this, key, Date.now() + this.timeOffset);
             angular.digest();

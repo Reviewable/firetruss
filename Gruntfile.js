@@ -1,4 +1,4 @@
-/* eslint-env node */
+'use strict';
 
 const nodeResolve = require('@rollup/plugin-node-resolve').nodeResolve;
 const commonjs = require('@rollup/plugin-commonjs');

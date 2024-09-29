@@ -62,6 +62,7 @@ class Operation {
         this._target._annotations);
     });
   }
+
   get operand() {return this._operand;}
   get ready() {return this._ready;}
   get running() {return this._running;}

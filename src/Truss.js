@@ -163,16 +163,16 @@ export default class Truss {
         oldValueClone = newValueClone;
       }
       numCallbacks++;
-      if (!unwatch) {
+      if (unwatch) {
+        callbackFn(newValue, oldValue);
+        angular.digest();
+      } else {
         // Delay the immediate callback until we've had a chance to return the unwatch function.
         Promise.resolve().then(() => {
           if (numCallbacks > 1) return;
           callbackFn(newValue, oldValue);
           // No need to digest since under Angular we'll be using $q as Promise.
         });
-      } else {
-        callbackFn(newValue, oldValue);
-        angular.digest();
       }
     }, {immediate: true, deep: options && options.deep});
 

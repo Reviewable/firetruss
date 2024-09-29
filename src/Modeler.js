@@ -106,16 +106,19 @@ class Value {
     Object.defineProperty(this, '$truss', {value: this.$parent.$truss});
     return this.$truss;
   }
+
   get $ref() {
     Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
     return this.$ref;
   }
+
   get $refs() {return this.$ref;}
   get $key() {
     Object.defineProperty(
       this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
     return this.$key;
   }
+
   get $data() {return this;}
   get $hidden() {return false;}  // eslint-disable-line lodash/prefer-constant
   get $empty() {return _.isEmpty(this.$data);}
@@ -149,7 +152,7 @@ class Value {
     if (this.__ob__) {
       this.__ob__.dep.depend();
     } else if (this.$parent) {
-      (this.$parent.hasOwnProperty('$data') ? this.$parent.$data : this.$parent)[this.$key];
+      (Object.hasOwn(this.$parent, '$data') ? this.$parent.$data : this.$parent)[this.$key];
     } else {
       this.$store;
     }
@@ -275,8 +278,7 @@ export default class Modeler {
     this._decorateTrie(this._trie);
   }
 
-  destroy() {  // eslint-disable-line no-empty-function
-  }
+  destroy() {/* empty */}
 
   _getMount(path, scaffold, predicate) {
     const segments = splitPath(path, true);
@@ -336,7 +338,7 @@ export default class Modeler {
       proto = Object.getPrototypeOf(proto);
     }
     for (const name of Object.getOwnPropertyNames(Value.prototype)) {
-      if (name === 'constructor' || Class.prototype.hasOwnProperty(name)) continue;
+      if (name === 'constructor' || Object.hasOwn(Class.prototype, name)) continue;
       Object.defineProperty(
         Class.prototype, name, Object.getOwnPropertyDescriptor(Value.prototype, name));
     }
@@ -594,7 +596,7 @@ export default class Modeler {
     const targetProperties = _(object)
       .thru(Object.getOwnPropertyNames)
       .reject(key =>
-        RESERVED_VALUE_PROPERTY_NAMES[key] || Value.prototype.hasOwnProperty(key) ||
+        RESERVED_VALUE_PROPERTY_NAMES[key] || Object.hasOwn(Value.prototype, key) ||
         /^\$_/.test(key)
       )
       .reject(key => mount && mount.matcher && _.includes(mount.matcher.variables, key))
@@ -602,7 +604,7 @@ export default class Modeler {
         let value;
         try {
           value = object[key];
-        } catch (e) {
+        } catch {
           // Ignore any values that hold exceptions, or otherwise throw on access -- we won't be
           // able to check them anyway.
           return;

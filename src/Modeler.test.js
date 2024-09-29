@@ -13,24 +13,31 @@ class Root {
   constructor() {
     this.x = 1;
   }
+
   get y() {
     return this.x + 1;
   }
+
   get z() {
     return this.a + 1;
   }
+
   get v() {
     return this.sub && this.sub.y + 10;
   }
+
   get w() {
     return this.sub && this.sub.z + 10;
   }
+
   makeA() {
     Vue.set(this, 'a', 2);
   }
+
   get complex() {
     return {b: this.x || 5};
   }
+
   get derived() {
     return this.complex.b + 1;
   }
@@ -41,6 +48,7 @@ class Subroot {
   get y() {
     return this.$parent.x + 2;
   }
+
   get z() {
     return this.$parent.a + 2;
   }

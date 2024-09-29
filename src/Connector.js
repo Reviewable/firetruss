@@ -209,7 +209,7 @@ export default class Connector {
     }
     const subScope = this._vue.values[key];
     for (const childKey in subScope) {
-      if (!subScope.hasOwnProperty(childKey)) continue;
+      if (!Object.hasOwn(subScope, childKey)) continue;
       if (!_.includes(childKeys, childKey)) {
         Vue.delete(subScope, childKey);
         angular.digest();
@@ -217,7 +217,7 @@ export default class Connector {
     }
     const object = this._tree.getObject(this._vue.descriptors[key].path);
     for (const childKey of childKeys) {
-      if (subScope.hasOwnProperty(childKey)) continue;
+      if (Object.hasOwn(subScope, childKey)) continue;
       Vue.set(subScope, childKey, object[childKey]);
       angular.digest();
     }
