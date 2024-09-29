@@ -197,7 +197,7 @@ export default class Bridge {
   }
 
   trackServer(rootUrl) {
-    if (this._servers.hasOwnProperty(rootUrl)) return Promise.resolve();
+    if (Object.hasOwn(this._servers, rootUrl)) return Promise.resolve();
     const server = this._servers[rootUrl] = {authListeners: []};
     const authCallbackId = this._registerCallback(this._authCallback.bind(this, server));
     this._send({msg: 'onAuth', url: rootUrl, callbackId: authCallbackId});
@@ -373,7 +373,7 @@ function errorFromJson(json, params) {
   const error = new Error(json.message);
   error.params = params;
   for (const propertyName in json) {
-    if (propertyName === 'message' || !json.hasOwnProperty(propertyName)) continue;
+    if (propertyName === 'message' || !Object.hasOwn(json, propertyName)) continue;
     try {
       error[propertyName] = json[propertyName];
     } catch (e) {

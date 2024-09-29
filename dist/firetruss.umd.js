@@ -185,7 +185,7 @@
     if (!(___default.default.isObject(object) && Object.isExtensible(object))) return object;
     let result = object;
     for (const key in object) {
-      if (!object.hasOwnProperty(key)) continue;
+      if (!Object.hasOwn(object, key)) continue;
       const value = object[key];
       const escapedKey = escapeKey(key);
       const escapedValue = escapeKeys(value);
@@ -466,7 +466,7 @@
     }
 
     trackServer(rootUrl) {
-      if (this._servers.hasOwnProperty(rootUrl)) return Promise.resolve();
+      if (Object.hasOwn(this._servers, rootUrl)) return Promise.resolve();
       const server = this._servers[rootUrl] = {authListeners: []};
       const authCallbackId = this._registerCallback(this._authCallback.bind(this, server));
       this._send({msg: 'onAuth', url: rootUrl, callbackId: authCallbackId});
@@ -642,7 +642,7 @@
     const error = new Error(json.message);
     error.params = params;
     for (const propertyName in json) {
-      if (propertyName === 'message' || !json.hasOwnProperty(propertyName)) continue;
+      if (propertyName === 'message' || !Object.hasOwn(json, propertyName)) continue;
       try {
         error[propertyName] = json[propertyName];
       } catch (e) {
@@ -674,6 +674,7 @@
       if (!this._key) this._key = unescapeKey(this._path.replace(/.*\//, ''));
       return this._key;
     }
+
     get path() {return this._path;}
     get _pathPrefix() {return this._path === '/' ? '' : this._path;}
     get parent() {
@@ -1203,7 +1204,7 @@
       }
       const subScope = this._vue.values[key];
       for (const childKey in subScope) {
-        if (!subScope.hasOwnProperty(childKey)) continue;
+        if (!Object.hasOwn(subScope, childKey)) continue;
         if (!___default.default.includes(childKeys, childKey)) {
           Vue__default.default.delete(subScope, childKey);
           angularProxy.digest();
@@ -1211,7 +1212,7 @@
       }
       const object = this._tree.getObject(this._vue.descriptors[key].path);
       for (const childKey of childKeys) {
-        if (subScope.hasOwnProperty(childKey)) continue;
+        if (Object.hasOwn(subScope, childKey)) continue;
         Vue__default.default.set(subScope, childKey, object[childKey]);
         angularProxy.digest();
       }
@@ -1332,6 +1333,7 @@
           this._target._annotations);
       });
     }
+
     get operand() {return this._operand;}
     get ready() {return this._ready;}
     get running() {return this._running;}
@@ -1580,7 +1582,7 @@
         connected: undefined, timeOffset: 0, user: undefined, userid: undefined,
         nowAtInterval(intervalMillis) {
           const key = 'now' + intervalMillis;
-          if (!this.hasOwnProperty(key)) {
+          if (!Object.hasOwn(this, key)) {
             const update = () => {
               Vue__default.default.set(this, key, Date.now() + this.timeOffset);
               angularProxy.digest();
@@ -1771,16 +1773,19 @@
       Object.defineProperty(this, '$truss', {value: this.$parent.$truss});
       return this.$truss;
     }
+
     get $ref() {
       Object.defineProperty(this, '$ref', {value: new Reference(this.$truss._tree, this.$path)});
       return this.$ref;
     }
+
     get $refs() {return this.$ref;}
     get $key() {
       Object.defineProperty(
         this, '$key', {value: unescapeKey(this.$path.slice(this.$path.lastIndexOf('/') + 1))});
       return this.$key;
     }
+
     get $data() {return this;}
     get $hidden() {return false;}  // eslint-disable-line lodash/prefer-constant
     get $empty() {return ___default.default.isEmpty(this.$data);}
@@ -1814,7 +1819,7 @@
       if (this.__ob__) {
         this.__ob__.dep.depend();
       } else if (this.$parent) {
-        (this.$parent.hasOwnProperty('$data') ? this.$parent.$data : this.$parent)[this.$key];
+        (Object.hasOwn(this.$parent, '$data') ? this.$parent.$data : this.$parent)[this.$key];
       } else {
         this.$store;
       }
@@ -1940,8 +1945,7 @@
       this._decorateTrie(this._trie);
     }
 
-    destroy() {  // eslint-disable-line no-empty-function
-    }
+    destroy() {/* empty */}
 
     _getMount(path, scaffold, predicate) {
       const segments = splitPath(path, true);
@@ -2001,7 +2005,7 @@
         proto = Object.getPrototypeOf(proto);
       }
       for (const name of Object.getOwnPropertyNames(Value.prototype)) {
-        if (name === 'constructor' || Class.prototype.hasOwnProperty(name)) continue;
+        if (name === 'constructor' || Object.hasOwn(Class.prototype, name)) continue;
         Object.defineProperty(
           Class.prototype, name, Object.getOwnPropertyDescriptor(Value.prototype, name));
       }
@@ -2259,7 +2263,7 @@
       const targetProperties = ___default.default(object)
         .thru(Object.getOwnPropertyNames)
         .reject(key =>
-          RESERVED_VALUE_PROPERTY_NAMES[key] || Value.prototype.hasOwnProperty(key) ||
+          RESERVED_VALUE_PROPERTY_NAMES[key] || Object.hasOwn(Value.prototype, key) ||
           /^\$_/.test(key)
         )
         .reject(key => mount && mount.matcher && ___default.default.includes(mount.matcher.variables, key))
@@ -3266,7 +3270,7 @@
       } else {
         ___default.default.forEach(object.$data, (item, childKey) => {
           const escapedChildKey = escapeKey(childKey);
-          if (!value.hasOwnProperty(escapedChildKey)) {
+          if (!Object.hasOwn(value, escapedChildKey)) {
             this._prune(joinPath(path, escapedChildKey), null, remoteWrite);
           }
         });
@@ -3278,7 +3282,7 @@
       this._modeler.forEachPlaceholderChild(path, mount => {
         if (hidden !== undefined && hidden !== !!mount.hidden) return;
         const key = unescapeKey(mount.escapedKey);
-        if (!object.$data.hasOwnProperty(key)) {
+        if (!Object.hasOwn(object.$data, key)) {
           this._plantValue(
             joinPath(path, mount.escapedKey), key, mount.placeholder, object, false, false, false,
             createdObjects);
@@ -3301,7 +3305,7 @@
 
     _avoidLocalWritePaths(path, lockedDescendantPaths) {
       for (const localWritePath in this._localWrites) {
-        if (!this._localWrites.hasOwnProperty(localWritePath)) continue;
+        if (!Object.hasOwn(this._localWrites, localWritePath)) continue;
         if (path === localWritePath || localWritePath === '/' ||
             ___default.default.startsWith(path, localWritePath + '/')) return true;
         if (path === '/' || ___default.default.startsWith(localWritePath, path + '/')) {
@@ -3409,7 +3413,7 @@
     }
 
     _setFirebaseProperty(object, key, value, hidden) {
-      const data = object.hasOwnProperty('$data') ? object.$data : object;
+      const data = Object.hasOwn(object, '$data') ? object.$data : object;
       let descriptor = this._getFirebasePropertyDescriptor(object, data, key);
       if (descriptor) {
         if (hidden) {
@@ -3445,7 +3449,7 @@
     }
 
     _deleteFirebaseProperty(object, key) {
-      const data = object.hasOwnProperty('$data') ? object.$data : object;
+      const data = Object.hasOwn(object, '$data') ? object.$data : object;
       // Make sure it's actually a Firebase property.
       this._getFirebasePropertyDescriptor(object, data, key);
       this._destroyObject(data[key]);
@@ -3473,7 +3477,7 @@
           throw new Error(`Update item deep path must be absolute, taken from a reference: ${path}`);
         }
         const absolutePath = joinPath(rootPath, escapeKey(path));
-        if (values.hasOwnProperty(absolutePath)) {
+        if (Object.hasOwn(values, absolutePath)) {
           throw new Error(`Update items overlap: ${path} and ${absolutePath}`);
         }
         values[absolutePath] = values[path];
@@ -3525,7 +3529,7 @@
     const result = {};
     const data = object.$data;
     for (const key in data) {
-      if (data.hasOwnProperty(key)) result[escapeKey(key)] = toFirebaseJson(data[key]);
+      if (Object.hasOwn(data, key)) result[escapeKey(key)] = toFirebaseJson(data[key]);
     }
     return result;
   }
@@ -3533,7 +3537,7 @@
   let bridge, logging;
   const workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  const VERSION = '7.0.0';
+  const VERSION = '5.2.19';
 
 
   class Truss {
@@ -3678,16 +3682,16 @@
           oldValueClone = newValueClone;
         }
         numCallbacks++;
-        if (!unwatch) {
+        if (unwatch) {
+          callbackFn(newValue, oldValue);
+          angularProxy.digest();
+        } else {
           // Delay the immediate callback until we've had a chance to return the unwatch function.
           Promise.resolve().then(() => {
             if (numCallbacks > 1) return;
             callbackFn(newValue, oldValue);
             // No need to digest since under Angular we'll be using $q as Promise.
           });
-        } else {
-          callbackFn(newValue, oldValue);
-          angularProxy.digest();
         }
       }, {immediate: true, deep: options && options.deep});
 

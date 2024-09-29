@@ -452,7 +452,7 @@ export default class Tree {
     } else {
       _.forEach(object.$data, (item, childKey) => {
         const escapedChildKey = escapeKey(childKey);
-        if (!value.hasOwnProperty(escapedChildKey)) {
+        if (!Object.hasOwn(value, escapedChildKey)) {
           this._prune(joinPath(path, escapedChildKey), null, remoteWrite);
         }
       });
@@ -464,7 +464,7 @@ export default class Tree {
     this._modeler.forEachPlaceholderChild(path, mount => {
       if (hidden !== undefined && hidden !== !!mount.hidden) return;
       const key = unescapeKey(mount.escapedKey);
-      if (!object.$data.hasOwnProperty(key)) {
+      if (!Object.hasOwn(object.$data, key)) {
         this._plantValue(
           joinPath(path, mount.escapedKey), key, mount.placeholder, object, false, false, false,
           createdObjects);
@@ -487,7 +487,7 @@ export default class Tree {
 
   _avoidLocalWritePaths(path, lockedDescendantPaths) {
     for (const localWritePath in this._localWrites) {
-      if (!this._localWrites.hasOwnProperty(localWritePath)) continue;
+      if (!Object.hasOwn(this._localWrites, localWritePath)) continue;
       if (path === localWritePath || localWritePath === '/' ||
           _.startsWith(path, localWritePath + '/')) return true;
       if (path === '/' || _.startsWith(localWritePath, path + '/')) {
@@ -595,7 +595,7 @@ export default class Tree {
   }
 
   _setFirebaseProperty(object, key, value, hidden) {
-    const data = object.hasOwnProperty('$data') ? object.$data : object;
+    const data = Object.hasOwn(object, '$data') ? object.$data : object;
     let descriptor = this._getFirebasePropertyDescriptor(object, data, key);
     if (descriptor) {
       if (hidden) {
@@ -631,7 +631,7 @@ export default class Tree {
   }
 
   _deleteFirebaseProperty(object, key) {
-    const data = object.hasOwnProperty('$data') ? object.$data : object;
+    const data = Object.hasOwn(object, '$data') ? object.$data : object;
     // Make sure it's actually a Firebase property.
     this._getFirebasePropertyDescriptor(object, data, key);
     this._destroyObject(data[key]);
@@ -659,7 +659,7 @@ export function checkUpdateHasOnlyDescendantsWithNoOverlap(rootPath, values) {
         throw new Error(`Update item deep path must be absolute, taken from a reference: ${path}`);
       }
       const absolutePath = joinPath(rootPath, escapeKey(path));
-      if (values.hasOwnProperty(absolutePath)) {
+      if (Object.hasOwn(values, absolutePath)) {
         throw new Error(`Update items overlap: ${path} and ${absolutePath}`);
       }
       values[absolutePath] = values[path];
@@ -711,7 +711,7 @@ export function toFirebaseJson(object) {
   const result = {};
   const data = object.$data;
   for (const key in data) {
-    if (data.hasOwnProperty(key)) result[escapeKey(key)] = toFirebaseJson(data[key]);
+    if (Object.hasOwn(data, key)) result[escapeKey(key)] = toFirebaseJson(data[key]);
   }
   return result;
 }

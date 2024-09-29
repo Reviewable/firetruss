@@ -27,7 +27,7 @@ export function escapeKeys(object) {
   if (!(_.isObject(object) && Object.isExtensible(object))) return object;
   let result = object;
   for (const key in object) {
-    if (!object.hasOwnProperty(key)) continue;
+    if (!Object.hasOwn(object, key)) continue;
     const value = object[key];
     const escapedKey = escapeKey(key);
     const escapedValue = escapeKeys(value);
