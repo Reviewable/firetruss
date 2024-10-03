@@ -3627,7 +3627,7 @@ class Truss {
         oldValueClone = newValueClone;
       }
       numCallbacks++;
-      if (unwatch) {
+      if (unwatch || options && options.immediate) {
         callbackFn(newValue, oldValue);
         angularProxy.digest();
       } else {

@@ -163,7 +163,7 @@ export default class Truss {
         oldValueClone = newValueClone;
       }
       numCallbacks++;
-      if (unwatch) {
+      if (unwatch || options && options.immediate) {
         callbackFn(newValue, oldValue);
         angular.digest();
       } else {
