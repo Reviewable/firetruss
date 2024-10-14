@@ -459,6 +459,7 @@ export default class Modeler {
     const initialize = () => {
       let unwatchNow = false;
       const compute = computeValue.bind(object, prop, propertyStats);
+      compute.toString = () => `compute ${prop.fullName}`;
       if (this._debug) compute.toString = () => {return prop.fullName;};
       let unwatch = () => {unwatchNow = true;};
       unwatch = this._vue.$watch(compute, newValue => {

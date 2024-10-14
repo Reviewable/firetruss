@@ -2071,6 +2071,7 @@ class Modeler {
     const initialize = () => {
       let unwatchNow = false;
       const compute = computeValue.bind(object, prop, propertyStats);
+      compute.toString = () => `compute ${prop.fullName}`;
       if (this._debug) compute.toString = () => {return prop.fullName;};
       let unwatch = () => {unwatchNow = true;};
       unwatch = this._vue.$watch(compute, newValue => {
@@ -3482,7 +3483,7 @@ function toFirebaseJson(object) {
 let bridge, logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '7.1.0';
+const VERSION = '5.2.19';
 
 
 class Truss {
