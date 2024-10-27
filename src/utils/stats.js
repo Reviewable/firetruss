@@ -1,22 +1,30 @@
 import {isTrussEqual} from './utils.js';
 
 import _ from 'lodash';
-import performanceNow from 'performance-now';
 
 
 class StatItem {
   constructor(name) {
-    _.assign(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
+    _.assign(this, {name, numRecomputes: 0, numUpdates: 0, computeTime: 0, updateTime: 0});
   }
 
   add(item) {
-    this.runtime += item.runtime;
+    this.computeTime += item.computeTime;
+    this.updateTime += item.updateTime;
     this.numUpdates += item.numUpdates;
     this.numRecomputes += item.numRecomputes;
   }
 
+  get runtime() {
+    return this.computeTime + this.updateTime;
+  }
+
   get runtimePerRecompute() {
-    return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
+    return this.numRecomputes ? this.computeTime / this.numRecomputes : 0;
+  }
+
+  get runtimePerUpdate() {
+    return this.numUpdates ? this.updateTime / this.numUpdates : 0;
   }
 
   toLogParts(totals) {
@@ -25,7 +33,8 @@ class StatItem {
       `(${(this.runtime / totals.runtime * 100).toFixed(1)}%)`,
       ` ${this.numUpdates} upd /`, `${this.numRecomputes} runs`,
       `(${(this.numUpdates / this.numRecomputes * 100).toFixed(1)}%)`,
-      ` ${this.runtimePerRecompute.toFixed(2)}ms / run`
+      ` ${this.runtimePerRecompute.toFixed(2)}ms / run`,
+      ` ${this.runtimePerUpdate.toFixed(2)}ms / upd`
     ];
   }
 }
@@ -65,14 +74,14 @@ class Stats {
     const item = this.for(`${className}.${propName}`);
     return function() {
       /* eslint-disable no-invalid-this */
-      const startTime = performanceNow();
+      const startTime = performance.now();
       const oldValue = this._computedWatchers && this._computedWatchers[propName].value;
       try {
         const newValue = getter.call(this);
         if (!isTrussEqual(oldValue, newValue)) item.numUpdates += 1;
         return newValue;
       } finally {
-        item.runtime += performanceNow() - startTime;
+        item.computeTime += performance.now() - startTime;
         item.numRecomputes += 1;
       }
     };

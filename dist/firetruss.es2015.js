@@ -1,6 +1,5 @@
 import _ from 'lodash';
 import Vue from 'vue';
-import performanceNow from 'performance-now';
 
 let vue;
 let lastDigestRequest = 0, digestInProgress = false;
@@ -873,17 +872,26 @@ function copyPrototype(a, b) {
 
 class StatItem {
   constructor(name) {
-    _.assign(this, {name, numRecomputes: 0, numUpdates: 0, runtime: 0});
+    _.assign(this, {name, numRecomputes: 0, numUpdates: 0, computeTime: 0, updateTime: 0});
   }
 
   add(item) {
-    this.runtime += item.runtime;
+    this.computeTime += item.computeTime;
+    this.updateTime += item.updateTime;
     this.numUpdates += item.numUpdates;
     this.numRecomputes += item.numRecomputes;
   }
 
+  get runtime() {
+    return this.computeTime + this.updateTime;
+  }
+
   get runtimePerRecompute() {
-    return this.numRecomputes ? this.runtime / this.numRecomputes : 0;
+    return this.numRecomputes ? this.computeTime / this.numRecomputes : 0;
+  }
+
+  get runtimePerUpdate() {
+    return this.numUpdates ? this.updateTime / this.numUpdates : 0;
   }
 
   toLogParts(totals) {
@@ -892,7 +900,8 @@ class StatItem {
       `(${(this.runtime / totals.runtime * 100).toFixed(1)}%)`,
       ` ${this.numUpdates} upd /`, `${this.numRecomputes} runs`,
       `(${(this.numUpdates / this.numRecomputes * 100).toFixed(1)}%)`,
-      ` ${this.runtimePerRecompute.toFixed(2)}ms / run`
+      ` ${this.runtimePerRecompute.toFixed(2)}ms / run`,
+      ` ${this.runtimePerUpdate.toFixed(2)}ms / upd`
     ];
   }
 }
@@ -932,14 +941,14 @@ class Stats {
     const item = this.for(`${className}.${propName}`);
     return function() {
       /* eslint-disable no-invalid-this */
-      const startTime = performanceNow();
+      const startTime = performance.now();
       const oldValue = this._computedWatchers && this._computedWatchers[propName].value;
       try {
         const newValue = getter.call(this);
         if (!isTrussEqual(oldValue, newValue)) item.numUpdates += 1;
         return newValue;
       } finally {
-        item.runtime += performanceNow() - startTime;
+        item.computeTime += performance.now() - startTime;
         item.numRecomputes += 1;
       }
     };
@@ -1050,11 +1059,11 @@ class Connector {
   }
 
   _computeConnection(fn, connectionStats) {
-    const startTime = performanceNow();
+    const startTime = performance.now();
     try {
       return flattenRefs(fn.call(this._scope));
     } finally {
-      connectionStats.runtime += performanceNow() - startTime;
+      connectionStats.computeTime += performance.now() - startTime;
       connectionStats.numRecomputes += 1;
     }
   }
@@ -2107,6 +2116,7 @@ class Modeler {
       watcher.id = -watcher.id;
 
       function update(newValue) {
+        const startTime = performance.now();
         if (newValue instanceof FrozenWrapper) {
           newValue = newValue.value;
           unwatch();
@@ -2114,7 +2124,6 @@ class Modeler {
         }
         if (isTrussEqual(value, newValue)) return;
         // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
-        propertyStats.numUpdates += 1;
         writeAllowed = true;
         object[prop.name] = newValue;
         writeAllowed = false;
@@ -2126,6 +2135,8 @@ class Modeler {
         // value in case the property is later added.  If uninstrumented, the dependency won't be
         // added and we won't be notified.  And Vue only instruments extensible objects...
         freeze(newValue);
+        propertyStats.numUpdates += 1;
+        propertyStats.updateTime += performance.now() - startTime;
         return true;
       }
 
@@ -2279,7 +2290,7 @@ function computeValue(prop, propertyStats) {
 
   const oldPropertyFrozen = currentPropertyFrozen;
   currentPropertyFrozen = false;
-  const startTime = performanceNow();
+  const startTime = performance.now();
   let value;
   try {
     try {
@@ -2287,7 +2298,7 @@ function computeValue(prop, propertyStats) {
     } catch (e) {
       value = new ErrorWrapper(e);
     } finally {
-      propertyStats.runtime += performanceNow() - startTime;
+      propertyStats.computeTime += performance.now() - startTime;
       propertyStats.numRecomputes += 1;
     }
     if (currentPropertyFrozen) value = new FrozenWrapper(value);
@@ -3483,7 +3494,7 @@ function toFirebaseJson(object) {
 let bridge, logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '7.2.0';
+const VERSION = '5.2.19';
 
 
 class Truss {
