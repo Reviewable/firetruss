@@ -6,7 +6,6 @@ import {isTrussEqual, copyPrototype} from './utils/utils.js';
 import {promiseFinally} from './utils/promises.js';
 
 import _ from 'lodash';
-import performanceNow from 'performance-now';
 
 // These are defined separately for each object so they're not included in Value below.
 const RESERVED_VALUE_PROPERTY_NAMES = {__ob__: true};
@@ -495,6 +494,7 @@ export default class Modeler {
       watcher.id = -watcher.id;
 
       function update(newValue) {
+        const startTime = performance.now();
         if (newValue instanceof FrozenWrapper) {
           newValue = newValue.value;
           unwatch();
@@ -502,7 +502,6 @@ export default class Modeler {
         }
         if (isTrussEqual(value, newValue)) return;
         // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
-        propertyStats.numUpdates += 1;
         writeAllowed = true;
         object[prop.name] = newValue;
         writeAllowed = false;
@@ -514,6 +513,8 @@ export default class Modeler {
         // value in case the property is later added.  If uninstrumented, the dependency won't be
         // added and we won't be notified.  And Vue only instruments extensible objects...
         freeze(newValue);
+        propertyStats.numUpdates += 1;
+        propertyStats.updateTime += performance.now() - startTime;
         return true;
       }
 
@@ -667,7 +668,7 @@ function computeValue(prop, propertyStats) {
 
   const oldPropertyFrozen = currentPropertyFrozen;
   currentPropertyFrozen = false;
-  const startTime = performanceNow();
+  const startTime = performance.now();
   let value;
   try {
     try {
@@ -675,7 +676,7 @@ function computeValue(prop, propertyStats) {
     } catch (e) {
       value = new ErrorWrapper(e);
     } finally {
-      propertyStats.runtime += performanceNow() - startTime;
+      propertyStats.computeTime += performance.now() - startTime;
       propertyStats.numRecomputes += 1;
     }
     if (currentPropertyFrozen) value = new FrozenWrapper(value);

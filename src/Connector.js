@@ -4,7 +4,6 @@ import stats from './utils/stats.js';
 import {isTrussEqual} from './utils/utils.js';
 
 import _ from 'lodash';
-import performanceNow from 'performance-now';
 import Vue from 'vue';
 
 
@@ -110,11 +109,11 @@ export default class Connector {
   }
 
   _computeConnection(fn, connectionStats) {
-    const startTime = performanceNow();
+    const startTime = performance.now();
     try {
       return flattenRefs(fn.call(this._scope));
     } finally {
-      connectionStats.runtime += performanceNow() - startTime;
+      connectionStats.computeTime += performance.now() - startTime;
       connectionStats.numRecomputes += 1;
     }
   }

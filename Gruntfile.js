@@ -50,7 +50,7 @@ module.exports = function(grunt) {
           plugins: [
             commonjs(),
             nodeResolve({
-              resolveOnly: ['performance-now']
+              resolveOnly: ['bogus']
             })
           ]
         },
