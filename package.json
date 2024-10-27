@@ -1,6 +1,6 @@
 {
   "name": "firetruss",
-  "version": "7.2.0",
+  "version": "7.3.0",
   "description": "Advanced data sync layer for Firebase and Vue.js",
   "scripts": {
     "setup": "rm -rf node_modules; npm install;",
