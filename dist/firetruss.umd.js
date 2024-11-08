@@ -2252,7 +2252,6 @@
       for (const {key, value, descriptor, computed} of targetProperties) {
         if (!(___default.default.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
           if ('value' in descriptor || !descriptor.get) {
-            console.log(object, ___default.default.isElement(object));
             throw new Error(
               `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
           }
@@ -3503,7 +3502,7 @@
   let bridge, logging;
   const workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  const VERSION = '5.2.19';
+  const VERSION = '7.3.1';
 
 
   class Truss {
