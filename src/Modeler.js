@@ -637,7 +637,7 @@ export default class Modeler {
       }
       if (_.isObject(value)) {
         if (!checkedObjects.has(value) && !Object.isSealed(value) &&
-            !(_.isFunction(value) || value instanceof Promise)) {
+            !(_.isFunction(value) || _.isElement(value) || value instanceof Promise)) {
           checkedObjects.add(value);
           this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
         }

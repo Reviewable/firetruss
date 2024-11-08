@@ -2252,6 +2252,7 @@
       for (const {key, value, descriptor, computed} of targetProperties) {
         if (!(___default.default.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
           if ('value' in descriptor || !descriptor.get) {
+            console.log(object, ___default.default.isElement(object));
             throw new Error(
               `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
           }
@@ -2267,7 +2268,7 @@
         }
         if (___default.default.isObject(value)) {
           if (!checkedObjects.has(value) && !Object.isSealed(value) &&
-              !(___default.default.isFunction(value) || value instanceof Promise)) {
+              !(___default.default.isFunction(value) || ___default.default.isElement(value) || value instanceof Promise)) {
             checkedObjects.add(value);
             this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
           }
@@ -3502,7 +3503,7 @@
   let bridge, logging;
   const workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  const VERSION = '7.3.0';
+  const VERSION = '5.2.19';
 
 
   class Truss {

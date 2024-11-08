@@ -2244,6 +2244,7 @@ class Modeler {
     for (const {key, value, descriptor, computed} of targetProperties) {
       if (!(_.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
         if ('value' in descriptor || !descriptor.get) {
+          console.log(object, _.isElement(object));
           throw new Error(
             `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
         }
@@ -2259,7 +2260,7 @@ class Modeler {
       }
       if (_.isObject(value)) {
         if (!checkedObjects.has(value) && !Object.isSealed(value) &&
-            !(_.isFunction(value) || value instanceof Promise)) {
+            !(_.isFunction(value) || _.isElement(value) || value instanceof Promise)) {
           checkedObjects.add(value);
           this.checkVueObject(value, joinPath(path, escapeKey(key)), checkedObjects);
         }
@@ -3494,7 +3495,7 @@ function toFirebaseJson(object) {
 let bridge, logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '7.3.0';
+const VERSION = '5.2.19';
 
 
 class Truss {
