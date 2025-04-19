@@ -3494,7 +3494,7 @@ function toFirebaseJson(object) {
 let bridge, logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '5.2.19';
+const VERSION = '7.3.2';
 
 
 class Truss {
