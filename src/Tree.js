@@ -226,7 +226,7 @@ export default class Tree {
           default:
             throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
         }
-        this._url.pathname = ref.path;
+        this._url.pathname = encodeURI(ref.path);
         return this._bridge.transaction(
           this._url.toString(), oldValue, values, this._writeSerial
         ).then(result => {

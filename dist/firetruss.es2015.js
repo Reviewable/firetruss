@@ -3001,7 +3001,7 @@ class Tree {
           default:
             throw new Error('Invalid transaction outcome: ' + (txn.outcome || 'none'));
         }
-        this._url.pathname = ref.path;
+        this._url.pathname = encodeURI(ref.path);
         return this._bridge.transaction(
           this._url.toString(), oldValue, values, this._writeSerial
         ).then(result => {
@@ -3494,7 +3494,7 @@ function toFirebaseJson(object) {
 let bridge, logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '7.3.1';
+const VERSION = '5.2.19';
 
 
 class Truss {
