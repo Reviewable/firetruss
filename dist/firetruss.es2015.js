@@ -1638,6 +1638,8 @@ const UNSUPPORTED_LIFECYCLE_METHODS = new Set([
 const UNSUPPORTED_LIFECYCLE_HOOKS =
   new Set(_.map(UNSUPPORTED_LIFECYCLE_METHODS, method => `hook:${method}`));
 
+const LAST_COMPUTED_VALUE = Symbol('last-computed-value');
+
 // Holds properties that we're going to set on a model object that's being created right now as soon
 // as it's been created, but that we'd like to be accessible in the constructor.  The object
 // prototype's getters will pick those up until they get overridden in the instance.
@@ -1761,6 +1763,14 @@ class Value {
       throw new Error('Cannot freeze a computed property outside of its getter function');
     }
     currentPropertyFrozen = true;
+  }
+
+  get $lastComputedValue() {
+    if (!_.isBoolean(currentPropertyFrozen)) {
+      throw new Error(
+        'Cannot use last computed value of a property outside of its getter function');
+    }
+    return LAST_COMPUTED_VALUE;
   }
 
   $set(value) {return this.$ref.set(value);}
@@ -2122,7 +2132,7 @@ class Modeler {
           unwatch();
           object.$off('hook:destroyed', unwatch);
         }
-        if (isTrussEqual(value, newValue)) return;
+        if (newValue === LAST_COMPUTED_VALUE || isTrussEqual(value, newValue)) return;
         // console.log('updating', object.$key, prop.fullName, 'from', value, 'to', newValue);
         writeAllowed = true;
         object[prop.name] = newValue;
@@ -3494,7 +3504,7 @@ function toFirebaseJson(object) {
 let bridge, logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '7.3.2';
+const VERSION = '5.2.19';
 
 
 class Truss {
