@@ -468,8 +468,7 @@ export default class Modeler {
     const initialize = () => {
       let unwatchNow = false;
       const compute = computeValue.bind(object, prop, propertyStats);
-      compute.toString = () => `compute ${prop.fullName}`;
-      if (this._debug) compute.toString = () => {return prop.fullName;};
+      compute.toString = _.constant(`compute ${prop.fullName}`);
       let unwatch = () => {unwatchNow = true;};
       unwatch = this._vue.$watch(compute, newValue => {
         if (object.$destroyed) {
@@ -616,6 +615,8 @@ export default class Modeler {
         let value;
         try {
           value = object[key];
+          // Ignore builtin object types.
+          if (value instanceof RegExp) return;
         } catch {
           // Ignore any values that hold exceptions, or otherwise throw on access -- we won't be
           // able to check them anyway.
