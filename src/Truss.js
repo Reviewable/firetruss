@@ -18,7 +18,7 @@ import {SERVER_TIMESTAMP, copyPrototype} from './utils/utils.js';
 let bridge, logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '7.4.0';
+const VERSION = '7.5.0';
 
 
 export default class Truss {
