@@ -169,7 +169,8 @@ export default class Truss {
       } else {
         // Delay the immediate callback until we've had a chance to return the unwatch function.
         Promise.resolve().then(() => {
-          if (numCallbacks > 1) return;
+          const vm = options && options.vm;
+          if (numCallbacks > 1 || (vm && vm.$destroyed)) return;
           callbackFn(newValue, oldValue);
           // No need to digest since under Angular we'll be using $q as Promise.
         });

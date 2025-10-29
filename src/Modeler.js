@@ -77,7 +77,7 @@ export class BaseValue {
     const unobserve = this.$truss.observe(() => {
       this.$$touchThis();
       return subjectFn.call(this);
-    }, callbackFn.bind(this), options);
+    }, callbackFn.bind(this), {...options, vm: this});
 
     unobserveAndRemoveFinalizer = () => {  // eslint-disable-line prefer-const
       unobserve();
