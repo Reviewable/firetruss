@@ -371,15 +371,19 @@ export default class Bridge {
 function errorFromJson(json, params) {
   if (!json || _.isError(json)) return json;
   const error = new Error(json.message);
-  error.params = params;
-  for (const propertyName in json) {
-    if (propertyName === 'message' || !Object.hasOwn(json, propertyName)) continue;
-    try {
-      error[propertyName] = json[propertyName];
-    } catch {
-      error.extra = error.extra || {};
-      error.extra[propertyName] = json[propertyName];
+  try {
+    error.params = params;
+    for (const propertyName in json) {
+      if (propertyName === 'message' || !Object.hasOwn(json, propertyName)) continue;
+      try {
+        error[propertyName] = json[propertyName];
+      } catch {
+        error.extra = error.extra || {};
+        error.extra[propertyName] = json[propertyName];
+      }
     }
+  } catch (e) {
+    if (!/object is not extensible/.test(e.message)) throw e;
   }
   return error;
 }
