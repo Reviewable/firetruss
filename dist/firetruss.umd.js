@@ -813,9 +813,8 @@
     }
 
 
-    toString() {
-      return this._string;
-    }
+    toString() {return this._string;}
+    toJSON() {return `query → ${this.toString()}`;}
   }
 
 
@@ -829,6 +828,7 @@
     get ready() {return this._tree.isReferenceReady(this);}  // Vue-bound
     get value() {return this._tree.getObject(this.path);}  // Vue-bound
     toString() {return this._path;}
+    toJSON() {return `reference → ${this.toString()}`;}
 
     annotate(annotations) {
       return new Reference(this._tree, this._path, ___default.default.assign({}, this._annotations, annotations));
@@ -3517,7 +3517,7 @@
   let bridge, logging;
   const workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  const VERSION = '7.5.2';
+  const VERSION = 'dev';
 
 
   class Truss {

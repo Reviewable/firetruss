@@ -805,9 +805,8 @@ class Query extends Handle {
   }
 
 
-  toString() {
-    return this._string;
-  }
+  toString() {return this._string;}
+  toJSON() {return `query → ${this.toString()}`;}
 }
 
 
@@ -821,6 +820,7 @@ class Reference extends Handle {
   get ready() {return this._tree.isReferenceReady(this);}  // Vue-bound
   get value() {return this._tree.getObject(this.path);}  // Vue-bound
   toString() {return this._path;}
+  toJSON() {return `reference → ${this.toString()}`;}
 
   annotate(annotations) {
     return new Reference(this._tree, this._path, _.assign({}, this._annotations, annotations));
@@ -3509,7 +3509,7 @@ function toFirebaseJson(object) {
 let bridge, logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '7.5.2';
+const VERSION = 'dev';
 
 
 class Truss {
