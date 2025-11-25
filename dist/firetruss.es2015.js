@@ -442,6 +442,12 @@ class Bridge {
     deferred.reject(errorFromJson(message.error, deferred.params));
   }
 
+  crash(message) {
+    let details = `Internal worker error: ${message.error.name}: ${message.error.message}`;
+    if (message.error.cause) details += ` (caused by ${message.error.cause})`;
+    throw new Error(details);
+  }
+
   updateLocalStorage({items}) {
     try {
       const storage = window.localStorage || window.sessionStorage;
@@ -3509,7 +3515,7 @@ function toFirebaseJson(object) {
 let bridge, logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '7.5.3';
+const VERSION = 'dev';
 
 
 class Truss {

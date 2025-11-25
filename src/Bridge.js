@@ -181,6 +181,12 @@ export default class Bridge {
     deferred.reject(errorFromJson(message.error, deferred.params));
   }
 
+  crash(message) {
+    let details = `Internal worker error: ${message.error.name}: ${message.error.message}`;
+    if (message.error.cause) details += ` (caused by ${message.error.cause})`;
+    throw new Error(details);
+  }
+
   updateLocalStorage({items}) {
     try {
       const storage = window.localStorage || window.sessionStorage;
