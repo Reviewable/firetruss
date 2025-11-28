@@ -200,10 +200,13 @@ export default class Tree {
 
     const attemptTransaction = counter => {
       if (tries++ >= 25) {
-        return Promise.reject(_.assign(
-          new Error('Transaction needed too many retries, giving up'),
-          {attemptCounts, sameValueCount}
-        ));
+        const error = new Error('Transaction needed too many retries, giving up');
+        try {
+          _.assign(error, {attemptCounts, sameValueCount});
+        } catch {
+          // ignore
+        }
+        return Promise.reject(error);
       }
       counter = counter || 'initial';
       attemptCounts[counter] = (attemptCounts[counter] || 0) + 1;
