@@ -2990,22 +2990,32 @@ class Tree {
   }
 
   commit(ref, updateFunction) {
-    let tries = 0;
+    let tries = 0, sameValueCount = 0;
+    const attemptCounts = {};
     updateFunction = wrapPromiseCallback(updateFunction);
 
-    const attemptTransaction = () => {
+    const attemptTransaction = counter => {
       if (tries++ >= 25) {
-        return Promise.reject(new Error('Transaction needed too many retries, giving up'));
+        return Promise.reject(_.assign(
+          new Error('Transaction needed too many retries, giving up'),
+          {attemptCounts, sameValueCount}
+        ));
       }
+      counter = counter || 'initial';
+      attemptCounts[counter] = (attemptCounts[counter] || 0) + 1;
       const txn = new Transaction(ref);
       let oldValue;
       // Ensure that Vue's watcher queue gets emptied and computed properties are up to date before
       // running the updateFunction.
       return Vue.nextTick().then(() => {
-        oldValue = toFirebaseJson(txn.currentValue);
+        const newOldValue = toFirebaseJson(txn.currentValue);
+        if (_.isEqual(newOldValue, oldValue)) sameValueCount += 1;
+        oldValue = newOldValue;
         return updateFunction(txn);
       }).then(() => {
-        if (!_.isEqual(oldValue, toFirebaseJson(txn.currentValue))) return attemptTransaction();
+        if (!_.isEqual(oldValue, toFirebaseJson(txn.currentValue))) {
+          return attemptTransaction('changed');
+        }
         if (txn.outcome === 'abort') return txn;  // early return to save time
         const values = _.mapValues(txn.values, value => escapeKeys(value));
         switch (txn.outcome) {
@@ -3027,7 +3037,7 @@ class Tree {
           this._url.toString(), oldValue, values, this._writeSerial
         ).then(result => {
           _.forEach(result.snapshots, snapshot => this._integrateSnapshot(snapshot));
-          return result.committed ? txn : attemptTransaction();
+          return result.committed ? txn : attemptTransaction('stale');
         }, e => {
           if (e.immediateFailure && (txn.outcome === 'set' || txn.outcome === 'update')) {
             return promiseFinally(this._repair(ref, values), () => Promise.reject(e));
@@ -3515,7 +3525,7 @@ function toFirebaseJson(object) {
 let bridge, logging;
 const workerFunctions = {};
 // This version is filled in by the build, don't reformat the line.
-const VERSION = '7.6.0';
+const VERSION = 'dev';
 
 
 class Truss {
