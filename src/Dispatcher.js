@@ -91,9 +91,11 @@ class Operation {
   }
 
   _clearReady() {
-    this._ready = false;
+    // Temporarily set ready to correctly reset previously triggered slow handles.
+    this._ready = true;
     this._startTimestamp = Date.now();
     _.forEach(this._slowHandles, handle => handle.initiate());
+    this._ready = false;
   }
 
   _incrementTries() {
