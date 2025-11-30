@@ -1334,9 +1334,11 @@
     }
 
     _clearReady() {
-      this._ready = false;
+      // Temporarily set ready to correctly reset previously triggered slow handles.
+      this._ready = true;
       this._startTimestamp = Date.now();
       ___default.default.forEach(this._slowHandles, handle => handle.initiate());
+      this._ready = false;
     }
 
     _incrementTries() {
@@ -3536,7 +3538,7 @@
   let bridge, logging;
   const workerFunctions = {};
   // This version is filled in by the build, don't reformat the line.
-  const VERSION = '7.6.2';
+  const VERSION = 'dev';
 
 
   class Truss {
