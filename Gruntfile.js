@@ -102,18 +102,6 @@ module.exports = function(grunt) {
       }
     },
 
-    release: {
-      options: {
-        afterBump: ['replace --release=<%= version %>'],
-        beforeRelease: ['default'],
-        afterRelease: ['exec:reset']
-      }
-    },
-
-    exec: {
-      reset: 'git reset --hard'
-    }
-
   });
 
   grunt.registerTask('default', [

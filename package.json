@@ -1,16 +1,14 @@
 {
   "name": "firetruss",
-  "version": "7.6.2",
+  "version": "7.6.3",
   "description": "Advanced data sync layer for Firebase and Vue.js",
   "scripts": {
-    "setup": "rm -rf node_modules; npm install;",
     "update": "yarn upgrade-interactive --latest",
-    "test": "ava --watch"
+    "build": "yarn run grunt",
+    "lint": "eslint src/**/*.js",
+    "test": "ava"
   },
-  "repository": {
-    "type": "git",
-    "url": "git@github.com:pkaminski/firetruss.git"
-  },
+  "repository": "https://github.com/Reviewable/firetruss",
   "keywords": [
     "firebase",
     "vuejs",
@@ -21,9 +19,9 @@
   "author": "Piotr Kaminski",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/pkaminski/firetruss/issues"
+    "url": "https://github.com/Reviewable/firetruss/issues"
   },
-  "homepage": "https://github.com/pkaminski/firetruss",
+  "homepage": "https://github.com/Reviewable/firetruss",
   "devDependencies": {
     "@babel/core": "^7.11.0",
     "@babel/preset-env": "^7.11.0",
@@ -38,15 +36,13 @@
     "grunt-contrib-uglify": "5",
     "grunt-contrib-watch": "^1.0.0",
     "grunt-eslint": "25.x",
-    "grunt-exec": "^3.0.0",
-    "grunt-git": "^1.0.1",
-    "grunt-release": "reviewable/grunt-release#master",
+    "grunt-git": "^1.1.1",
     "grunt-rollup": "^12.0.0",
     "grunt-text-replace": "^0.4.0",
     "load-grunt-tasks": "5",
     "reviewable-configs": "Reviewable/reviewable-configs",
     "rollup": "4.x",
-    "testdouble": "3"
+    "testdouble": "3.x"
   },
   "ava": {
     "files": [

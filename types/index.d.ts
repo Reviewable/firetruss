@@ -118,7 +118,7 @@ declare namespace Truss {
     readonly tries: number;
     readonly error: Error | undefined;
 
-    onSlow(delay: number, callback: (op: Operation) => void);
+    onSlow(delay: number, callback: (op: Operation) => void): void;
   }
 
 }
