@@ -1,12 +1,13 @@
 {
   "name": "firetruss",
-  "version": "7.6.3",
+  "version": "7.6.4",
   "description": "Advanced data sync layer for Firebase and Vue.js",
   "scripts": {
     "update": "yarn upgrade-interactive --latest",
     "build": "yarn run grunt",
     "lint": "eslint src/**/*.js",
-    "test": "ava"
+    "test": "ava",
+    "finalize": "yarn run grunt replace default --release=\"$(jq -r .version package.json)\""
   },
   "repository": "https://github.com/Reviewable/firetruss",
   "keywords": [
