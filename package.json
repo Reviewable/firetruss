@@ -1,6 +1,6 @@
 {
   "name": "firetruss",
-  "version": "7.6.4",
+  "version": "7.6.5",
   "description": "Advanced data sync layer for Firebase and Vue.js",
   "scripts": {
     "update": "yarn upgrade-interactive --latest",
