@@ -121,9 +121,6 @@ export default class Bridge {
       });
       const deferred = this._deferreds[message.id];
       deferred.promise = promise;
-      promise.sent = new Promise(resolve => {
-        deferred.resolveSent = resolve;
-      });
       deferred.params = message;
     }
     if (!this._outboundMessages.length && !this._suspended) {
@@ -135,10 +132,12 @@ export default class Bridge {
   }
 
   _flushMessageQueue() {
+    this._log('flush:', this._outboundMessages.length, 'messages');
     try {
       this._port.postMessage(this._outboundMessages);
       this._outboundMessages = [];
     } catch (e) {
+      this._log('flush failed:', e);
       e.extra = {messages: this._outboundMessages};
       throw e;
     }
