@@ -262,7 +262,7 @@ function makePathMatcher(pattern) {
   return matcher;
 }
 
-const MIN_WORKER_VERSION = '3.0.0';
+const MIN_WORKER_VERSION = '3.2.0';
 
 
 class Snapshot {
@@ -312,10 +312,9 @@ class Bridge {
     this._shared = !!webWorker.port;
     Object.seal(this);
     this._port.onmessage = this._receive.bind(this);
-    window.addEventListener('unload', () => {this._send({msg: 'destroy'});});
   }
 
-  init(webWorker, config) {
+  init(lockName, config) {
     const items = [];
     try {
       const storage = window.localStorage || window.sessionStorage;
@@ -327,7 +326,7 @@ class Bridge {
     } catch {
       // Some browsers don't like us accessing local storage -- nothing we can do.
     }
-    return this._send({msg: 'init', storage: items, config}).then(response => {
+    return this._send({msg: 'init', storage: items, config, lockName}).then(response => {
       const workerVersion = response.version.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
       if (workerVersion) {
         const minVersion = MIN_WORKER_VERSION.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
@@ -3753,10 +3752,12 @@ class Truss {
       const Worker = window.SharedWorker || window.Worker;
       if (!Worker) throw new Error('Browser does not implement Web Workers');
       webWorker = new Worker(webWorker);
+      webWorker.lockName = `truss_worker_lock_${Date.now()}.${Math.random()}`;
+      navigator.locks.request(webWorker.lockName, new Promise(_.noop));
     }
     bridge = new Bridge(webWorker);
     if (logging) bridge.enableLogging(logging);
-    return bridge.init(webWorker, config).then(
+    return bridge.init(webWorker.lockName, config).then(
       ({exposedFunctionNames, firebaseSdkVersion}) => {
         Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
         for (const name of exposedFunctionNames) Truss.preExpose(name);

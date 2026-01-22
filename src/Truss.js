@@ -242,10 +242,12 @@ export default class Truss {
       const Worker = window.SharedWorker || window.Worker;
       if (!Worker) throw new Error('Browser does not implement Web Workers');
       webWorker = new Worker(webWorker);
+      webWorker.lockName = `truss_worker_lock_${Date.now()}.${Math.random()}`;
+      navigator.locks.request(webWorker.lockName, new Promise(_.noop));
     }
     bridge = new Bridge(webWorker);
     if (logging) bridge.enableLogging(logging);
-    return bridge.init(webWorker, config).then(
+    return bridge.init(webWorker.lockName, config).then(
       ({exposedFunctionNames, firebaseSdkVersion}) => {
         Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
         for (const name of exposedFunctionNames) Truss.preExpose(name);
