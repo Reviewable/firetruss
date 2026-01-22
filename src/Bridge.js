@@ -1,7 +1,7 @@
 import {unescapeKey} from './utils/paths.js';
 import _ from 'lodash';
 
-const MIN_WORKER_VERSION = '3.0.0';
+const MIN_WORKER_VERSION = '4.0.0';
 
 
 class Snapshot {
@@ -51,10 +51,9 @@ export default class Bridge {
     this._shared = !!webWorker.port;
     Object.seal(this);
     this._port.onmessage = this._receive.bind(this);
-    window.addEventListener('unload', () => {this._send({msg: 'destroy'});});
   }
 
-  init(webWorker, config) {
+  init(lockName, config) {
     const items = [];
     try {
       const storage = window.localStorage || window.sessionStorage;
@@ -66,7 +65,7 @@ export default class Bridge {
     } catch {
       // Some browsers don't like us accessing local storage -- nothing we can do.
     }
-    return this._send({msg: 'init', storage: items, config}).then(response => {
+    return this._send({msg: 'init', storage: items, config, lockName}).then(response => {
       const workerVersion = response.version.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
       if (workerVersion) {
         const minVersion = MIN_WORKER_VERSION.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
