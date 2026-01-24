@@ -49,6 +49,7 @@ export default class Bridge {
     this._flushMessageQueue = this._flushMessageQueue.bind(this);
     this._port = webWorker.port || webWorker;
     this._shared = !!webWorker.port;
+    this._dead = false;
     Object.seal(this);
     this._port.onmessage = this._receive.bind(this);
   }
@@ -81,6 +82,11 @@ export default class Bridge {
           ));
         }
       }
+      if (response.livenessLockName) {
+        navigator.locks.request(response.livenessLockName, () => {
+          this.crash({error: {name: 'Error', message: 'worker terminated'}});
+        });
+      }
       return response;
     });
   }
@@ -112,7 +118,9 @@ export default class Bridge {
   _send(message) {
     message.id = ++this._idCounter;
     let promise;
-    if (message.oneWay) {
+    if (this._dead) {
+      return Promise.reject(this._dead);
+    } else if (message.oneWay) {
       promise = Promise.resolve();
     } else {
       promise = new Promise((resolve, reject) => {
@@ -182,7 +190,10 @@ export default class Bridge {
   crash(message) {
     let details = `Internal worker error: ${message.error.name}: ${message.error.message}`;
     if (message.error.cause) details += ` (caused by ${message.error.cause})`;
-    throw new Error(details);
+    this._dead = new Error(details);
+    _.forEach(this._deferreds, ({reject}) => {reject(this._dead);});
+    this._deferreds = {};
+    throw this._dead;
   }
 
   updateLocalStorage({items}) {
