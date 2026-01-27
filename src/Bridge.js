@@ -84,7 +84,9 @@ export default class Bridge {
       }
       if (response.livenessLockName) {
         navigator.locks.request(response.livenessLockName, () => {
-          this.crash({error: {name: 'Error', message: 'worker terminated'}});
+          this.crash({error: {
+            name: 'Error', message: 'worker terminated', extra: {shared: this._shared}
+          }});
         });
       }
       return response;
@@ -191,6 +193,7 @@ export default class Bridge {
     let details = `Internal worker error: ${message.error.name}: ${message.error.message}`;
     if (message.error.cause) details += ` (caused by ${message.error.cause})`;
     this._dead = new Error(details);
+    if (message.error.extra) this._dead.extra = message.error.extra;
     _.forEach(this._deferreds, ({reject}) => {reject(this._dead);});
     this._deferreds = {};
     throw this._dead;
