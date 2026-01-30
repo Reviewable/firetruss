@@ -236,7 +236,7 @@ export default class Truss {
     return stats;
   }
 
-  static connectWorker(webWorker, config) {
+  static async connectWorker(webWorker, config) {
     if (bridge) throw new Error('Worker already connected');
     if (_.isString(webWorker)) {
       const Worker = window.SharedWorker || window.Worker;
@@ -245,16 +245,21 @@ export default class Truss {
       webWorker = new Worker(webWorker);
       const random = window.crypto.getRandomValues(new Uint32Array(1))[0];
       webWorker.lockName = `truss_worker_lock_${Date.now()}.${random}`;
-      navigator.locks.request(webWorker.lockName, () => new Promise(_.noop));
+      let resolveLockReady;
+      const lockReady = new Promise(resolve => {resolveLockReady = resolve;});
+      navigator.locks.request(webWorker.lockName, () => {
+        resolveLockReady();
+        // eslint-disable-next-line lodash/prefer-noop
+        return new Promise(() => {/* release lock only on page exit or crash */});
+      });
+      await lockReady;
     }
     bridge = new Bridge(webWorker);
     if (logging) bridge.enableLogging(logging);
-    return bridge.init(webWorker.lockName, config).then(
-      ({exposedFunctionNames, firebaseSdkVersion}) => {
-        Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
-        for (const name of exposedFunctionNames) Truss.preExpose(name);
-      }
-    );
+    const {exposedFunctionNames, firebaseSdkVersion} =
+      await bridge.init(webWorker.lockName, config);
+    Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
+    for (const name of exposedFunctionNames) Truss.preExpose(name);
   }
 
   static get worker() {return workerFunctions;}
