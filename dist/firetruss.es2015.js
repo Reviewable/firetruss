@@ -345,7 +345,9 @@ class Bridge {
       }
       if (response.livenessLockName) {
         navigator.locks.request(response.livenessLockName, () => {
-          this.crash({error: {name: 'Error', message: 'worker terminated'}});
+          this.crash({error: {
+            name: 'Error', message: 'worker terminated', extra: {shared: this._shared}
+          }});
         });
       }
       return response;
@@ -452,6 +454,7 @@ class Bridge {
     let details = `Internal worker error: ${message.error.name}: ${message.error.message}`;
     if (message.error.cause) details += ` (caused by ${message.error.cause})`;
     this._dead = new Error(details);
+    if (message.error.extra) this._dead.extra = message.error.extra;
     _.forEach(this._deferreds, ({reject}) => {reject(this._dead);});
     this._deferreds = {};
     throw this._dead;
@@ -3757,7 +3760,7 @@ class Truss {
     return stats;
   }
 
-  static connectWorker(webWorker, config) {
+  static async connectWorker(webWorker, config) {
     if (bridge) throw new Error('Worker already connected');
     if (_.isString(webWorker)) {
       const Worker = window.SharedWorker || window.Worker;
@@ -3766,16 +3769,20 @@ class Truss {
       webWorker = new Worker(webWorker);
       const random = window.crypto.getRandomValues(new Uint32Array(1))[0];
       webWorker.lockName = `truss_worker_lock_${Date.now()}.${random}`;
-      navigator.locks.request(webWorker.lockName, () => new Promise(_.noop));
+      await new Promise((resolve, reject) => {
+        navigator.locks.request(webWorker.lockName, () => {
+          resolve();
+          // eslint-disable-next-line lodash/prefer-noop
+          return new Promise(() => {/* release lock only on page exit or crash */});
+        }).catch(reject);
+      });
     }
     bridge = new Bridge(webWorker);
     if (logging) bridge.enableLogging(logging);
-    return bridge.init(webWorker.lockName, config).then(
-      ({exposedFunctionNames, firebaseSdkVersion}) => {
-        Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
-        for (const name of exposedFunctionNames) Truss.preExpose(name);
-      }
-    );
+    const {exposedFunctionNames, firebaseSdkVersion} =
+      await bridge.init(webWorker.lockName, config);
+    Object.defineProperty(Truss, 'FIREBASE_SDK_VERSION', {value: firebaseSdkVersion});
+    for (const name of exposedFunctionNames) Truss.preExpose(name);
   }
 
   static get worker() {return workerFunctions;}
