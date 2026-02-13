@@ -631,7 +631,7 @@ export default class Modeler {
       .value();
 
     for (const {key, value, descriptor, computed} of targetProperties) {
-      if (!(_.isArray(object) && (/\d+/.test(key) || key === 'length'))) {
+      if (!(_.isArray(object) && (/^\d+$/.test(key) || key === 'length'))) {
         if ('value' in descriptor || !descriptor.get) {
           throw new Error(
             `Value at ${path}, contained in a Firetruss object, has a rogue property: ${key}`);
