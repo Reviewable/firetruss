@@ -153,6 +153,7 @@ export default class Bridge {
   }
 
   _receive(event) {
+    if (this._dead) return;
     if (this._suspended) {
       this._inboundMessages = this._inboundMessages.concat(event.data);
     } else {
