@@ -3,7 +3,9 @@
   "version": "7.8.4",
   "description": "Advanced data sync layer for Firebase and Vue.js",
   "scripts": {
-    "update": "yarn upgrade-interactive --latest",
+    "update": "yarn up -R '*' && yarn dedupe --strategy highest",
+    "latest": "yarn npm-check-updates -i -m --packageManager yarn --install never && yarn install",
+    "upgrade": "reviewable-upgrade",
     "build": "yarn run grunt",
     "lint": "eslint src/**/*.js",
     "test": "ava",
@@ -41,6 +43,7 @@
     "grunt-rollup": "^12.0.0",
     "grunt-text-replace": "^0.4.0",
     "load-grunt-tasks": "5",
+    "npm-check-updates": "^20.0.0",
     "reviewable-configs": "Reviewable/reviewable-configs",
     "rollup": "4.x",
     "testdouble": "3.x"
@@ -65,5 +68,5 @@
     "lodash": "4",
     "vue": "^2.1.6"
   },
-  "packageManager": "yarn@1.22.22"
+  "packageManager": "yarn@4.13.0"
 }
