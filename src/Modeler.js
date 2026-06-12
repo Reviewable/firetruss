@@ -448,8 +448,12 @@ export default class Modeler {
   _wrapProperties(object) {
     _.forEach(object, (value, key) => {
       const valueKey = '$_' + key;
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      const valueDescriptor = descriptor.get && descriptor.set ? {
+        get: descriptor.get, set: descriptor.set, configurable: true
+      } : {value, writable: true};
       Object.defineProperties(object, {
-        [valueKey]: {value, writable: true},
+        [valueKey]: valueDescriptor,
         [key]: {
           get: () => object[valueKey],
           set: arg => {object[valueKey] = arg; angular.digest();},
@@ -571,7 +575,6 @@ export default class Modeler {
   }
 
   isLocal(path, value) {
-    // eslint-disable-next-line no-shadow
     const mount = this._getMount(path, false, mount => mount.local);
     if (mount && mount.local) return true;
     if (this._hasLocalProperties(mount, value)) {

@@ -414,6 +414,7 @@ class Bridge {
   }
 
   _receive(event) {
+    if (this._dead) return;
     if (this._suspended) {
       this._inboundMessages = this._inboundMessages.concat(event.data);
     } else {
@@ -2094,8 +2095,12 @@ class Modeler {
   _wrapProperties(object) {
     _.forEach(object, (value, key) => {
       const valueKey = '$_' + key;
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      const valueDescriptor = descriptor.get && descriptor.set ? {
+        get: descriptor.get, set: descriptor.set, configurable: true
+      } : {value, writable: true};
       Object.defineProperties(object, {
-        [valueKey]: {value, writable: true},
+        [valueKey]: valueDescriptor,
         [key]: {
           get: () => object[valueKey],
           set: arg => {object[valueKey] = arg; angularProxy.digest();},
@@ -2217,7 +2222,6 @@ class Modeler {
   }
 
   isLocal(path, value) {
-    // eslint-disable-next-line no-shadow
     const mount = this._getMount(path, false, mount => mount.local);
     if (mount && mount.local) return true;
     if (this._hasLocalProperties(mount, value)) {
@@ -3148,8 +3152,23 @@ class Tree {
 
     const object = this._modeler.createObject(path, properties);
     this._modeler.emitLifecycleHook(object, 'beforeCreate');
-    Object.defineProperties(object, properties);
+    this._defineObjectProperties(object, properties);
     return object;
+  }
+
+  _defineObjectProperties(object, properties) {
+    const observer = object.__ob__;
+    Object.defineProperties(object, properties);
+    if (!observer) return;
+
+    let addedReactiveProperties = false;
+    for (const name of _.keys(properties)) {
+      const descriptor = Object.getOwnPropertyDescriptor(object, name);
+      if (!descriptor.configurable || !descriptor.enumerable) continue;
+      Vue.util.defineReactive(object, name);
+      addedReactiveProperties = true;
+    }
+    if (addedReactiveProperties) observer.dep.notify();
   }
 
   // To be called on the result of _createObject after it's been inserted into the _vue hierarchy

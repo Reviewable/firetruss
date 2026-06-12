@@ -338,8 +338,23 @@ export default class Tree {
 
     const object = this._modeler.createObject(path, properties);
     this._modeler.emitLifecycleHook(object, 'beforeCreate');
-    Object.defineProperties(object, properties);
+    this._defineObjectProperties(object, properties);
     return object;
+  }
+
+  _defineObjectProperties(object, properties) {
+    const observer = object.__ob__;
+    Object.defineProperties(object, properties);
+    if (!observer) return;
+
+    let addedReactiveProperties = false;
+    for (const key of _.keys(properties)) {
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      if (!descriptor.configurable || !descriptor.enumerable) continue;
+      Vue.util.defineReactive(object, key);
+      addedReactiveProperties = true;
+    }
+    if (addedReactiveProperties) observer.dep.notify();
   }
 
   // To be called on the result of _createObject after it's been inserted into the _vue hierarchy
@@ -728,4 +743,3 @@ export function toFirebaseJson(object) {
   }
   return result;
 }
-
