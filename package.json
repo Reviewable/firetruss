@@ -7,7 +7,7 @@
     "latest": "yarn npm-check-updates -i -m --packageManager yarn --install never && yarn install",
     "upgrade": "reviewable-upgrade",
     "build": "yarn run grunt",
-    "lint": "eslint src/**/*.js",
+    "lint": "yarn grunt eslint",
     "test": "ava",
     "finalize": "yarn run grunt replace default --release=\"$(jq -r .version package.json)\""
   },
