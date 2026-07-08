@@ -58,6 +58,21 @@ class SubrootFoo {
   static get $trussMount() {return '/sub/foo';}
 }
 
+let earlyObserver;
+
+class EarlyObservedRoot {
+  static get $trussMount() {return '/';}
+
+  constructor() {
+    earlyObserver = new Vue({data: {scope: this}});
+    Vue.set(this, 'source', undefined);
+  }
+
+  get derived() {
+    return this.source;
+  }
+}
+
 test.beforeEach(t => {
   t.context = {
     rootUrl: 'https://example.firebaseio.com',
@@ -72,6 +87,10 @@ test.beforeEach(t => {
 
 test.afterEach(t => {
   t.context.tree.destroy();
+  if (earlyObserver) {
+    earlyObserver.$destroy();
+    earlyObserver = null;
+  }
 });
 
 test('initialize placeholders', t => {
@@ -108,5 +127,50 @@ test('computing non-primitive values', t => {
   return Promise.resolve().then(() => {
     t.is(tree.root.derived, 4);
     tree.checkVueObject(tree.root, '/');
+  });
+});
+
+test('wrapping observed properties preserves missing child dependencies', t => {
+  const tree = t.context.tree;
+  const context = {};
+  const navigation = {context};
+  const vue = new Vue({data: {navigation}});
+
+  tree._modeler._wrapProperties(navigation);
+  t.true(Object.hasOwn(navigation, '$_context'));
+
+  let review;
+  const unwatch = vue.$watch(() => navigation.context.review, value => {
+    review = value;
+  }, {immediate: true});
+  t.is(review, undefined);
+
+  Vue.set(context, 'review', {ready: true});
+  return Vue.nextTick().then(() => {
+    t.deepEqual(review, {ready: true});
+    unwatch();
+    vue.$destroy();
+  });
+});
+
+test('computed properties added after observation remain reactive', t => {
+  const tree = new Tree(
+    t.context.truss, t.context.rootUrl, t.context.bridge, t.context.dispatcher);
+  tree.init([EarlyObservedRoot]);
+  const root = tree.root;
+
+  let observed;
+  const unwatch = tree._vue.$watch(() => {
+    root.$$touchThis();
+    return root.derived && root.derived.child;
+  }, value => {
+    observed = value;
+  }, {immediate: true});
+
+  Vue.set(root, 'source', {child: 1});
+  return Vue.nextTick().then(() => {
+    t.is(observed, 1);
+    unwatch();
+    tree.destroy();
   });
 });
