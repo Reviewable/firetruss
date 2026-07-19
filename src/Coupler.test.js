@@ -1,244 +1,282 @@
-import test from 'ava';
-import td from 'testdouble';
+import {afterEach, beforeEach, mock, test} from 'node:test';
+import assert from 'node:assert/strict';
 import _ from 'lodash';
 
 import Coupler from './Coupler.js';
-import Bridge from './Bridge.js';
-import Dispatcher from './Dispatcher.js';
 
-td.verifyNoCalls = call => td.verify(call, {times: 0, ignoreExtraArgs: true});
+let context;
 
-test.beforeEach(t => {
-  t.context = {
+function countCalls(fn, matcher = _.constant(true)) {
+  return _.filter(fn.mock.calls, call => matcher(call.arguments)).length;
+}
+
+function assertCallCount(fn, matcher, times) {
+  assert.equal(countCalls(fn, matcher), times);
+}
+
+function isOnCall(url, args) {
+  const [
+    eventUrl, listenUrl, constraints, eventType, snapshotCallback, errorCallback, , options
+  ] = args;
+  return args.length === 8 &&
+    _.isEqual([eventUrl, listenUrl, constraints, eventType], [url, url, null, 'value']) &&
+    _.isFunction(snapshotCallback) &&
+    _.isFunction(errorCallback) &&
+    _.isEqual(options, {sync: true});
+}
+
+function isOffCall(url, args) {
+  const [eventUrl, listenUrl, constraints, eventType, snapshotCallback] = args;
+  return args.length === 6 &&
+    _.isEqual([eventUrl, listenUrl, constraints, eventType], [url, url, null, 'value']) &&
+    _.isFunction(snapshotCallback);
+}
+
+function assertNoCalls(fn) {
+  assert.equal(fn.mock.calls.length, 0);
+}
+
+function assertSnapshotApplied(path, times) {
+  assertCallCount(context.applySnapshot, args => args[0] && args[0].path === path, times);
+}
+
+beforeEach(() => {
+  context = {
     rootUrl: 'https://example.firebaseio.com',
-    bridge: td.instance(Bridge),
-    dispatcher: td.instance(Dispatcher),
-    applySnapshot: td.function(),
-    prunePath: td.function()
+    bridge: {on: mock.fn(), off: mock.fn()},
+    dispatcher: {clearReady: mock.fn(), markReady: mock.fn(), retry: mock.fn()},
+    applySnapshot: mock.fn(),
+    prunePath: mock.fn()
   };
-  t.context.coupler = new Coupler(
-    t.context.rootUrl, t.context.bridge, t.context.dispatcher, t.context.applySnapshot,
-    t.context.prunePath
+  context.coupler = new Coupler(
+    context.rootUrl, context.bridge, context.dispatcher, context.applySnapshot,
+    context.prunePath
   );
-  t.context.op1 = td.object({_disconnect: _.noop});
-  t.context.op2 = td.object({});
-  t.context.op3 = td.object({});
-  t.context.verifyOn = (url, times = 1) => td.verify(t.context.bridge.on(
-    url, url, null, 'value', td.matchers.isA(Function), td.matchers.isA(Function),
-    td.matchers.anything(), {sync: true}
-  ), {times});
-  t.context.verifyOff = (url, times = 1) => td.verify(t.context.bridge.off(
-    url, url, null, 'value', td.matchers.isA(Function), td.matchers.anything()
-  ), {times});
+  context.op1 = {_disconnect: mock.fn()};
+  context.op2 = {};
+  context.op3 = {};
+  context.verifyOn = (url, times = 1) => {
+    assertCallCount(context.bridge.on, args => isOnCall(url, args), times);
+  };
+  context.verifyOff = (url, times = 1) => {
+    assertCallCount(context.bridge.off, args => isOffCall(url, args), times);
+  };
 });
 
-test.afterEach(t => {
-  t.context.coupler.destroy();
+afterEach(() => {
+  context.coupler.destroy();
+  mock.reset();
+  context = undefined;
 });
 
-test('couple, decouple on root node', t => {
-  const that = t.context.coupler;
-  const url = t.context.rootUrl + '/';
-  t.false(that.isTrunkCoupled('/'));
+test('couple, decouple on root node', () => {
+  const that = context.coupler;
+  const url = context.rootUrl + '/';
+  assert.equal(that.isTrunkCoupled('/'), false);
 
-  that.couple('/', t.context.op1);
-  t.is(that._root.count, 1);
-  t.deepEqual(that._root.operations, [t.context.op1]);
-  t.true(that._root.listening);
-  t.true(that.isTrunkCoupled('/'));
-  t.context.verifyOn(url);
-  td.verifyNoCalls(t.context.bridge.off());
+  that.couple('/', context.op1);
+  assert.equal(that._root.count, 1);
+  assert.deepEqual(that._root.operations, [context.op1]);
+  assert.equal(that._root.listening, true);
+  assert.equal(that.isTrunkCoupled('/'), true);
+  context.verifyOn(url);
+  assertNoCalls(context.bridge.off);
 
-  that.decouple('/', t.context.op1);
-  t.is(that._root.count, 0);
-  t.deepEqual(that._root.operations, []);
-  t.false(that._root.listening);
-  t.false(that.isTrunkCoupled('/'));
-  t.context.verifyOn(url);
-  t.context.verifyOff(url);
+  that.decouple('/', context.op1);
+  assert.equal(that._root.count, 0);
+  assert.deepEqual(that._root.operations, []);
+  assert.equal(that._root.listening, false);
+  assert.equal(that.isTrunkCoupled('/'), false);
+  context.verifyOn(url);
+  context.verifyOff(url);
 });
 
-test('couple, decouple, on root child', t => {
-  const that = t.context.coupler;
-  const url = t.context.rootUrl + '/foo';
-  t.false(that.isTrunkCoupled('/foo'));
+test('couple, decouple, on root child', () => {
+  const that = context.coupler;
+  const url = context.rootUrl + '/foo';
+  assert.equal(that.isTrunkCoupled('/foo'), false);
 
-  that.couple('/foo', t.context.op1);
-  t.is(that._root.children.foo.count, 1);
-  t.true(that._root.children.foo.listening);
-  t.true(that.isTrunkCoupled('/foo'));
-  t.context.verifyOn(url);
-  td.verifyNoCalls(t.context.bridge.off());
+  that.couple('/foo', context.op1);
+  assert.equal(that._root.children.foo.count, 1);
+  assert.equal(that._root.children.foo.listening, true);
+  assert.equal(that.isTrunkCoupled('/foo'), true);
+  context.verifyOn(url);
+  assertNoCalls(context.bridge.off);
 
-  that.decouple('/foo', t.context.op1);
-  t.true(_.isEmpty(that._root.children));
-  t.false(that.isTrunkCoupled('/foo'));
-  t.context.verifyOn(url);
-  t.context.verifyOff(url);
+  that.decouple('/foo', context.op1);
+  assert.ok(_.isEmpty(that._root.children));
+  assert.equal(that.isTrunkCoupled('/foo'), false);
+  context.verifyOn(url);
+  context.verifyOff(url);
 });
 
-test('couple, decouple, on root descendant', t => {
-  const that = t.context.coupler;
-  const url = t.context.rootUrl + '/foo/bar';
-  t.false(that.isTrunkCoupled('/foo/bar'));
+test('couple, decouple, on root descendant', () => {
+  const that = context.coupler;
+  const url = context.rootUrl + '/foo/bar';
+  assert.equal(that.isTrunkCoupled('/foo/bar'), false);
 
-  that.couple('/foo/bar', t.context.op1);
-  t.is(that._root.children.foo.children.bar.count, 1);
-  t.true(that._root.children.foo.children.bar.listening);
-  t.true(that.isTrunkCoupled('/foo/bar'));
-  t.context.verifyOn(url);
-  td.verifyNoCalls(t.context.bridge.off());
+  that.couple('/foo/bar', context.op1);
+  assert.equal(that._root.children.foo.children.bar.count, 1);
+  assert.equal(that._root.children.foo.children.bar.listening, true);
+  assert.equal(that.isTrunkCoupled('/foo/bar'), true);
+  context.verifyOn(url);
+  assertNoCalls(context.bridge.off);
 
-  that.decouple('/foo/bar', t.context.op1);
-  t.true(_.isEmpty(that._root.children));
-  t.false(that.isTrunkCoupled('/foo/bar'));
-  t.context.verifyOn(url);
-  t.context.verifyOff(url);
+  that.decouple('/foo/bar', context.op1);
+  assert.ok(_.isEmpty(that._root.children));
+  assert.equal(that.isTrunkCoupled('/foo/bar'), false);
+  context.verifyOn(url);
+  context.verifyOff(url);
 });
 
-test('multiple coupler on same node', t => {
-  const that = t.context.coupler;
-  const url = t.context.rootUrl + '/foo';
+test('multiple coupler on same node', () => {
+  const that = context.coupler;
+  const url = context.rootUrl + '/foo';
 
-  that.couple('/foo', t.context.op1);
-  that.couple('/foo', t.context.op2);
-  t.is(that._root.children.foo.count, 2);
-  t.deepEqual(that._root.children.foo.operations, [t.context.op1, t.context.op2]);
-  t.true(that._root.children.foo.listening);
-  t.true(that.isTrunkCoupled('/foo'));
-  t.context.verifyOn(url);
-  td.verifyNoCalls(t.context.bridge.off());
+  that.couple('/foo', context.op1);
+  that.couple('/foo', context.op2);
+  assert.equal(that._root.children.foo.count, 2);
+  assert.deepEqual(that._root.children.foo.operations, [context.op1, context.op2]);
+  assert.equal(that._root.children.foo.listening, true);
+  assert.equal(that.isTrunkCoupled('/foo'), true);
+  context.verifyOn(url);
+  assertNoCalls(context.bridge.off);
 
-  that.decouple('/foo', t.context.op1);
-  t.is(that._root.children.foo.count, 1);
-  t.deepEqual(that._root.children.foo.operations, [t.context.op2]);
-  t.true(that._root.children.foo.listening);
-  t.true(that.isTrunkCoupled('/foo'));
-  t.context.verifyOn(url);
-  td.verifyNoCalls(t.context.bridge.off());
+  that.decouple('/foo', context.op1);
+  assert.equal(that._root.children.foo.count, 1);
+  assert.deepEqual(that._root.children.foo.operations, [context.op2]);
+  assert.equal(that._root.children.foo.listening, true);
+  assert.equal(that.isTrunkCoupled('/foo'), true);
+  context.verifyOn(url);
+  assertNoCalls(context.bridge.off);
 });
 
-test('override child coupling', t => {
-  const that = t.context.coupler;
-  const rootUrl = t.context.rootUrl;
+test('override child coupling', () => {
+  const that = context.coupler;
+  const rootUrl = context.rootUrl;
 
-  that.couple('/foo/bar', t.context.op1);
-  that.couple('/foo', t.context.op2);
-  t.is(that._root.children.foo.count, 1);
-  t.true(that._root.children.foo.listening);
-  t.true(that.isTrunkCoupled('/foo'));
-  t.is(that._root.children.foo.children.bar.count, 1);
-  t.true(that._root.children.foo.children.bar.listening);
-  t.true(that.isTrunkCoupled('/foo/bar'));
-  t.context.verifyOn(rootUrl + '/foo/bar');
-  t.context.verifyOn(rootUrl + '/foo');
+  that.couple('/foo/bar', context.op1);
+  that.couple('/foo', context.op2);
+  assert.equal(that._root.children.foo.count, 1);
+  assert.equal(that._root.children.foo.listening, true);
+  assert.equal(that.isTrunkCoupled('/foo'), true);
+  assert.equal(that._root.children.foo.children.bar.count, 1);
+  assert.equal(that._root.children.foo.children.bar.listening, true);
+  assert.equal(that.isTrunkCoupled('/foo/bar'), true);
+  context.verifyOn(rootUrl + '/foo/bar');
+  context.verifyOn(rootUrl + '/foo');
 
-  that._root.children.foo._handleSnapshot(td.object({path: '/foo'}));
-  t.false(that._root.children.foo.children.bar.listening);
-  t.context.verifyOff(rootUrl + '/foo/bar');
+  that._root.children.foo._handleSnapshot({path: '/foo'});
+  assert.equal(that._root.children.foo.children.bar.listening, false);
+  context.verifyOff(rootUrl + '/foo/bar');
 
-  that.decouple('/foo', t.context.op2);
-  t.is(that._root.children.foo.count, 0);
-  t.false(that._root.children.foo.listening);
-  t.false(that.isTrunkCoupled('/foo'));
-  t.is(that._root.children.foo.children.bar.count, 1);
-  t.true(that._root.children.foo.children.bar.listening);
-  t.true(that.isTrunkCoupled('/foo/bar'));
-  t.context.verifyOn(rootUrl + '/foo/bar', 2);
-  t.context.verifyOn(rootUrl + '/foo');
-  t.context.verifyOff(rootUrl + '/foo/bar');
-  t.context.verifyOff(rootUrl + '/foo');
+  that.decouple('/foo', context.op2);
+  assert.equal(that._root.children.foo.count, 0);
+  assert.equal(that._root.children.foo.listening, false);
+  assert.equal(that.isTrunkCoupled('/foo'), false);
+  assert.equal(that._root.children.foo.children.bar.count, 1);
+  assert.equal(that._root.children.foo.children.bar.listening, true);
+  assert.equal(that.isTrunkCoupled('/foo/bar'), true);
+  context.verifyOn(rootUrl + '/foo/bar', 2);
+  context.verifyOn(rootUrl + '/foo');
+  context.verifyOff(rootUrl + '/foo/bar');
+  context.verifyOff(rootUrl + '/foo');
 });
 
-test('superseded coupling', t => {
-  const that = t.context.coupler;
-  const rootUrl = t.context.rootUrl;
+test('superseded coupling', () => {
+  const that = context.coupler;
+  const rootUrl = context.rootUrl;
 
-  that.couple('/foo', t.context.op1);
-  that.couple('/foo/bar', t.context.op2);
-  t.is(that._root.children.foo.count, 1);
-  t.true(that._root.children.foo.listening);
-  t.true(that.isTrunkCoupled('/foo'));
-  t.is(that._root.children.foo.children.bar.count, 1);
-  t.falsy(that._root.children.foo.children.bar.listening);
-  t.true(that.isTrunkCoupled('/foo/bar'));
-  t.context.verifyOn(rootUrl + '/foo');
-  t.context.verifyOff(rootUrl + '/foo', 0);
-  t.context.verifyOn(rootUrl + '/foo/bar', 0);
-  t.context.verifyOff(rootUrl + '/foo/bar', 0);
+  that.couple('/foo', context.op1);
+  that.couple('/foo/bar', context.op2);
+  assert.equal(that._root.children.foo.count, 1);
+  assert.equal(that._root.children.foo.listening, true);
+  assert.equal(that.isTrunkCoupled('/foo'), true);
+  assert.equal(that._root.children.foo.children.bar.count, 1);
+  assert.ok(!that._root.children.foo.children.bar.listening);
+  assert.equal(that.isTrunkCoupled('/foo/bar'), true);
+  context.verifyOn(rootUrl + '/foo');
+  context.verifyOff(rootUrl + '/foo', 0);
+  context.verifyOn(rootUrl + '/foo/bar', 0);
+  context.verifyOff(rootUrl + '/foo/bar', 0);
 });
 
-test('uncoupled parents with coupled children are not deleted', t => {
-  const that = t.context.coupler;
+test('uncoupled parents with coupled children are not deleted', () => {
+  const that = context.coupler;
 
-  that.couple('/foo', t.context.op1);
-  that.couple('/foo/bar', t.context.op2);
-  that.couple('/foo/baz', t.context.op3);
-  that.decouple('/foo/bar', t.context.op2);
-  t.is(that._root.children.foo.children.baz.count, 1);
+  that.couple('/foo', context.op1);
+  that.couple('/foo/bar', context.op2);
+  that.couple('/foo/baz', context.op3);
+  that.decouple('/foo/bar', context.op2);
+  assert.equal(that._root.children.foo.children.baz.count, 1);
 });
 
-test('handle snapshot', t => {
-  const that = t.context.coupler;
+test('handle snapshot', () => {
+  const that = context.coupler;
 
-  that.couple('/foo/bar', t.context.op1);
+  that.couple('/foo/bar', context.op1);
   const node = that._root.children.foo.children.bar;
-  t.falsy(node.ready);
+  assert.ok(!node.ready);
   node._handleSnapshot({path: '/foo/bar'});
-  t.true(node.ready);
+  assert.equal(node.ready, true);
   node._handleSnapshot({path: '/foo/bar/baz'});
   node._handleSnapshot({path: '/foo'});
 
-  td.verify(t.context.applySnapshot({path: '/foo/bar'}), {times: 1});
-  td.verify(t.context.applySnapshot({path: '/foo/bar/baz'}), {times: 1});
-  td.verify(t.context.applySnapshot({path: '/foo'}), {times: 0});
+  assertSnapshotApplied('/foo/bar', 1);
+  assertSnapshotApplied('/foo/bar/baz', 1);
+  assertSnapshotApplied('/foo', 0);
 });
 
-test('handle error', t => {
-  const that = t.context.coupler;
+test('handle error', async () => {
+  const that = context.coupler;
   const error = new Error('test');
 
-  that.couple('/foo/bar', t.context.op1);
-  that.couple('/foo/bar/baz', t.context.op2);
+  that.couple('/foo/bar', context.op1);
+  that.couple('/foo/bar/baz', context.op2);
   const bar = that._root.children.foo.children.bar;
   const baz = bar.children.baz;
 
-  t.is(bar.count, 1);
-  t.true(bar.listening);
-  t.is(baz.count, 1);
-  t.falsy(baz.listening);
+  assert.equal(bar.count, 1);
+  assert.equal(bar.listening, true);
+  assert.equal(baz.count, 1);
+  assert.ok(!baz.listening);
 
   bar._handleSnapshot({path: '/foo/bar'});
-  t.true(bar.ready);
+  assert.equal(bar.ready, true);
 
   baz._handleError(error);  // ignored, not listening to baz
 
-  t.is(bar.count, 1);
-  t.true(bar.listening);
-  t.is(baz.count, 1);
-  t.falsy(baz.listening);
+  assert.equal(bar.count, 1);
+  assert.equal(bar.listening, true);
+  assert.equal(baz.count, 1);
+  assert.ok(!baz.listening);
 
-  td.when(t.context.dispatcher.retry(t.context.op1, error), {times: 1}).thenResolve(true);
+  context.dispatcher.retry.mock.mockImplementationOnce(() => Promise.resolve(true));
   const handlerPromise = bar._handleError(error);
-  t.false(bar.ready);
-  t.false(baz.ready);
-  t.false(bar.listening);
+  assert.equal(bar.ready, false);
+  assert.equal(baz.ready, false);
+  assert.equal(bar.listening, false);
 
-  return handlerPromise.then(() => {
-    t.true(bar.listening);
-    bar._handleSnapshot({path: '/foo/bar'});
-    t.true(bar.ready);
+  await handlerPromise;
+  assert.equal(countCalls(
+    context.dispatcher.retry, args => args[0] === context.op1 && args[1] === error
+  ), 1);
+  assert.equal(bar.listening, true);
+  bar._handleSnapshot({path: '/foo/bar'});
+  assert.equal(bar.ready, true);
 
-    td.when(t.context.dispatcher.retry(t.context.op1, error), {times: 1}).thenResolve(false);
-    td.when(t.context.op1._disconnect(error), {times: 1}).thenDo(() => {
-      that.decouple('/foo/bar', t.context.op1);
-    });
-    return bar._handleError(error);
-
-  }).then(() => {
-    t.false(bar.listening);
-    t.is(bar.count, 0);
-    t.true(baz.listening);
-    t.is(baz.count, 1);
+  context.dispatcher.retry.mock.mockImplementationOnce(() => Promise.resolve(false));
+  context.op1._disconnect.mock.mockImplementationOnce(() => {
+    that.decouple('/foo/bar', context.op1);
   });
+  await bar._handleError(error);
+
+  assert.equal(countCalls(
+    context.dispatcher.retry, args => args[0] === context.op1 && args[1] === error
+  ), 2);
+  assert.equal(countCalls(context.op1._disconnect, args => args[0] === error), 1);
+  assert.equal(bar.listening, false);
+  assert.equal(bar.count, 0);
+  assert.equal(baz.listening, true);
+  assert.equal(baz.count, 1);
 });

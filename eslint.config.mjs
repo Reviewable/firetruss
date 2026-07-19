@@ -16,12 +16,6 @@ export default [
     }
   },
   {
-    files: ['src/**/*.test.js'],
-    rules: {
-      'import/no-unresolved': ['error', {ignore: ['^ava$']}]
-    }
-  },
-  {
     files: ['Gruntfile.js'],
     languageOptions: {
       sourceType: 'commonjs'

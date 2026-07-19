@@ -1,10 +1,8 @@
-import test from 'ava';
-import td from 'testdouble';
+import {afterEach, beforeEach, mock, test} from 'node:test';
+import assert from 'node:assert/strict';
 import Vue from 'vue';
 
 import Tree from './Tree.js';
-import Bridge from './Bridge.js';
-import Dispatcher from './Dispatcher.js';
 
 /* eslint-disable lodash/prefer-constant */
 
@@ -59,6 +57,7 @@ class SubrootFoo {
 }
 
 let earlyObserver;
+let context;
 
 class EarlyObservedRoot {
   static get $trussMount() {return '/';}
@@ -73,89 +72,87 @@ class EarlyObservedRoot {
   }
 }
 
-test.beforeEach(t => {
-  t.context = {
+beforeEach(() => {
+  context = {
     rootUrl: 'https://example.firebaseio.com',
-    bridge: td.instance(Bridge),
-    dispatcher: td.instance(Dispatcher),
-    truss: {get root() {return t.context.tree.root;}}
+    bridge: {on: mock.fn(), off: mock.fn()},
+    dispatcher: {clearReady: mock.fn(), markReady: mock.fn(), retry: mock.fn()},
+    truss: {get root() {return context.tree.root;}}
   };
-  t.context.tree = new Tree(
-    t.context.truss, t.context.rootUrl, t.context.bridge, t.context.dispatcher);
-  t.context.tree.init([Root, SubrootFoo, Subroot]);
+  context.tree = new Tree(
+    context.truss, context.rootUrl, context.bridge, context.dispatcher);
+  context.tree.init([Root, SubrootFoo, Subroot]);
 });
 
-test.afterEach(t => {
-  t.context.tree.destroy();
+afterEach(() => {
+  context.tree.destroy();
   if (earlyObserver) {
     earlyObserver.$destroy();
     earlyObserver = null;
   }
+  mock.reset();
+  context = undefined;
 });
 
-test('initialize placeholders', t => {
-  const tree = t.context.tree;
-  t.is(tree.root.constructor, Root);
-  t.is(tree.root.sub.constructor, Subroot);
-  t.is(tree.root.sub.foo.constructor, SubrootFoo);
+test('initialize placeholders', () => {
+  const tree = context.tree;
+  assert.equal(tree.root.constructor, Root);
+  assert.equal(tree.root.sub.constructor, Subroot);
+  assert.equal(tree.root.sub.foo.constructor, SubrootFoo);
 });
 
-test('update after instance property change', t => {
-  const tree = t.context.tree;
+test('update after instance property change', async () => {
+  const tree = context.tree;
   tree.root.x = 2;
-  return Promise.resolve().then(() => {
-    t.is(tree.root.y, 3);
-    t.is(tree.root.sub.y, 4);
-    t.is(tree.root.v, 14);
-  });
+  await Promise.resolve();
+  assert.equal(tree.root.y, 3);
+  assert.equal(tree.root.sub.y, 4);
+  assert.equal(tree.root.v, 14);
 });
 
-test('update after new instance property created', t => {
-  const tree = t.context.tree;
+test('update after new instance property created', async () => {
+  const tree = context.tree;
   tree.root.makeA();
-  return Promise.resolve().then(() => {
-    t.is(tree.root.z, 3);
-    t.is(tree.root.sub.z, 4);
-    t.is(tree.root.w, 14);
-  });
+  await Promise.resolve();
+  assert.equal(tree.root.z, 3);
+  assert.equal(tree.root.sub.z, 4);
+  assert.equal(tree.root.w, 14);
 });
 
-test('computing non-primitive values', t => {
-  const tree = t.context.tree;
-  t.is(tree.root.derived, 2);
+test('computing non-primitive values', async () => {
+  const tree = context.tree;
+  assert.equal(tree.root.derived, 2);
   tree.root.x = 3;
-  return Promise.resolve().then(() => {
-    t.is(tree.root.derived, 4);
-    tree.checkVueObject(tree.root, '/');
-  });
+  await Promise.resolve();
+  assert.equal(tree.root.derived, 4);
+  tree.checkVueObject(tree.root, '/');
 });
 
-test('wrapping observed properties preserves missing child dependencies', t => {
-  const tree = t.context.tree;
-  const context = {};
-  const navigation = {context};
+test('wrapping observed properties preserves missing child dependencies', async () => {
+  const tree = context.tree;
+  const navigationContext = {};
+  const navigation = {context: navigationContext};
   const vue = new Vue({data: {navigation}});
 
   tree._modeler._wrapProperties(navigation);
-  t.true(Object.hasOwn(navigation, '$_context'));
+  assert.equal(Object.hasOwn(navigation, '$_context'), true);
 
   let review;
   const unwatch = vue.$watch(() => navigation.context.review, value => {
     review = value;
   }, {immediate: true});
-  t.is(review, undefined);
+  assert.equal(review, undefined);
 
-  Vue.set(context, 'review', {ready: true});
-  return Vue.nextTick().then(() => {
-    t.deepEqual(review, {ready: true});
-    unwatch();
-    vue.$destroy();
-  });
+  Vue.set(navigationContext, 'review', {ready: true});
+  await Vue.nextTick();
+  assert.deepEqual(review, {ready: true});
+  unwatch();
+  vue.$destroy();
 });
 
-test('computed properties added after observation remain reactive', t => {
+test('computed properties added after observation remain reactive', async () => {
   const tree = new Tree(
-    t.context.truss, t.context.rootUrl, t.context.bridge, t.context.dispatcher);
+    context.truss, context.rootUrl, context.bridge, context.dispatcher);
   tree.init([EarlyObservedRoot]);
   const root = tree.root;
 
@@ -168,9 +165,8 @@ test('computed properties added after observation remain reactive', t => {
   }, {immediate: true});
 
   Vue.set(root, 'source', {child: 1});
-  return Vue.nextTick().then(() => {
-    t.is(observed, 1);
-    unwatch();
-    tree.destroy();
-  });
+  await Vue.nextTick();
+  assert.equal(observed, 1);
+  unwatch();
+  tree.destroy();
 });

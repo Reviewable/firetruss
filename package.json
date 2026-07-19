@@ -8,7 +8,7 @@
     "upgrade": "reviewable-upgrade",
     "build": "yarn run grunt",
     "lint": "yarn grunt eslint",
-    "test": "ava",
+    "test": "BABEL_DISABLE_CACHE=1 node --require @babel/register --test \"src/**/*.test.js\"",
     "finalize": "yarn run grunt replace default --release=\"$(jq -r .version package.json)\""
   },
   "repository": "https://github.com/Reviewable/firetruss",
@@ -31,7 +31,6 @@
     "@babel/register": "^8.0.1",
     "@rollup/plugin-commonjs": "29.x",
     "@rollup/plugin-node-resolve": "16.x",
-    "ava": "4.x",
     "compose-source-map": "^1.0.0",
     "eslint": "^10.7.0",
     "globals": "^17.7.0",
@@ -46,16 +45,7 @@
     "load-grunt-tasks": "5",
     "npm-check-updates": "^22.2.9",
     "reviewable-configs": "Reviewable/reviewable-configs#master",
-    "rollup": "4.x",
-    "testdouble": "3.x"
-  },
-  "ava": {
-    "files": [
-      "src/**/*.test.js"
-    ],
-    "require": [
-      "@babel/register"
-    ]
+    "rollup": "4.x"
   },
   "babel": {
     "presets": [
