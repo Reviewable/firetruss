@@ -2918,8 +2918,7 @@ class Tree {
   connectReference(ref, method) {
     this._checkHandle(ref);
     const operation = this._dispatcher.createOperation('read', method, ref);
-    let unwatch;
-    operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
+    operation._disconnect = this._disconnectReference.bind(this, ref, operation, undefined);
     this._dispatcher.begin(operation).then(() => {
       if (operation.running && !operation._disconnected) {
         this._coupler.couple(ref.path, operation);
@@ -3162,10 +3161,10 @@ class Tree {
     if (!observer) return;
 
     let addedReactiveProperties = false;
-    for (const name of _.keys(properties)) {
-      const descriptor = Object.getOwnPropertyDescriptor(object, name);
+    for (const key of _.keys(properties)) {
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
       if (!descriptor.configurable || !descriptor.enumerable) continue;
-      Vue.util.defineReactive(object, name);
+      Vue.util.defineReactive(object, key);
       addedReactiveProperties = true;
     }
     if (addedReactiveProperties) observer.dep.notify();
