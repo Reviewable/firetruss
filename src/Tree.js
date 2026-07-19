@@ -104,8 +104,7 @@ export default class Tree {
   connectReference(ref, method) {
     this._checkHandle(ref);
     const operation = this._dispatcher.createOperation('read', method, ref);
-    let unwatch;
-    operation._disconnect = this._disconnectReference.bind(this, ref, operation, unwatch);
+    operation._disconnect = this._disconnectReference.bind(this, ref, operation, undefined);
     this._dispatcher.begin(operation).then(() => {
       if (operation.running && !operation._disconnected) {
         this._coupler.couple(ref.path, operation);
