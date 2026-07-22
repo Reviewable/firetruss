@@ -9,100 +9,6 @@
   var ___default = /*#__PURE__*/_interopDefaultLegacy(_);
   var Vue__default = /*#__PURE__*/_interopDefaultLegacy(Vue);
 
-  let vue;
-  let lastDigestRequest = 0, digestInProgress = false;
-  const bareDigest = function() {
-    if (vue.digestRequest > lastDigestRequest) return;
-    vue.digestRequest = lastDigestRequest + 1;
-  };
-
-  const angularProxy = {
-    active: typeof window !== 'undefined' && window.angular
-  };
-
-  if (angularProxy.active) {
-    initAngular();
-  } else {
-    ___default.default.forEach(['digest', 'watch', 'defineModule', 'debounceDigest'], method => {
-      angularProxy[method] = ___default.default.noop;
-    });
-  }
-
-  function initAngular() {
-    const module = window.angular.module('firetruss', []);
-    angularProxy.digest = bareDigest;
-    angularProxy.watch = function() {throw new Error('Angular watch proxy not yet initialized');};
-    angularProxy.defineModule = function(Truss) {
-      module.constant('Truss', Truss);
-    };
-    angularProxy.debounceDigest = function(wait) {
-      if (wait) {
-        const debouncedDigest = ___default.default.debounce(bareDigest, wait);
-        angularProxy.digest = function() {
-          if (vue.digestRequest > lastDigestRequest) return;
-          if (digestInProgress) bareDigest(); else debouncedDigest();
-        };
-      } else {
-        angularProxy.digest = bareDigest;
-      }
-    };
-
-    module.config(['$provide', function($provide) {
-      $provide.decorator('$rootScope', ['$delegate', '$exceptionHandler',
-        function($delegate, $exceptionHandler) {
-          const rootScope = $delegate;
-          angularProxy.watch = rootScope.$watch.bind(rootScope);
-          const proto = Object.getPrototypeOf(rootScope);
-          const angularDigest = proto.$digest;
-          proto.$digest = bareDigest;
-          proto.$digest.original = angularDigest;
-          vue = new Vue__default.default({data: {digestRequest: 0}});
-          vue.$watch(() => vue.digestRequest, () => {
-            if (vue.digestRequest > lastDigestRequest) {
-              // Make sure we execute the digest outside the Vue task queue, because otherwise if the
-              // client replaced Promise with angular.$q all Truss.nextTick().then() functions will be
-              // executed inside the Angular digest and hence inside the Vue task queue. But
-              // Truss.nextTick() is used precisely to avoid that.  Note that it's OK to use
-              // Vue.nextTick() here because even though it will schedule a flush via Promise.then()
-              // it only uses the native Promise, before it could've been monkey-patched by the app.
-              Vue__default.default.nextTick(() => {
-                if (vue.digestRequest <= lastDigestRequest) return;
-                digestInProgress = true;
-                rootScope.$digest.original.call(rootScope);
-                lastDigestRequest = vue.digestRequest = vue.digestRequest + 1;
-              });
-            } else {
-              digestInProgress = false;
-            }
-          });
-          const watcher = ___default.default.last(vue._watchers || vue._scope.effects);
-          watcher.id = Infinity;  // make sure watcher is scheduled last
-          patchRenderWatcherGet(Object.getPrototypeOf(watcher));
-          return rootScope;
-        }
-      ]);
-    }]);
-  }
-
-  // This is a kludge that catches errors that get through render watchers and end up killing the
-  // entire Vue event loop (e.g., errors raised in transition callbacks).  The state of the DOM may
-  // not be consistent after such an error is caught, but the global error handler should stop the
-  // world anyway.  May be related to https://github.com/vuejs/vue/issues/7653.
-  function patchRenderWatcherGet(prototype) {
-    const originalGet = prototype.get;
-    prototype.get = function get() {
-      try {
-        return originalGet.call(this);
-      } catch (e) {
-        if (this.vm._watcher === this && Vue__default.default.config.errorHandler) {
-          Vue__default.default.config.errorHandler(e, this.vm, 'uncaught render error');
-        } else {
-          throw e;
-        }
-      }
-    };
-  }
-
   class LruCacheItem {
     constructor(key, value) {
       this.key = key;
@@ -998,7 +904,6 @@
 
       this._subConnectors = {};
       this._disconnects = {};
-      this._angularUnwatches = undefined;
       this._data = {};
       this._vue = new Vue__default.default({data: {
         descriptors: {},
@@ -1018,10 +923,6 @@
           this._connect(key, descriptor);
         }
       });
-
-      if (angularProxy.active && scope && scope.$on && scope.$id) {
-        scope.$on('$destroy', () => {this.destroy();});
-      }
     }
 
     get ready() {
@@ -1043,7 +944,6 @@
 
     destroy() {
       this._unlinkScopeProperties();
-      ___default.default.forEach(this._angularUnwatches, unwatch => {unwatch();});
       ___default.default.forEach(this._connections, (descriptor, key) => {this._disconnect(key);});
       this._vue.$destroy();
     }
@@ -1079,14 +979,7 @@
       const connectionStats = stats.for(`connection.at.${key}`);
       const getter = this._computeConnection.bind(this, fn, connectionStats);
       const update = this._updateComputedConnection.bind(this, key, fn, connectionStats);
-      const angularWatch = angularProxy.active && !fn.angularWatchSuppressed;
-      // Use this._vue.$watch instead of truss.observe here so that we can disable the immediate
-      // callback if we'll get one from Angular anyway.
-      this._vue.$watch(getter, update, {immediate: !angularWatch});
-      if (angularWatch) {
-        if (!this._angularUnwatches) this._angularUnwatches = [];
-        this._angularUnwatches.push(angularProxy.watch(getter, update, true));
-      }
+      this._vue.$watch(getter, update, {immediate: true});
     }
 
     _computeConnection(fn, connectionStats) {
@@ -1116,7 +1009,6 @@
         this._subConnectors[key]._updateConnections(newDescriptor);
       }
       Vue__default.default.set(this._vue.descriptors, key, newDescriptor);
-      angularProxy.digest();
     }
 
     _updateConnections(connections) {
@@ -1131,7 +1023,6 @@
 
     _connect(key, descriptor) {
       Vue__default.default.set(this._vue.descriptors, key, descriptor);
-      angularProxy.digest();
       if (!descriptor) return;
       Vue__default.default.set(this._vue.values, key, undefined);
       if (descriptor instanceof Reference) {
@@ -1156,7 +1047,6 @@
             unobserve();
             delete this._disconnects[key];
             Vue__default.default.set(this._vue.values, key, subScope);
-            angularProxy.digest();
           }
         );
       }
@@ -1172,34 +1062,29 @@
       if (this._disconnects[key]) this._disconnects[key]();
       delete this._disconnects[key];
       Vue__default.default.delete(this._vue.descriptors, key);
-      angularProxy.digest();
     }
 
     _updateRefValue(key, value) {
       if (this._vue.values[key] !== value) {
         Vue__default.default.set(this._vue.values, key, value);
-        angularProxy.digest();
       }
     }
 
     _updateQueryValue(key, childKeys) {
       if (!this._vue.values[key]) {
         Vue__default.default.set(this._vue.values, key, {});
-        angularProxy.digest();
       }
       const subScope = this._vue.values[key];
       for (const childKey in subScope) {
         if (!Object.hasOwn(subScope, childKey)) continue;
         if (!___default.default.includes(childKeys, childKey)) {
           Vue__default.default.delete(subScope, childKey);
-          angularProxy.digest();
         }
       }
       const object = this._tree.getObject(this._vue.descriptors[key].path);
       for (const childKey of childKeys) {
         if (Object.hasOwn(subScope, childKey)) continue;
         Vue__default.default.set(subScope, childKey, object[childKey]);
-        angularProxy.digest();
       }
     }
 
@@ -1572,7 +1457,6 @@
           if (!Object.hasOwn(this, key)) {
             const update = () => {
               Vue__default.default.set(this, key, Date.now() + this.timeOffset);
-              angularProxy.digest();
             };
             update();
             setInterval(update, intervalMillis);
@@ -1640,7 +1524,6 @@
           if (user) Object.freeze(user);
           this.root.user = user;
           this.root.userid = user && user.uid;
-          angularProxy.digest();
           return true;
         }
       );
@@ -1657,9 +1540,36 @@
       url.pathname = encodeURI(`/.info/${property}`);
       this._bridge.on(url.href, url.href, null, 'value', snap => {
         this.root[attribute] = snap.value;
-        angularProxy.digest();
       });
     }
+  }
+
+  function patchVueRenderWatcher() {
+    const vue = new Vue__default.default();
+    const unwatch = vue.$watch(___default.default.noop, ___default.default.noop);
+    const watchers = vue._watchers || vue._scope.effects;
+    patchRenderWatcherGet(Object.getPrototypeOf(watchers[watchers.length - 1]));
+    unwatch();
+    vue.$destroy();
+  }
+
+  // This is a kludge that catches errors that get through render watchers and end up killing the
+  // entire Vue event loop (e.g., errors raised in transition callbacks).  The state of the DOM may
+  // not be consistent after such an error is caught, but the global error handler should stop the
+  // world anyway.  May be related to https://github.com/vuejs/vue/issues/7653.
+  function patchRenderWatcherGet(prototype) {
+    const originalGet = prototype.get;
+    prototype.get = function get() {
+      try {
+        return originalGet.call(this);
+      } catch (e) {
+        if (this.vm._watcher === this && Vue__default.default.config.errorHandler) {
+          Vue__default.default.config.errorHandler(e, this.vm, 'uncaught render error');
+        } else {
+          throw e;
+        }
+      }
+    };
   }
 
   // These are defined separately for each object so they're not included in Value below.
@@ -2081,8 +1991,6 @@
         const object = new mount.Class();
         creatingObjectProperties = null;
 
-        if (angularProxy.active) this._wrapProperties(object);
-
         if (mount.keysUnsafe) {
           properties.$data = {value: Object.create(null), configurable: true, enumerable: true};
         }
@@ -2098,24 +2006,6 @@
         e.extra = ___default.default.assign({mount, properties, className: mount.Class && mount.Class.name}, e.extra);
         throw e;
       }
-    }
-
-    _wrapProperties(object) {
-      ___default.default.forEach(object, (value, key) => {
-        const valueKey = '$_' + key;
-        const descriptor = Object.getOwnPropertyDescriptor(object, key);
-        const valueDescriptor = descriptor.get && descriptor.set ? {
-          get: descriptor.get, set: descriptor.set, configurable: true
-        } : {value, writable: true};
-        Object.defineProperties(object, {
-          [valueKey]: valueDescriptor,
-          [key]: {
-            get: () => object[valueKey],
-            set: arg => {object[valueKey] = arg; angularProxy.digest();},
-            enumerable: true, configurable: true
-          }
-        });
-      });
     }
 
     _buildComputedPropertyDescriptor(object, prop) {
@@ -2141,15 +2031,12 @@
           if (___default.default.isObject(newValue) && ___default.default.isFunction(newValue.then)) {
             const promise = newValue.then(finalValue => {
               if (promise === pendingPromise) update(finalValue);
-              // No need to angular.digest() here, since if we're running under Angular then we expect
-              // promises to be aliased to its $q service, which triggers digest itself.
             }, error => {
               if (promise === pendingPromise && update(new ErrorWrapper(error)) &&
                   !error.trussExpectedException) throw error;
             });
             pendingPromise = promise;
           } else if (update(newValue)) {
-            angularProxy.digest();
             if (newValue instanceof ErrorWrapper && !newValue.error.trussExpectedException) {
               throw newValue.error;
             }
@@ -2365,7 +2252,6 @@
         return wrapConnections(object, connections.call(this));
         /* eslint-enable no-invalid-this */
       };
-      fn.angularWatchSuppressed = true;
       return fn;
     }
     return ___default.default.mapValues(connections, descriptor => wrapConnections(object, descriptor));
@@ -2422,7 +2308,6 @@
         this);
       this._listening = false;
       this.ready = false;
-      angularProxy.digest();
       for (const key of this._keys) {
         this._coupler._decoupleSegments(this._segments.concat(key));
       }
@@ -2436,7 +2321,6 @@
         const updatedKeys = this._updateKeysAndApplySnapshot(snap);
         if (!this.ready) {
           this.ready = true;
-          angularProxy.digest();
           for (const listener of this._listeners) {
             this._coupler._dispatcher.markReady(listener.operation);
           }
@@ -2511,7 +2395,6 @@
       this.ready = false;
       for (const key of this._keys) this._coupler._decoupleSegments(this._segments.concat(key));
       this._keys = [];
-      angularProxy.digest();
       Promise.all(___default.default.map(this._listeners, listener => {
         this._coupler._dispatcher.clearReady(listener.operation);
         return this._coupler._dispatcher.retry(listener.operation, error).catch(e => {
@@ -2572,7 +2455,6 @@
           if (node.listening) return false;
           if (node.ready) {
             node.ready = false;
-            angularProxy.digest();
           }
         });
       } else {
@@ -2586,7 +2468,6 @@
         this._coupler._applySnapshot(snap);
         if (!this.ready && snap.path === this.path) {
           this.ready = true;
-          angularProxy.digest();
           this.unlisten(true);
           this._forAllDescendants(node => {
             for (const op of node.operations) this._coupler._dispatcher.markReady(op);
@@ -2602,7 +2483,6 @@
         if (node.listening) return false;
         if (node.ready) {
           node.ready = false;
-          angularProxy.digest();
         }
         for (const op of node.operations) this._coupler._dispatcher.clearReady(op);
       });
@@ -2897,7 +2777,6 @@
         this._vue.$data.$root = this._createObject('/');
         this._fixObject(this._vue.$data.$root);
         this._completeCreateObject(this._vue.$data.$root);
-        angularProxy.digest();
       }
       return this._vue.$data.$root;
     }
@@ -3467,7 +3346,6 @@
           configurable: true, enumerable: !hidden
         });
       }
-      angularProxy.digest();
     }
 
     _overwriteFirebaseProperty(descriptor, key, newValue) {
@@ -3485,7 +3363,6 @@
       this._getFirebasePropertyDescriptor(object, data, key);
       this._destroyObject(data[key]);
       Vue__default.default.delete(data, key);
-      angularProxy.digest();
     }
 
     checkVueObject(object, path) {
@@ -3567,6 +3444,7 @@
 
   let bridge, logging;
   const workerFunctions = {};
+  patchVueRenderWatcher();
   // This version is filled in by the build, don't reformat the line.
   const VERSION = 'dev';
 
@@ -3671,7 +3549,7 @@
           unobserve();
           unobserve = null;
           callbackPromise = promiseFinally(
-            callback(scope.result), () => {angularProxy.digest(); callbackPromise = null; cleanup();}
+            callback(scope.result), () => {callbackPromise = null; cleanup();}
           ).then(result => {resolve(result);}, error => {reject(error);});
         });
 
@@ -3715,19 +3593,16 @@
         numCallbacks++;
         if (unwatch || options && options.immediate) {
           callbackFn(newValue, oldValue);
-          angularProxy.digest();
         } else {
           // Delay the immediate callback until we've had a chance to return the unwatch function.
           Promise.resolve().then(() => {
             const vm = options && options.vm;
             if (numCallbacks > 1 || (vm && vm.$destroyed)) return;
             callbackFn(newValue, oldValue);
-            // No need to digest since under Angular we'll be using $q as Promise.
           });
         }
       }, {immediate: true, deep: options && options.deep});
 
-      if (options && options.scope) options.scope.$on('$destroy', unwatch);
       return unwatch;
     }
 
@@ -3758,7 +3633,6 @@
         };
       });
       promise = promiseCancel(promiseFinally(promise, cleanup), cleanup);
-      if (options && options.scope) options.scope.$on('$destroy', () => {promise.cancel();});
       return promise;
     }
 
@@ -3830,10 +3704,6 @@
         simulatedTokenGenerator, maxSimulationDuration, callFilter);
     }
 
-    static debounceAngularDigest(wait) {
-      angularProxy.debounceDigest(wait);
-    }
-
     static escapeKey(key) {return escapeKey(key);}
     static unescapeKey(escapedKey) {return unescapeKey(escapedKey);}
 
@@ -3876,7 +3746,9 @@
     }}
   });
 
-  angularProxy.defineModule(Truss);
+  if (typeof window !== 'undefined' && window.angular) {
+    window.angular.module('firetruss', []).constant('Truss', Truss);
+  }
 
   return Truss;
 

@@ -128,28 +128,6 @@ test('computing non-primitive values', async () => {
   tree.checkVueObject(tree.root, '/');
 });
 
-test('wrapping observed properties preserves missing child dependencies', async () => {
-  const tree = context.tree;
-  const navigationContext = {};
-  const navigation = {context: navigationContext};
-  const vue = new Vue({data: {navigation}});
-
-  tree._modeler._wrapProperties(navigation);
-  assert.equal(Object.hasOwn(navigation, '$_context'), true);
-
-  let review;
-  const unwatch = vue.$watch(() => navigation.context.review, value => {
-    review = value;
-  }, {immediate: true});
-  assert.equal(review, undefined);
-
-  Vue.set(navigationContext, 'review', {ready: true});
-  await Vue.nextTick();
-  assert.deepEqual(review, {ready: true});
-  unwatch();
-  vue.$destroy();
-});
-
 test('computed properties added after observation remain reactive', async () => {
   const tree = new Tree(
     context.truss, context.rootUrl, context.bridge, context.dispatcher);

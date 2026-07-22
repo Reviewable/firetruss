@@ -1,11 +1,11 @@
 import _ from 'lodash';
 import Vue from 'vue';
-import angular from './angularCompatibility.js';
 import Bridge from './Bridge.js';
 import Connector from './Connector.js';
 import Dispatcher from './Dispatcher.js';
 import KeyGenerator from './KeyGenerator.js';
 import MetaTree from './MetaTree.js';
+import patchVueRenderWatcher from './patchVueRenderWatcher.js';
 import {Handle} from './Reference.js';
 import {BaseValue} from './Modeler.js';
 import Tree from './Tree.js';
@@ -17,6 +17,7 @@ import {SERVER_TIMESTAMP, copyPrototype} from './utils/utils.js';
 
 let bridge, logging;
 const workerFunctions = {};
+patchVueRenderWatcher();
 // This version is filled in by the build, don't reformat the line.
 const VERSION = 'dev';
 
@@ -121,7 +122,7 @@ export default class Truss {
         unobserve();
         unobserve = null;
         callbackPromise = promiseFinally(
-          callback(scope.result), () => {angular.digest(); callbackPromise = null; cleanup();}
+          callback(scope.result), () => {callbackPromise = null; cleanup();}
         ).then(result => {resolve(result);}, error => {reject(error);});
       });
 
@@ -165,19 +166,16 @@ export default class Truss {
       numCallbacks++;
       if (unwatch || options && options.immediate) {
         callbackFn(newValue, oldValue);
-        angular.digest();
       } else {
         // Delay the immediate callback until we've had a chance to return the unwatch function.
         Promise.resolve().then(() => {
           const vm = options && options.vm;
           if (numCallbacks > 1 || (vm && vm.$destroyed)) return;
           callbackFn(newValue, oldValue);
-          // No need to digest since under Angular we'll be using $q as Promise.
         });
       }
     }, {immediate: true, deep: options && options.deep});
 
-    if (options && options.scope) options.scope.$on('$destroy', unwatch);
     return unwatch;
   }
 
@@ -208,7 +206,6 @@ export default class Truss {
       };
     });
     promise = promiseCancel(promiseFinally(promise, cleanup), cleanup);
-    if (options && options.scope) options.scope.$on('$destroy', () => {promise.cancel();});
     return promise;
   }
 
@@ -280,10 +277,6 @@ export default class Truss {
       simulatedTokenGenerator, maxSimulationDuration, callFilter);
   }
 
-  static debounceAngularDigest(wait) {
-    angular.debounceDigest(wait);
-  }
-
   static escapeKey(key) {return escapeKey(key);}
   static unescapeKey(escapedKey) {return unescapeKey(escapedKey);}
 
@@ -326,4 +319,6 @@ Object.defineProperties(Truss, {
   }}
 });
 
-angular.defineModule(Truss);
+if (typeof window !== 'undefined' && window.angular) {
+  window.angular.module('firetruss', []).constant('Truss', Truss);
+}
