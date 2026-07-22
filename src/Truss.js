@@ -5,7 +5,6 @@ import Connector from './Connector.js';
 import Dispatcher from './Dispatcher.js';
 import KeyGenerator from './KeyGenerator.js';
 import MetaTree from './MetaTree.js';
-import patchVueRenderWatcher from './patchVueRenderWatcher.js';
 import {Handle} from './Reference.js';
 import {BaseValue} from './Modeler.js';
 import Tree from './Tree.js';
@@ -17,7 +16,6 @@ import {SERVER_TIMESTAMP, copyPrototype} from './utils/utils.js';
 
 let bridge, logging;
 const workerFunctions = {};
-patchVueRenderWatcher();
 // This version is filled in by the build, don't reformat the line.
 const VERSION = 'dev';
 
