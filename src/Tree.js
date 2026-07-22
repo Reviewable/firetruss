@@ -1,4 +1,3 @@
-import angular from './angularCompatibility.js';
 import Coupler from './Coupler.js';
 import Modeler from './Modeler.js';
 import Reference from './Reference.js';
@@ -75,7 +74,6 @@ export default class Tree {
       this._vue.$data.$root = this._createObject('/');
       this._fixObject(this._vue.$data.$root);
       this._completeCreateObject(this._vue.$data.$root);
-      angular.digest();
     }
     return this._vue.$data.$root;
   }
@@ -645,7 +643,6 @@ export default class Tree {
         configurable: true, enumerable: !hidden
       });
     }
-    angular.digest();
   }
 
   _overwriteFirebaseProperty(descriptor, key, newValue) {
@@ -663,7 +660,6 @@ export default class Tree {
     this._getFirebasePropertyDescriptor(object, data, key);
     this._destroyObject(data[key]);
     Vue.delete(data, key);
-    angular.digest();
   }
 
   checkVueObject(object, path) {

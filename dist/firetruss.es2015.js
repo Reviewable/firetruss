@@ -1,100 +1,6 @@
 import _ from 'lodash';
 import Vue from 'vue';
 
-let vue;
-let lastDigestRequest = 0, digestInProgress = false;
-const bareDigest = function() {
-  if (vue.digestRequest > lastDigestRequest) return;
-  vue.digestRequest = lastDigestRequest + 1;
-};
-
-const angularProxy = {
-  active: typeof window !== 'undefined' && window.angular
-};
-
-if (angularProxy.active) {
-  initAngular();
-} else {
-  _.forEach(['digest', 'watch', 'defineModule', 'debounceDigest'], method => {
-    angularProxy[method] = _.noop;
-  });
-}
-
-function initAngular() {
-  const module = window.angular.module('firetruss', []);
-  angularProxy.digest = bareDigest;
-  angularProxy.watch = function() {throw new Error('Angular watch proxy not yet initialized');};
-  angularProxy.defineModule = function(Truss) {
-    module.constant('Truss', Truss);
-  };
-  angularProxy.debounceDigest = function(wait) {
-    if (wait) {
-      const debouncedDigest = _.debounce(bareDigest, wait);
-      angularProxy.digest = function() {
-        if (vue.digestRequest > lastDigestRequest) return;
-        if (digestInProgress) bareDigest(); else debouncedDigest();
-      };
-    } else {
-      angularProxy.digest = bareDigest;
-    }
-  };
-
-  module.config(['$provide', function($provide) {
-    $provide.decorator('$rootScope', ['$delegate', '$exceptionHandler',
-      function($delegate, $exceptionHandler) {
-        const rootScope = $delegate;
-        angularProxy.watch = rootScope.$watch.bind(rootScope);
-        const proto = Object.getPrototypeOf(rootScope);
-        const angularDigest = proto.$digest;
-        proto.$digest = bareDigest;
-        proto.$digest.original = angularDigest;
-        vue = new Vue({data: {digestRequest: 0}});
-        vue.$watch(() => vue.digestRequest, () => {
-          if (vue.digestRequest > lastDigestRequest) {
-            // Make sure we execute the digest outside the Vue task queue, because otherwise if the
-            // client replaced Promise with angular.$q all Truss.nextTick().then() functions will be
-            // executed inside the Angular digest and hence inside the Vue task queue. But
-            // Truss.nextTick() is used precisely to avoid that.  Note that it's OK to use
-            // Vue.nextTick() here because even though it will schedule a flush via Promise.then()
-            // it only uses the native Promise, before it could've been monkey-patched by the app.
-            Vue.nextTick(() => {
-              if (vue.digestRequest <= lastDigestRequest) return;
-              digestInProgress = true;
-              rootScope.$digest.original.call(rootScope);
-              lastDigestRequest = vue.digestRequest = vue.digestRequest + 1;
-            });
-          } else {
-            digestInProgress = false;
-          }
-        });
-        const watcher = _.last(vue._watchers || vue._scope.effects);
-        watcher.id = Infinity;  // make sure watcher is scheduled last
-        patchRenderWatcherGet(Object.getPrototypeOf(watcher));
-        return rootScope;
-      }
-    ]);
-  }]);
-}
-
-// This is a kludge that catches errors that get through render watchers and end up killing the
-// entire Vue event loop (e.g., errors raised in transition callbacks).  The state of the DOM may
-// not be consistent after such an error is caught, but the global error handler should stop the
-// world anyway.  May be related to https://github.com/vuejs/vue/issues/7653.
-function patchRenderWatcherGet(prototype) {
-  const originalGet = prototype.get;
-  prototype.get = function get() {
-    try {
-      return originalGet.call(this);
-    } catch (e) {
-      if (this.vm._watcher === this && Vue.config.errorHandler) {
-        Vue.config.errorHandler(e, this.vm, 'uncaught render error');
-      } else {
-        throw e;
-      }
-    }
-  };
-}
-
 class LruCacheItem {
   constructor(key, value) {
     this.key = key;
@@ -990,7 +896,6 @@ class Connector {
 
     this._subConnectors = {};
     this._disconnects = {};
-    this._angularUnwatches = undefined;
     this._data = {};
     this._vue = new Vue({data: {
       descriptors: {},
@@ -1010,10 +915,6 @@ class Connector {
         this._connect(key, descriptor);
       }
     });
-
-    if (angularProxy.active && scope && scope.$on && scope.$id) {
-      scope.$on('$destroy', () => {this.destroy();});
-    }
   }
 
   get ready() {
@@ -1035,7 +936,6 @@ class Connector {
 
   destroy() {
     this._unlinkScopeProperties();
-    _.forEach(this._angularUnwatches, unwatch => {unwatch();});
     _.forEach(this._connections, (descriptor, key) => {this._disconnect(key);});
     this._vue.$destroy();
   }
@@ -1071,14 +971,7 @@ class Connector {
     const connectionStats = stats.for(`connection.at.${key}`);
     const getter = this._computeConnection.bind(this, fn, connectionStats);
     const update = this._updateComputedConnection.bind(this, key, fn, connectionStats);
-    const angularWatch = angularProxy.active && !fn.angularWatchSuppressed;
-    // Use this._vue.$watch instead of truss.observe here so that we can disable the immediate
-    // callback if we'll get one from Angular anyway.
-    this._vue.$watch(getter, update, {immediate: !angularWatch});
-    if (angularWatch) {
-      if (!this._angularUnwatches) this._angularUnwatches = [];
-      this._angularUnwatches.push(angularProxy.watch(getter, update, true));
-    }
+    this._vue.$watch(getter, update, {immediate: true});
   }
 
   _computeConnection(fn, connectionStats) {
@@ -1108,7 +1001,6 @@ class Connector {
       this._subConnectors[key]._updateConnections(newDescriptor);
     }
     Vue.set(this._vue.descriptors, key, newDescriptor);
-    angularProxy.digest();
   }
 
   _updateConnections(connections) {
@@ -1123,7 +1015,6 @@ class Connector {
 
   _connect(key, descriptor) {
     Vue.set(this._vue.descriptors, key, descriptor);
-    angularProxy.digest();
     if (!descriptor) return;
     Vue.set(this._vue.values, key, undefined);
     if (descriptor instanceof Reference) {
@@ -1148,7 +1039,6 @@ class Connector {
           unobserve();
           delete this._disconnects[key];
           Vue.set(this._vue.values, key, subScope);
-          angularProxy.digest();
         }
       );
     }
@@ -1164,34 +1054,29 @@ class Connector {
     if (this._disconnects[key]) this._disconnects[key]();
     delete this._disconnects[key];
     Vue.delete(this._vue.descriptors, key);
-    angularProxy.digest();
   }
 
   _updateRefValue(key, value) {
     if (this._vue.values[key] !== value) {
       Vue.set(this._vue.values, key, value);
-      angularProxy.digest();
     }
   }
 
   _updateQueryValue(key, childKeys) {
     if (!this._vue.values[key]) {
       Vue.set(this._vue.values, key, {});
-      angularProxy.digest();
     }
     const subScope = this._vue.values[key];
     for (const childKey in subScope) {
       if (!Object.hasOwn(subScope, childKey)) continue;
       if (!_.includes(childKeys, childKey)) {
         Vue.delete(subScope, childKey);
-        angularProxy.digest();
       }
     }
     const object = this._tree.getObject(this._vue.descriptors[key].path);
     for (const childKey of childKeys) {
       if (Object.hasOwn(subScope, childKey)) continue;
       Vue.set(subScope, childKey, object[childKey]);
-      angularProxy.digest();
     }
   }
 
@@ -1564,7 +1449,6 @@ class MetaTree {
         if (!Object.hasOwn(this, key)) {
           const update = () => {
             Vue.set(this, key, Date.now() + this.timeOffset);
-            angularProxy.digest();
           };
           update();
           setInterval(update, intervalMillis);
@@ -1632,7 +1516,6 @@ class MetaTree {
         if (user) Object.freeze(user);
         this.root.user = user;
         this.root.userid = user && user.uid;
-        angularProxy.digest();
         return true;
       }
     );
@@ -1649,7 +1532,6 @@ class MetaTree {
     url.pathname = encodeURI(`/.info/${property}`);
     this._bridge.on(url.href, url.href, null, 'value', snap => {
       this.root[attribute] = snap.value;
-      angularProxy.digest();
     });
   }
 }
@@ -2073,8 +1955,6 @@ class Modeler {
       const object = new mount.Class();
       creatingObjectProperties = null;
 
-      if (angularProxy.active) this._wrapProperties(object);
-
       if (mount.keysUnsafe) {
         properties.$data = {value: Object.create(null), configurable: true, enumerable: true};
       }
@@ -2090,24 +1970,6 @@ class Modeler {
       e.extra = _.assign({mount, properties, className: mount.Class && mount.Class.name}, e.extra);
       throw e;
     }
-  }
-
-  _wrapProperties(object) {
-    _.forEach(object, (value, key) => {
-      const valueKey = '$_' + key;
-      const descriptor = Object.getOwnPropertyDescriptor(object, key);
-      const valueDescriptor = descriptor.get && descriptor.set ? {
-        get: descriptor.get, set: descriptor.set, configurable: true
-      } : {value, writable: true};
-      Object.defineProperties(object, {
-        [valueKey]: valueDescriptor,
-        [key]: {
-          get: () => object[valueKey],
-          set: arg => {object[valueKey] = arg; angularProxy.digest();},
-          enumerable: true, configurable: true
-        }
-      });
-    });
   }
 
   _buildComputedPropertyDescriptor(object, prop) {
@@ -2133,15 +1995,12 @@ class Modeler {
         if (_.isObject(newValue) && _.isFunction(newValue.then)) {
           const promise = newValue.then(finalValue => {
             if (promise === pendingPromise) update(finalValue);
-            // No need to angular.digest() here, since if we're running under Angular then we expect
-            // promises to be aliased to its $q service, which triggers digest itself.
           }, error => {
             if (promise === pendingPromise && update(new ErrorWrapper(error)) &&
                 !error.trussExpectedException) throw error;
           });
           pendingPromise = promise;
         } else if (update(newValue)) {
-          angularProxy.digest();
           if (newValue instanceof ErrorWrapper && !newValue.error.trussExpectedException) {
             throw newValue.error;
           }
@@ -2357,7 +2216,6 @@ function wrapConnections(object, connections) {
       return wrapConnections(object, connections.call(this));
       /* eslint-enable no-invalid-this */
     };
-    fn.angularWatchSuppressed = true;
     return fn;
   }
   return _.mapValues(connections, descriptor => wrapConnections(object, descriptor));
@@ -2414,7 +2272,6 @@ class QueryHandler {
       this);
     this._listening = false;
     this.ready = false;
-    angularProxy.digest();
     for (const key of this._keys) {
       this._coupler._decoupleSegments(this._segments.concat(key));
     }
@@ -2428,7 +2285,6 @@ class QueryHandler {
       const updatedKeys = this._updateKeysAndApplySnapshot(snap);
       if (!this.ready) {
         this.ready = true;
-        angularProxy.digest();
         for (const listener of this._listeners) {
           this._coupler._dispatcher.markReady(listener.operation);
         }
@@ -2503,7 +2359,6 @@ class QueryHandler {
     this.ready = false;
     for (const key of this._keys) this._coupler._decoupleSegments(this._segments.concat(key));
     this._keys = [];
-    angularProxy.digest();
     Promise.all(_.map(this._listeners, listener => {
       this._coupler._dispatcher.clearReady(listener.operation);
       return this._coupler._dispatcher.retry(listener.operation, error).catch(e => {
@@ -2564,7 +2419,6 @@ class Node {
         if (node.listening) return false;
         if (node.ready) {
           node.ready = false;
-          angularProxy.digest();
         }
       });
     } else {
@@ -2578,7 +2432,6 @@ class Node {
       this._coupler._applySnapshot(snap);
       if (!this.ready && snap.path === this.path) {
         this.ready = true;
-        angularProxy.digest();
         this.unlisten(true);
         this._forAllDescendants(node => {
           for (const op of node.operations) this._coupler._dispatcher.markReady(op);
@@ -2594,7 +2447,6 @@ class Node {
       if (node.listening) return false;
       if (node.ready) {
         node.ready = false;
-        angularProxy.digest();
       }
       for (const op of node.operations) this._coupler._dispatcher.clearReady(op);
     });
@@ -2889,7 +2741,6 @@ class Tree {
       this._vue.$data.$root = this._createObject('/');
       this._fixObject(this._vue.$data.$root);
       this._completeCreateObject(this._vue.$data.$root);
-      angularProxy.digest();
     }
     return this._vue.$data.$root;
   }
@@ -3459,7 +3310,6 @@ class Tree {
         configurable: true, enumerable: !hidden
       });
     }
-    angularProxy.digest();
   }
 
   _overwriteFirebaseProperty(descriptor, key, newValue) {
@@ -3477,7 +3327,6 @@ class Tree {
     this._getFirebasePropertyDescriptor(object, data, key);
     this._destroyObject(data[key]);
     Vue.delete(data, key);
-    angularProxy.digest();
   }
 
   checkVueObject(object, path) {
@@ -3663,7 +3512,7 @@ class Truss {
         unobserve();
         unobserve = null;
         callbackPromise = promiseFinally(
-          callback(scope.result), () => {angularProxy.digest(); callbackPromise = null; cleanup();}
+          callback(scope.result), () => {callbackPromise = null; cleanup();}
         ).then(result => {resolve(result);}, error => {reject(error);});
       });
 
@@ -3707,19 +3556,16 @@ class Truss {
       numCallbacks++;
       if (unwatch || options && options.immediate) {
         callbackFn(newValue, oldValue);
-        angularProxy.digest();
       } else {
         // Delay the immediate callback until we've had a chance to return the unwatch function.
         Promise.resolve().then(() => {
           const vm = options && options.vm;
           if (numCallbacks > 1 || (vm && vm.$destroyed)) return;
           callbackFn(newValue, oldValue);
-          // No need to digest since under Angular we'll be using $q as Promise.
         });
       }
     }, {immediate: true, deep: options && options.deep});
 
-    if (options && options.scope) options.scope.$on('$destroy', unwatch);
     return unwatch;
   }
 
@@ -3750,7 +3596,6 @@ class Truss {
       };
     });
     promise = promiseCancel(promiseFinally(promise, cleanup), cleanup);
-    if (options && options.scope) options.scope.$on('$destroy', () => {promise.cancel();});
     return promise;
   }
 
@@ -3822,10 +3667,6 @@ class Truss {
       simulatedTokenGenerator, maxSimulationDuration, callFilter);
   }
 
-  static debounceAngularDigest(wait) {
-    angularProxy.debounceDigest(wait);
-  }
-
   static escapeKey(key) {return escapeKey(key);}
   static unescapeKey(escapedKey) {return unescapeKey(escapedKey);}
 
@@ -3868,7 +3709,9 @@ Object.defineProperties(Truss, {
   }}
 });
 
-angularProxy.defineModule(Truss);
+if (typeof window !== 'undefined' && window.angular) {
+  window.angular.module('firetruss', []).constant('Truss', Truss);
+}
 
 export { Truss as default };
 

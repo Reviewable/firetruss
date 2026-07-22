@@ -17,7 +17,6 @@ declare class Truss {
   static debugPermissionDeniedErrors(
     simulatedTokenGenerator: any, maxSimulationDuration: number, callFilter: any
   ): Promise<void>;
-  static debounceAngularDigest(wait: number): void;
   static escapeKey(key: string): string;
   static unescapeKey(escapedKey: string): string;
   static enableLogging(fn: boolean | ((msg: string) => void)): void;
@@ -48,10 +47,10 @@ declare class Truss {
   ): Promise<any>;
 
   observe<T>(subject: () => T, callback: (newValue: T, oldValue: T | undefined) => void, options?: {
-    precise?: boolean, deep?: boolean, scope?: any
+    precise?: boolean, deep?: boolean
   }): () => void;
 
-  when(expression: () => any, options?: {timeout?: number, scope?: any}): Promise<any>;
+  when(expression: () => any, options?: {timeout?: number}): Promise<any>;
 }
 
 declare namespace Truss {
