@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import Vue from 'vue';
 
 import Tree from './Tree.js';
+import {promiseCancel} from './utils/promises.js';
 
 /* eslint-disable lodash/prefer-constant */
 
@@ -127,6 +128,26 @@ test('computing non-primitive values', async () => {
   assert.equal(tree.root.derived, 4);
   tree.checkVueObject(tree.root, '/');
 });
+
+function testFinalizedPromise(method, trussMethod) {
+  test(`${method} returns the finalized promise`, async () => {
+    const error = new Error(`${method} failed`);
+    const sourcePromise = promiseCancel(Promise.reject(error), mock.fn());
+    context.truss[trussMethod] = mock.fn(() => sourcePromise);
+
+    const args = method === '$when' ? [() => false] : [];
+    const initialHookCount = context.tree.root.$$hooks['hook:destroyed'].length;
+    const promise = context.tree.root[method](...args);
+
+    assert.notEqual(promise, sourcePromise);
+    assert.equal(promise.cancel, sourcePromise.cancel);
+    await assert.rejects(promise, error);
+    assert.equal(context.tree.root.$$hooks['hook:destroyed'].length, initialHookCount);
+  });
+}
+
+testFinalizedPromise('$when', 'when');
+testFinalizedPromise('$nextTick', 'nextTick');
 
 test('computed properties added after observation remain reactive', async () => {
   const tree = new Tree(

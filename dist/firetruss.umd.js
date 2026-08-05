@@ -1626,11 +1626,13 @@
 
     $when(expression, options) {
       if (this.$destroyed) throw new Error('Object already destroyed');
-      const promise = this.$truss.when(() => {
-        this.$$touchThis();
-        return expression.call(this);
-      }, options);
-      promiseFinally(promise, () => {this.$off('hook:destroyed', promise.cancel);});
+      const promise = promiseFinally(
+        this.$truss.when(() => {
+          this.$$touchThis();
+          return expression.call(this);
+        }, options),
+        () => {this.$off('hook:destroyed', promise.cancel);}
+      );
       this.$on('hook:destroyed', promise.cancel);
       return promise;
     }
@@ -1667,8 +1669,9 @@
 
     $nextTick() {
       if (this.$destroyed) throw new Error('Object already destroyed');
-      const promise = this.$truss.nextTick();
-      promiseFinally(promise, () => {this.$off('hook:destroyed', promise.cancel);});
+      const promise = promiseFinally(
+        this.$truss.nextTick(), () => {this.$off('hook:destroyed', promise.cancel);}
+      );
       this.$on('hook:destroyed', promise.cancel);
       return promise;
     }
