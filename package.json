@@ -1,6 +1,6 @@
 {
   "name": "firetruss",
-  "version": "7.9.0",
+  "version": "8.0.0",
   "description": "Advanced data sync layer for Firebase and Vue.js",
   "scripts": {
     "update": "yarn up -R '*' && yarn dedupe --strategy highest",
@@ -16,8 +16,7 @@
     "firebase",
     "vuejs",
     "model",
-    "worker",
-    "angular"
+    "worker"
   ],
   "author": "Piotr Kaminski",
   "license": "MIT",

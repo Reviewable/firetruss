@@ -1,6 +1,5 @@
 import _ from 'lodash';
 import Vue from 'vue';
-import angular from './angularCompatibility.js';
 import {splitPath} from './utils/paths.js';
 
 
@@ -46,7 +45,6 @@ class QueryHandler {
       this);
     this._listening = false;
     this.ready = false;
-    angular.digest();
     for (const key of this._keys) {
       this._coupler._decoupleSegments(this._segments.concat(key));
     }
@@ -60,7 +58,6 @@ class QueryHandler {
       const updatedKeys = this._updateKeysAndApplySnapshot(snap);
       if (!this.ready) {
         this.ready = true;
-        angular.digest();
         for (const listener of this._listeners) {
           this._coupler._dispatcher.markReady(listener.operation);
         }
@@ -135,7 +132,6 @@ class QueryHandler {
     this.ready = false;
     for (const key of this._keys) this._coupler._decoupleSegments(this._segments.concat(key));
     this._keys = [];
-    angular.digest();
     Promise.all(_.map(this._listeners, listener => {
       this._coupler._dispatcher.clearReady(listener.operation);
       return this._coupler._dispatcher.retry(listener.operation, error).catch(e => {
@@ -196,7 +192,6 @@ class Node {
         if (node.listening) return false;
         if (node.ready) {
           node.ready = false;
-          angular.digest();
         }
       });
     } else {
@@ -210,7 +205,6 @@ class Node {
       this._coupler._applySnapshot(snap);
       if (!this.ready && snap.path === this.path) {
         this.ready = true;
-        angular.digest();
         this.unlisten(true);
         this._forAllDescendants(node => {
           for (const op of node.operations) this._coupler._dispatcher.markReady(op);
@@ -226,7 +220,6 @@ class Node {
       if (node.listening) return false;
       if (node.ready) {
         node.ready = false;
-        angular.digest();
       }
       for (const op of node.operations) this._coupler._dispatcher.clearReady(op);
     });
@@ -455,4 +448,3 @@ export default class Coupler {
     }
   }
 }
-

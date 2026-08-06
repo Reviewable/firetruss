@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import Vue from 'vue';
 
 import Tree from './Tree.js';
+import {promiseCancel} from './utils/promises.js';
 
 /* eslint-disable lodash/prefer-constant */
 
@@ -128,27 +129,25 @@ test('computing non-primitive values', async () => {
   tree.checkVueObject(tree.root, '/');
 });
 
-test('wrapping observed properties preserves missing child dependencies', async () => {
-  const tree = context.tree;
-  const navigationContext = {};
-  const navigation = {context: navigationContext};
-  const vue = new Vue({data: {navigation}});
+function testFinalizedPromise(method, trussMethod) {
+  test(`${method} returns the finalized promise`, async () => {
+    const error = new Error(`${method} failed`);
+    const sourcePromise = promiseCancel(Promise.reject(error), mock.fn());
+    context.truss[trussMethod] = mock.fn(() => sourcePromise);
 
-  tree._modeler._wrapProperties(navigation);
-  assert.equal(Object.hasOwn(navigation, '$_context'), true);
+    const args = method === '$when' ? [() => false] : [];
+    const initialHookCount = context.tree.root.$$hooks['hook:destroyed'].length;
+    const promise = context.tree.root[method](...args);
 
-  let review;
-  const unwatch = vue.$watch(() => navigation.context.review, value => {
-    review = value;
-  }, {immediate: true});
-  assert.equal(review, undefined);
+    assert.notEqual(promise, sourcePromise);
+    assert.equal(promise.cancel, sourcePromise.cancel);
+    await assert.rejects(promise, error);
+    assert.equal(context.tree.root.$$hooks['hook:destroyed'].length, initialHookCount);
+  });
+}
 
-  Vue.set(navigationContext, 'review', {ready: true});
-  await Vue.nextTick();
-  assert.deepEqual(review, {ready: true});
-  unwatch();
-  vue.$destroy();
-});
+testFinalizedPromise('$when', 'when');
+testFinalizedPromise('$nextTick', 'nextTick');
 
 test('computed properties added after observation remain reactive', async () => {
   const tree = new Tree(

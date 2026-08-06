@@ -1,5 +1,4 @@
 import {Reference, Handle} from './Reference.js';
-import angular from './angularCompatibility.js';
 import stats from './utils/stats.js';
 import {makePathMatcher, joinPath, splitPath, escapeKey, unescapeKey} from './utils/paths.js';
 import {isTrussEqual, copyPrototype} from './utils/utils.js';
@@ -89,11 +88,13 @@ export class BaseValue {
 
   $when(expression, options) {
     if (this.$destroyed) throw new Error('Object already destroyed');
-    const promise = this.$truss.when(() => {
-      this.$$touchThis();
-      return expression.call(this);
-    }, options);
-    promiseFinally(promise, () => {this.$off('hook:destroyed', promise.cancel);});
+    const promise = promiseFinally(
+      this.$truss.when(() => {
+        this.$$touchThis();
+        return expression.call(this);
+      }, options),
+      () => {this.$off('hook:destroyed', promise.cancel);}
+    );
     this.$on('hook:destroyed', promise.cancel);
     return promise;
   }
@@ -130,8 +131,9 @@ class Value {
 
   $nextTick() {
     if (this.$destroyed) throw new Error('Object already destroyed');
-    const promise = this.$truss.nextTick();
-    promiseFinally(promise, () => {this.$off('hook:destroyed', promise.cancel);});
+    const promise = promiseFinally(
+      this.$truss.nextTick(), () => {this.$off('hook:destroyed', promise.cancel);}
+    );
     this.$on('hook:destroyed', promise.cancel);
     return promise;
   }
@@ -426,8 +428,6 @@ export default class Modeler {
       const object = new mount.Class();
       creatingObjectProperties = null;
 
-      if (angular.active) this._wrapProperties(object);
-
       if (mount.keysUnsafe) {
         properties.$data = {value: Object.create(null), configurable: true, enumerable: true};
       }
@@ -443,24 +443,6 @@ export default class Modeler {
       e.extra = _.assign({mount, properties, className: mount.Class && mount.Class.name}, e.extra);
       throw e;
     }
-  }
-
-  _wrapProperties(object) {
-    _.forEach(object, (value, key) => {
-      const valueKey = '$_' + key;
-      const descriptor = Object.getOwnPropertyDescriptor(object, key);
-      const valueDescriptor = descriptor.get && descriptor.set ? {
-        get: descriptor.get, set: descriptor.set, configurable: true
-      } : {value, writable: true};
-      Object.defineProperties(object, {
-        [valueKey]: valueDescriptor,
-        [key]: {
-          get: () => object[valueKey],
-          set: arg => {object[valueKey] = arg; angular.digest();},
-          enumerable: true, configurable: true
-        }
-      });
-    });
   }
 
   _buildComputedPropertyDescriptor(object, prop) {
@@ -486,15 +468,12 @@ export default class Modeler {
         if (_.isObject(newValue) && _.isFunction(newValue.then)) {
           const promise = newValue.then(finalValue => {
             if (promise === pendingPromise) update(finalValue);
-            // No need to angular.digest() here, since if we're running under Angular then we expect
-            // promises to be aliased to its $q service, which triggers digest itself.
           }, error => {
             if (promise === pendingPromise && update(new ErrorWrapper(error)) &&
                 !error.trussExpectedException) throw error;
           });
           pendingPromise = promise;
         } else if (update(newValue)) {
-          angular.digest();
           if (newValue instanceof ErrorWrapper && !newValue.error.trussExpectedException) {
             throw newValue.error;
           }
@@ -710,7 +689,6 @@ function wrapConnections(object, connections) {
       return wrapConnections(object, connections.call(this));
       /* eslint-enable no-invalid-this */
     };
-    fn.angularWatchSuppressed = true;
     return fn;
   }
   return _.mapValues(connections, descriptor => wrapConnections(object, descriptor));

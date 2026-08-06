@@ -1,5 +1,4 @@
 import {Handle, Query, Reference} from './Reference.js';
-import angular from './angularCompatibility.js';
 import stats from './utils/stats.js';
 import {isTrussEqual} from './utils/utils.js';
 
@@ -17,7 +16,6 @@ export default class Connector {
 
     this._subConnectors = {};
     this._disconnects = {};
-    this._angularUnwatches = undefined;
     this._data = {};
     this._vue = new Vue({data: {
       descriptors: {},
@@ -37,10 +35,6 @@ export default class Connector {
         this._connect(key, descriptor);
       }
     });
-
-    if (angular.active && scope && scope.$on && scope.$id) {
-      scope.$on('$destroy', () => {this.destroy();});
-    }
   }
 
   get ready() {
@@ -62,7 +56,6 @@ export default class Connector {
 
   destroy() {
     this._unlinkScopeProperties();
-    _.forEach(this._angularUnwatches, unwatch => {unwatch();});
     _.forEach(this._connections, (descriptor, key) => {this._disconnect(key);});
     this._vue.$destroy();
   }
@@ -98,14 +91,7 @@ export default class Connector {
     const connectionStats = stats.for(`connection.at.${key}`);
     const getter = this._computeConnection.bind(this, fn, connectionStats);
     const update = this._updateComputedConnection.bind(this, key, fn, connectionStats);
-    const angularWatch = angular.active && !fn.angularWatchSuppressed;
-    // Use this._vue.$watch instead of truss.observe here so that we can disable the immediate
-    // callback if we'll get one from Angular anyway.
-    this._vue.$watch(getter, update, {immediate: !angularWatch});
-    if (angularWatch) {
-      if (!this._angularUnwatches) this._angularUnwatches = [];
-      this._angularUnwatches.push(angular.watch(getter, update, true));
-    }
+    this._vue.$watch(getter, update, {immediate: true});
   }
 
   _computeConnection(fn, connectionStats) {
@@ -135,7 +121,6 @@ export default class Connector {
       this._subConnectors[key]._updateConnections(newDescriptor);
     }
     Vue.set(this._vue.descriptors, key, newDescriptor);
-    angular.digest();
   }
 
   _updateConnections(connections) {
@@ -150,7 +135,6 @@ export default class Connector {
 
   _connect(key, descriptor) {
     Vue.set(this._vue.descriptors, key, descriptor);
-    angular.digest();
     if (!descriptor) return;
     Vue.set(this._vue.values, key, undefined);
     if (descriptor instanceof Reference) {
@@ -175,7 +159,6 @@ export default class Connector {
           unobserve();
           delete this._disconnects[key];
           Vue.set(this._vue.values, key, subScope);
-          angular.digest();
         }
       );
     }
@@ -191,34 +174,29 @@ export default class Connector {
     if (this._disconnects[key]) this._disconnects[key]();
     delete this._disconnects[key];
     Vue.delete(this._vue.descriptors, key);
-    angular.digest();
   }
 
   _updateRefValue(key, value) {
     if (this._vue.values[key] !== value) {
       Vue.set(this._vue.values, key, value);
-      angular.digest();
     }
   }
 
   _updateQueryValue(key, childKeys) {
     if (!this._vue.values[key]) {
       Vue.set(this._vue.values, key, {});
-      angular.digest();
     }
     const subScope = this._vue.values[key];
     for (const childKey in subScope) {
       if (!Object.hasOwn(subScope, childKey)) continue;
       if (!_.includes(childKeys, childKey)) {
         Vue.delete(subScope, childKey);
-        angular.digest();
       }
     }
     const object = this._tree.getObject(this._vue.descriptors[key].path);
     for (const childKey of childKeys) {
       if (Object.hasOwn(subScope, childKey)) continue;
       Vue.set(subScope, childKey, object[childKey]);
-      angular.digest();
     }
   }
 
@@ -229,4 +207,3 @@ function flattenRefs(refs) {
   if (refs instanceof Handle) return refs.toString();
   return _.mapValues(refs, flattenRefs);
 }
-

@@ -1,4 +1,3 @@
-import angular from './angularCompatibility.js';
 import Vue from 'vue';
 import Reference from './Reference.js';
 
@@ -16,7 +15,6 @@ export default class MetaTree {
         if (!Object.hasOwn(this, key)) {
           const update = () => {
             Vue.set(this, key, Date.now() + this.timeOffset);
-            angular.digest();
           };
           update();
           setInterval(update, intervalMillis);
@@ -84,7 +82,6 @@ export default class MetaTree {
         if (user) Object.freeze(user);
         this.root.user = user;
         this.root.userid = user && user.uid;
-        angular.digest();
         return true;
       }
     );
@@ -101,7 +98,6 @@ export default class MetaTree {
     url.pathname = encodeURI(`/.info/${property}`);
     this._bridge.on(url.href, url.href, null, 'value', snap => {
       this.root[attribute] = snap.value;
-      angular.digest();
     });
   }
 }
