@@ -3712,10 +3712,6 @@ Object.defineProperties(Truss, {
   }}
 });
 
-if (typeof window !== 'undefined' && window.angular) {
-  window.angular.module('firetruss', []).constant('Truss', Truss);
-}
-
 export { Truss as default };
 
 //# sourceMappingURL=firetruss.es2015.js.map

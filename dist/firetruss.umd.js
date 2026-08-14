@@ -3720,10 +3720,6 @@
     }}
   });
 
-  if (typeof window !== 'undefined' && window.angular) {
-    window.angular.module('firetruss', []).constant('Truss', Truss);
-  }
-
   return Truss;
 
 }));
