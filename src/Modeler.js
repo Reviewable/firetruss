@@ -271,18 +271,18 @@ export default class Modeler {
 
   init(classes, rootAcceptable) {
     if (_.isPlainObject(classes)) {
+      const inferredMounts = new Map();
       _.forEach(classes, (Class, path) => {
         if (Class.$trussMount) return;
-        Class.$$trussMount = Class.$$trussMount || [];
-        Class.$$trussMount.push(path);
+        let mounts = inferredMounts.get(Class);
+        if (!mounts) {
+          mounts = [];
+          inferredMounts.set(Class, mounts);
+        }
+        mounts.push(path);
       });
       classes = _.values(classes);
-      _.forEach(classes, Class => {
-        if (!Class.$trussMount && Class.$$trussMount) {
-          Class.$trussMount = Class.$$trussMount;
-          delete Class.$$trussMount;
-        }
-      });
+      for (const [Class, mounts] of inferredMounts) Class.$trussMount = mounts;
     }
     classes = _.uniq(classes);
     const injectedPathVariables = new Map();

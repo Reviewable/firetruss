@@ -1809,18 +1809,18 @@
 
     init(classes, rootAcceptable) {
       if (___default.default.isPlainObject(classes)) {
+        const inferredMounts = new Map();
         ___default.default.forEach(classes, (Class, path) => {
           if (Class.$trussMount) return;
-          Class.$$trussMount = Class.$$trussMount || [];
-          Class.$$trussMount.push(path);
+          let mounts = inferredMounts.get(Class);
+          if (!mounts) {
+            mounts = [];
+            inferredMounts.set(Class, mounts);
+          }
+          mounts.push(path);
         });
         classes = ___default.default.values(classes);
-        ___default.default.forEach(classes, Class => {
-          if (!Class.$trussMount && Class.$$trussMount) {
-            Class.$trussMount = Class.$$trussMount;
-            delete Class.$$trussMount;
-          }
-        });
+        for (const [Class, mounts] of inferredMounts) Class.$trussMount = mounts;
       }
       classes = ___default.default.uniq(classes);
       const injectedPathVariables = new Map();
