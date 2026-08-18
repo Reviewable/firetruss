@@ -1815,7 +1815,9 @@ class Modeler {
       });
     }
     classes = _.uniq(classes);
-    _.forEach(classes, Class => this._mountClass(Class, rootAcceptable));
+    const injectedPathVariables = new Map();
+    _.forEach(
+      classes, Class => this._mountClass(Class, rootAcceptable, injectedPathVariables));
     this._decorateTrie(this._trie);
   }
 
@@ -1854,14 +1856,16 @@ class Modeler {
     });
   }
 
-  _augmentClass(Class) {
+  _augmentClass(Class, injectedPathVariables) {
     let computedProperties;
     let proto = Class.prototype;
     while (proto && proto.constructor !== Object) {
+      const injectedVariables = injectedPathVariables.get(proto);
       for (const name of Object.getOwnPropertyNames(proto)) {
         const descriptor = Object.getOwnPropertyDescriptor(proto, name);
         if (name.charAt(0) === '$') {
-          if (_.isEqual(descriptor, Object.getOwnPropertyDescriptor(Value.prototype, name))) {
+          if (_.isEqual(descriptor, Object.getOwnPropertyDescriptor(Value.prototype, name)) ||
+              injectedVariables && injectedVariables.get(name) === descriptor.get) {
             continue;
           }
           throw new Error(`Property names starting with "$" are reserved: ${Class.name}.${name}`);
@@ -1886,8 +1890,8 @@ class Modeler {
     return computedProperties;
   }
 
-  _mountClass(Class, rootAcceptable) {
-    const computedProperties = this._augmentClass(Class);
+  _mountClass(Class, rootAcceptable, injectedPathVariables) {
+    const computedProperties = this._augmentClass(Class, injectedPathVariables);
     const allVariables = [];
     let mounts = Class.$trussMount;
     if (!mounts) throw new Error(`Class ${Class.name} lacks a $trussMount static property`);
@@ -1930,12 +1934,19 @@ class Modeler {
         targetMount, {Class, matcher, computedProperties, escapedKey},
         _.pick(mount, 'placeholder', 'local', 'keysUnsafe', 'hidden'));
     });
+    let injectedVariables = injectedPathVariables.get(Class.prototype);
+    if (!injectedVariables) {
+      injectedVariables = new Map();
+      injectedPathVariables.set(Class.prototype, injectedVariables);
+    }
     _(allVariables).uniq().forEach(variable => {
-      Object.defineProperty(Class.prototype, variable, {get() {
+      const getter = () => {
         return creatingObjectProperties ?
           creatingObjectProperties[variable] && creatingObjectProperties[variable].value :
           undefined;
-      }});
+      };
+      Object.defineProperty(Class.prototype, variable, {get: getter});
+      injectedVariables.set(variable, getter);
     });
   }
 

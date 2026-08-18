@@ -102,6 +102,65 @@ test('initialize placeholders', () => {
   assert.equal(tree.root.sub.foo.constructor, SubrootFoo);
 });
 
+function testModelInheritanceMountOrder(orderName, orderClasses) {
+  test(`mount model inheritance ${orderName}`, () => {
+    class TopLocator {
+      static get $trussMount() {return '/top-locators/$reviewKey';}
+
+      get inheritedComputed() {
+        return `review=${this.$reviewKey}`;
+      }
+    }
+
+    class Locator extends TopLocator {
+      static get $trussMount() {return '/locators/$reviewKey/$locatorKey';}
+    }
+
+    const tree = new Tree(
+      context.truss, context.rootUrl, context.bridge, context.dispatcher);
+    try {
+      tree.init(orderClasses(TopLocator, Locator));
+      const topLocator = tree._createObject('/top-locators/top-review', tree.root);
+      tree._fixObject(topLocator);
+      tree._completeCreateObject(topLocator);
+      const locator = tree._createObject('/locators/review-1/locator-1', tree.root);
+      tree._fixObject(locator);
+      tree._completeCreateObject(locator);
+
+      assert.equal(topLocator.constructor, TopLocator);
+      assert.equal(topLocator.$reviewKey, 'top-review');
+      assert.equal(topLocator.inheritedComputed, 'review=top-review');
+      assert.equal(locator.constructor, Locator);
+      assert.equal(locator.$reviewKey, 'review-1');
+      assert.equal(locator.$locatorKey, 'locator-1');
+      assert.equal(locator.inheritedComputed, 'review=review-1');
+    } finally {
+      tree.destroy();
+    }
+  });
+}
+
+testModelInheritanceMountOrder('base first', (TopLocator, Locator) => [TopLocator, Locator]);
+testModelInheritanceMountOrder('subclass first', (TopLocator, Locator) => [Locator, TopLocator]);
+
+test('reject user-defined reserved properties', () => {
+  class ReservedProperty {
+    static get $trussMount() {return '/reserved';}
+    get $userDefined() {return true;}
+  }
+
+  const tree = new Tree(
+    context.truss, context.rootUrl, context.bridge, context.dispatcher);
+  try {
+    assert.throws(
+      () => tree.init([ReservedProperty]),
+      /Property names starting with "\$" are reserved: ReservedProperty\.\$userDefined/
+    );
+  } finally {
+    tree.destroy();
+  }
+});
+
 test('update after instance property change', async () => {
   const tree = context.tree;
   tree.root.x = 2;
