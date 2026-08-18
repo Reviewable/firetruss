@@ -102,8 +102,10 @@ test('initialize placeholders', () => {
   assert.equal(tree.root.sub.foo.constructor, SubrootFoo);
 });
 
-function testModelInheritanceMountOrder(orderName, makeMounts) {
+function testModelInheritanceMountOrder(orderName, makeMounts, explicitBaseMount) {
   test(`infer model inheritance mounts ${orderName}`, () => {
+    const topLocatorMount = '/top-locators/$reviewKey';
+    const locatorMount = '/locators/$reviewKey/$locatorKey';
     class TopLocator {
       get inheritedComputed() {
         return `review=${this.$reviewKey}`;
@@ -111,6 +113,7 @@ function testModelInheritanceMountOrder(orderName, makeMounts) {
     }
 
     class Locator extends TopLocator {}
+    if (explicitBaseMount) TopLocator.$trussMount = topLocatorMount;
 
     const tree = new Tree(
       context.truss, context.rootUrl, context.bridge, context.dispatcher);
@@ -130,8 +133,9 @@ function testModelInheritanceMountOrder(orderName, makeMounts) {
       assert.equal(locator.$reviewKey, 'review-1');
       assert.equal(locator.$locatorKey, 'locator-1');
       assert.equal(locator.inheritedComputed, 'review=review-1');
-      assert.deepEqual(TopLocator.$trussMount, ['/top-locators/$reviewKey']);
-      assert.deepEqual(Locator.$trussMount, ['/locators/$reviewKey/$locatorKey']);
+      assert.deepEqual(
+        TopLocator.$trussMount, explicitBaseMount ? topLocatorMount : [topLocatorMount]);
+      assert.deepEqual(Locator.$trussMount, [locatorMount]);
       assert.notEqual(TopLocator.$trussMount, Locator.$trussMount);
       assert.ok(Object.hasOwn(TopLocator, '$trussMount'));
       assert.ok(Object.hasOwn(Locator, '$trussMount'));
@@ -149,6 +153,14 @@ testModelInheritanceMountOrder('subclass first', (TopLocator, Locator) => ({
   '/locators/$reviewKey/$locatorKey': Locator,
   '/top-locators/$reviewKey': TopLocator
 }));
+testModelInheritanceMountOrder('with explicit base first', (TopLocator, Locator) => ({
+  '/top-locators/$reviewKey': TopLocator,
+  '/locators/$reviewKey/$locatorKey': Locator
+}), true);
+testModelInheritanceMountOrder('with explicit base and subclass first', (TopLocator, Locator) => ({
+  '/locators/$reviewKey/$locatorKey': Locator,
+  '/top-locators/$reviewKey': TopLocator
+}), true);
 
 test('reject user-defined reserved properties', () => {
   class ReservedProperty {

@@ -1811,7 +1811,7 @@
       if (___default.default.isPlainObject(classes)) {
         const inferredMounts = new Map();
         ___default.default.forEach(classes, (Class, path) => {
-          if (Class.$trussMount) return;
+          if (Object.hasOwn(Class, '$trussMount')) return;
           let mounts = inferredMounts.get(Class);
           if (!mounts) {
             mounts = [];
