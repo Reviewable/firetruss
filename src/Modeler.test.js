@@ -107,13 +107,15 @@ function testModelInheritanceMountOrder(orderName, makeMounts, explicitBaseMount
     const topLocatorMount = '/top-locators/$reviewKey';
     const locatorMount = '/locators/$reviewKey/$locatorKey';
     class TopLocator {
+      static get $trussMount() {return topLocatorMount;}
+
       get inheritedComputed() {
         return `review=${this.$reviewKey}`;
       }
     }
 
     class Locator extends TopLocator {}
-    if (explicitBaseMount) TopLocator.$trussMount = topLocatorMount;
+    if (!explicitBaseMount) delete TopLocator.$trussMount;
 
     const tree = new Tree(
       context.truss, context.rootUrl, context.bridge, context.dispatcher);

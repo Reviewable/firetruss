@@ -282,7 +282,11 @@ export default class Modeler {
         mounts.push(path);
       });
       classes = _.values(classes);
-      for (const [Class, mounts] of inferredMounts) Class.$trussMount = mounts;
+      for (const [Class, mounts] of inferredMounts) {
+        Object.defineProperty(Class, '$trussMount', {
+          value: mounts, configurable: true, enumerable: true, writable: true
+        });
+      }
     }
     classes = _.uniq(classes);
     const injectedPathVariables = new Map();

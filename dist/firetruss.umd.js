@@ -1820,7 +1820,11 @@
           mounts.push(path);
         });
         classes = ___default.default.values(classes);
-        for (const [Class, mounts] of inferredMounts) Class.$trussMount = mounts;
+        for (const [Class, mounts] of inferredMounts) {
+          Object.defineProperty(Class, '$trussMount', {
+            value: mounts, configurable: true, enumerable: true, writable: true
+          });
+        }
       }
       classes = ___default.default.uniq(classes);
       const injectedPathVariables = new Map();
