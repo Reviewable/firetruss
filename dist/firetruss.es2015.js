@@ -2673,6 +2673,13 @@ class Coupler {
     return queryHandler && queryHandler.ready;
   }
 
+  waitForRemoteDataUpdates() {
+    if (!this._pendingSnapshotCallbacks.length) return;
+    return new Promise(resolve => {
+      this._pendingSnapshotCallbacks.push(resolve);
+    });
+  }
+
   _queueSnapshotCallback(callback) {
     this._pendingSnapshotCallbacks.push(callback);
     this._throttled.processPendingSnapshots.call(this);
@@ -2848,6 +2855,10 @@ class Tree {
 
   throttleRemoteDataUpdates(delay) {
     this._coupler.throttleSnapshots(delay);
+  }
+
+  waitForRemoteDataUpdates() {
+    return this._coupler.waitForRemoteDataUpdates();
   }
 
   update(ref, method, values) {
@@ -3631,6 +3642,11 @@ class Truss {
 
   throttleRemoteDataUpdates(delay) {
     this._tree.throttleRemoteDataUpdates(delay);
+  }
+
+  waitForRemoteDataUpdates() {
+    const promise = this._tree.waitForRemoteDataUpdates();
+    return promise ? promise.then(() => this.nextTick()) : Promise.resolve();
   }
 
   checkObjectsForRogueProperties() {

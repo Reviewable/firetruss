@@ -227,6 +227,28 @@ test('handle snapshot', () => {
   assertSnapshotApplied('/foo', 0);
 });
 
+test('wait for remote data updates', async () => {
+  const that = context.coupler;
+  assert.equal(that.waitForRemoteDataUpdates(), undefined);
+
+  that._throttled.processPendingSnapshots = mock.fn();
+  that.couple('/foo', context.op1);
+  that._root.children.foo._handleSnapshot({path: '/foo'});
+
+  const promise = that.waitForRemoteDataUpdates();
+  let resolved = false;
+  promise.then(() => {resolved = true;});
+  that._root.children.foo._handleSnapshot({path: '/foo'});
+  await Promise.resolve();
+  assert.equal(resolved, false);
+
+  that._processPendingSnapshots();
+  await promise;
+  assert.equal(resolved, true);
+  assert.equal(that._pendingSnapshotCallbacks.length, 0);
+  assertSnapshotApplied('/foo', 2);
+});
+
 test('handle error', async () => {
   const that = context.coupler;
   const error = new Error('test');

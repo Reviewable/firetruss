@@ -165,6 +165,10 @@ export default class Tree {
     this._coupler.throttleSnapshots(delay);
   }
 
+  waitForRemoteDataUpdates() {
+    return this._coupler.waitForRemoteDataUpdates();
+  }
+
   update(ref, method, values) {
     values = _.mapValues(values, value => escapeKeys(value));
     const numValues = _.size(values);
