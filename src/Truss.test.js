@@ -10,7 +10,7 @@ test('wait for remote data updates resolves immediately when none are pending', 
   const nextTick = mock.fn();
   const truss = {_tree: {waitForRemoteDataUpdates}, nextTick};
 
-  const promise = Truss.prototype.waitForRemoteDataUpdates.call(truss);
+  const promise = Truss.prototype.waitForThrottledRemoteDataUpdates.call(truss);
   let resolved = false;
   promise.then(() => {resolved = true;});
   await Promise.resolve();
@@ -29,7 +29,7 @@ test('wait for remote data updates adds a next tick after pending snapshots', as
   const nextTick = mock.fn(() => nextTickPromise);
   const truss = {_tree: {waitForRemoteDataUpdates}, nextTick};
 
-  const promise = Truss.prototype.waitForRemoteDataUpdates.call(truss);
+  const promise = Truss.prototype.waitForThrottledRemoteDataUpdates.call(truss);
   let resolved = false;
   promise.then(() => {resolved = true;});
   resolveRemoteDataUpdates();

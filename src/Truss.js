@@ -223,7 +223,7 @@ export default class Truss {
     this._tree.throttleRemoteDataUpdates(delay);
   }
 
-  waitForRemoteDataUpdates() {
+  waitForThrottledRemoteDataUpdates() {
     const promise = this._tree.waitForRemoteDataUpdates();
     return promise ? promise.then(() => this.nextTick()) : Promise.resolve();
   }
