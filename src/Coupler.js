@@ -428,6 +428,13 @@ export default class Coupler {
     return queryHandler && queryHandler.ready;
   }
 
+  waitForRemoteDataUpdates() {
+    if (!this._pendingSnapshotCallbacks.length) return;
+    return new Promise(resolve => {
+      this._pendingSnapshotCallbacks.push(resolve);
+    });
+  }
+
   _queueSnapshotCallback(callback) {
     this._pendingSnapshotCallbacks.push(callback);
     this._throttled.processPendingSnapshots.call(this);

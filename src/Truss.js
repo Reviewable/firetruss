@@ -223,6 +223,11 @@ export default class Truss {
     this._tree.throttleRemoteDataUpdates(delay);
   }
 
+  waitForThrottledRemoteDataUpdates() {
+    const promise = this._tree.waitForRemoteDataUpdates();
+    return promise ? promise.then(() => this.nextTick()) : Promise.resolve();
+  }
+
   checkObjectsForRogueProperties() {
     this._tree.checkVueObject(this._tree.root, '/');
   }
