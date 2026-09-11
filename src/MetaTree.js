@@ -1,3 +1,4 @@
+import _ from 'lodash';
 import Vue from 'vue';
 import Reference from './Reference.js';
 
@@ -75,17 +76,28 @@ export default class MetaTree {
     if (user !== undefined) this._auth.initialAuthChangeReceived = true;
     if (supersededChange) return;
     const authSerial = this._auth.serial;
-    if (this.root.user === user) return Promise.resolve(false);
-    const promise = this._dispatcher.execute(
-      'auth', 'certify', new Reference(this._tree, '/'), user, () => {
-        if (this.root.user === user || authSerial !== this._auth.serial) return false;
-        if (user) Object.freeze(user);
-        this.root.user = user;
-        this.root.userid = user && user.uid;
-        return true;
-      }
-    );
-    this._auth.changePromise = this._auth.changePromise.then(() => promise).catch();
+    // Serialize certifications.  The bridge doesn't await our auth listeners, so consecutive
+    // callbacks would otherwise overlap:  a second certification could run its interceptors and
+    // publish while an earlier one is still in its own onBefore, letting the two land out of
+    // order.  The serial below can't catch that, since it only changes when the app itself calls
+    // authenticate()/unauthenticate(), not between two callbacks from the bridge.  Note that the
+    // duplicate-user check has to wait for our turn too, or a change queued behind a pending one
+    // would be discarded by comparing against a root the queue hasn't updated yet.
+    const promise = this._auth.changePromise.then(() => {
+      if (this.root.user === user) return false;
+      return this._dispatcher.execute(
+        'auth', 'certify', new Reference(this._tree, '/'), user, () => {
+          if (this.root.user === user || authSerial !== this._auth.serial) return false;
+          if (user) Object.freeze(user);
+          this.root.user = user;
+          this.root.userid = user && user.uid;
+          return true;
+        }
+      );
+    });
+    // Keep the queue moving if this certification fails, without swallowing the rejection for the
+    // caller, which needs to see it.
+    this._auth.changePromise = promise.catch(_.noop);
     return promise;
   }
 
