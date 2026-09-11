@@ -1457,7 +1457,10 @@ class MetaTree {
       }
     }}});
 
-    this._auth = {serial: 0, initialAuthChangeReceived: false, changePromise: Promise.resolve()};
+    this._auth = {
+      serial: 0, initialAuthChangeReceived: false, changePromise: Promise.resolve(),
+      certifying: false
+    };
 
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
@@ -1509,17 +1512,35 @@ class MetaTree {
     if (user !== undefined) this._auth.initialAuthChangeReceived = true;
     if (supersededChange) return;
     const authSerial = this._auth.serial;
-    if (this.root.user === user) return Promise.resolve(false);
-    const promise = this._dispatcher.execute(
-      'auth', 'certify', new Reference(this._tree, '/'), user, () => {
-        if (this.root.user === user || authSerial !== this._auth.serial) return false;
-        if (user) Object.freeze(user);
-        this.root.user = user;
-        this.root.userid = user && user.uid;
-        return true;
-      }
-    );
-    this._auth.changePromise = this._auth.changePromise.then(() => promise).catch();
+    // Serialize certifications.  The bridge doesn't await our auth listeners, so consecutive
+    // callbacks would otherwise overlap:  a second certification could run its interceptors and
+    // publish while an earlier one is still in its own onBefore, letting the two land out of
+    // order.  The serial below can't catch that, since it only changes when the app itself calls
+    // authenticate()/unauthenticate(), not between two callbacks from the bridge.  Note that the
+    // duplicate-user check has to wait for our turn too, or a change queued behind a pending one
+    // would be discarded by comparing against a root the queue hasn't updated yet.
+    // An interceptor of the running certification may itself trigger an auth change, and queueing
+    // that behind the certification whose interceptor is awaiting it would deadlock both.  Such a
+    // nested change is already ordered by the interceptor that asked for it, so run it directly.
+    const queue = this._auth.certifying ? Promise.resolve() : this._auth.changePromise;
+    const promise = queue.then(() => {
+      if (this.root.user === user) return false;
+      this._auth.certifying = true;
+      return this._dispatcher.execute(
+        'auth', 'certify', new Reference(this._tree, '/'), user, () => {
+          if (this.root.user === user || authSerial !== this._auth.serial) return false;
+          if (user) Object.freeze(user);
+          this.root.user = user;
+          this.root.userid = user && user.uid;
+          return true;
+        }
+      ).finally(() => {
+        this._auth.certifying = false;
+      });
+    });
+    // Keep the queue moving if this certification fails, without swallowing the rejection for the
+    // caller, which needs to see it.
+    if (queue === this._auth.changePromise) this._auth.changePromise = promise.catch(_.noop);
     return promise;
   }
 
