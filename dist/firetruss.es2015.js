@@ -1139,7 +1139,7 @@ function promiseFinally(promise, onFinally) {
 
 const INTERCEPT_KEYS = [
   'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'authenticate',
-  'unathenticate', 'certify', 'all'
+  'unauthenticate', 'certify', 'all'
 ];
 
 const EMPTY_ARRAY = [];
@@ -1297,9 +1297,10 @@ class Dispatcher {
   execute(operationType, method, target, operand, executor) {
     executor = wrapPromiseCallback(executor);
     const operation = this.createOperation(operationType, method, target, operand);
-    return this.begin(operation).then(() => {
+    return this.begin(operation).then(onBeforeResults => {
       const executeWithRetries = () => {
-        return executor().catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
+        return executor(onBeforeResults)
+          .catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
       };
       return executeWithRetries();
     }).then(result => this.end(operation).then(() => result));
@@ -1309,12 +1310,17 @@ class Dispatcher {
     return new Operation(operationType, method, target, operand);
   }
 
+  // Resolves with the `onBefore` handler results, so that an executor can make decisions based on
+  // them;  `certify` uses this to let a handler reject the candidate user.  All handlers are
+  // awaited before the results are delivered, so one handler's verdict can't race another's
+  // asynchronous setup.
   begin(operation) {
     return Promise.all(_.map(
       this._getCallbacks('onBefore', operation.type, operation.method),
       onBefore => onBefore(operation)
-    )).then(() => {
+    )).then(results => {
       if (!operation.ended) operation._setRunning(true);
+      return results;
     }, e => this.end(operation, e));
   }
 
@@ -1436,6 +1442,12 @@ class KeyGenerator {
   }
 }
 
+// Thrown by `authenticate()` when a `certify` interceptor rejected the candidate user.  The
+// candidate is never published, and the sign-out that clears it out runs before this is raised, so
+// a failure of that sign-out takes precedence over this error.
+const AUTH_REJECTED = 'AUTH_REJECTED';
+
+
 class MetaTree {
   constructor(rootUrl, tree, bridge, dispatcher) {
     this._rootUrl = rootUrl;
@@ -1457,7 +1469,21 @@ class MetaTree {
       }
     }}});
 
-    this._auth = {serial: 0, initialAuthChangeReceived: false, changePromise: Promise.resolve()};
+    this._auth = {
+      // Set once the app has issued an auth call of its own, so that the bridge's initial auth
+      // change callback can be ignored as superseded.  A counter isn't needed:  client calls are
+      // fully serialized below, and callbacks are assigned to whichever call is outstanding.
+      callIssued: false,
+      initialAuthChangeReceived: false,
+      // Certifications are serialized on this promise.  A client-issued auth call takes ownership
+      // of it for as long as it runs, so that every callback it provokes is finished before the
+      // call resolves.
+      changePromise: Promise.resolve(),
+      // The first certification failure seen while a client-issued call owns the queue, so that
+      // the call can report it.  The queue itself always recovers, so that one bad certification
+      // can't wedge the ones behind it.
+      pendingFailure: undefined
+    };
 
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
 
@@ -1476,55 +1502,127 @@ class MetaTree {
   }
 
   authenticate(token) {
-    this._auth.serial++;
-    return this._dispatcher.execute(
+    return this._runAuthCall(() => this._dispatcher.execute(
       'auth', 'authenticate', new Reference(this._tree, '/'), token, () => {
-        const promise = token ?
+        return token ?
           this._bridge.authWithCustomToken(this._rootUrl, token) :
           this._bridge.authAnonymously(this._rootUrl);
-        return promise.then(() => this._auth.changePromise);
       }
-    );
+    ));
   }
 
   unauthenticate() {
-    // Signal user change to null pre-emptively.  This is what the Firebase SDK does as well, since
-    // it lets the app tear down user-required connections before the user is actually deauthed,
-    // which can prevent spurious permission denied errors.
-    this._auth.serial++;
-    return this._handleAuthChange(null).then(approved => {
-      // Bail if auth change callback initiated another authentication, since it will have already
-      // sent the command to the bridge and sending our own now would incorrectly override it.
-      if (!approved) return;
-      return this._dispatcher.execute(
-        'auth', 'unauthenticate', new Reference(this._tree, '/'), undefined, () => {
-          return this._bridge.unauth(this._rootUrl);
-        }
-      );
+    return this._runAuthCall(() => this._signOut());
+  }
+
+  // Runs a client-issued auth call with exclusive ownership of the certification queue.  Every
+  // auth change callback that arrives from the moment the call is made until it finishes belongs
+  // to it:  the bridge can deliver a callback and resolve the call's RPC in the same batch, and
+  // the worker's `userToJson` doesn't guarantee that callbacks arrive in invocation order, so
+  // waiting on the queue as it stands when the call finishes is what ties the two together.
+  // Nested calls are not supported;  a `certify` interceptor that needs to reject its user returns
+  // `false` instead of signing out itself.
+  _runAuthCall(run) {
+    this._auth.callIssued = true;
+    // Claim the queue synchronously, since the bridge can deliver a callback in the same tick as
+    // the call.  Waiting for the previous tail to settle before claiming it would leave those
+    // callbacks on the old tail, where this call would never see their outcome.  Failures left
+    // over from before the claim belong to whoever was waiting on them, so they're swallowed here.
+    const previousTail = this._auth.changePromise;
+    this._auth.changePromise = Promise.resolve();
+    this._auth.pendingFailure = undefined;
+    return previousTail.catch(_.noop).then(() => run()).then(
+      result => this._finishAuthCall().then(() => result),
+      // The call's own failure wins over any certification failure it provoked:  a forced sign-out
+      // that couldn't reach the bridge matters more than the rejection that triggered it.
+      error => this._finishAuthCall().then(() => Promise.reject(error))
+    );
+  }
+
+  // Waits for the certification queue to stop growing, not merely for its current tail:  settling
+  // one certification can enqueue the next one, and a call must not finish while any of them is
+  // still in flight.
+  _settleChangePromise() {
+    const tail = this._auth.changePromise;
+    return tail.catch(_.noop).then(() => {
+      if (this._auth.changePromise !== tail) return this._settleChangePromise();
+    });
+  }
+
+  // Finishes out a client-issued call by blocking on the queue as it then stands, so that every
+  // callback the call provoked has certified before it resolves, and surfacing any certification
+  // failure among them to the caller.
+  _finishAuthCall() {
+    return this._settleChangePromise().then(() => {
+      const failure = this._auth.pendingFailure;
+      this._auth.pendingFailure = undefined;
+      if (failure) return Promise.reject(failure);
     });
   }
 
   _handleAuthChange(user) {
-    const supersededChange = !this._auth.initialAuthChangeReceived && this._auth.serial;
+    const supersededChange = !this._auth.initialAuthChangeReceived && this._auth.callIssued;
     if (user !== undefined) this._auth.initialAuthChangeReceived = true;
     if (supersededChange) return;
-    const authSerial = this._auth.serial;
-    if (this.root.user === user) return Promise.resolve(false);
-    const promise = this._dispatcher.execute(
-      'auth', 'certify', new Reference(this._tree, '/'), user, () => {
-        if (this.root.user === user || authSerial !== this._auth.serial) return false;
+    // Serialize certifications.  The bridge doesn't await our auth listeners, so consecutive
+    // callbacks would otherwise overlap:  a second certification could run its interceptors and
+    // publish while an earlier one is still in its own onBefore, letting the two land out of
+    // order.  The duplicate-user check has to wait for our turn too, or a change queued behind a
+    // pending one would be discarded by comparing against a root the queue hasn't updated yet.
+    const promise = this._auth.changePromise.catch(_.noop).then(() => {
+      if (this.root.user === user) return false;
+      return this._certify(user);
+    });
+    // Keep the queue moving if this certification fails, but hold on to the failure so that a
+    // client-issued call waiting on the queue can report it.
+    this._auth.changePromise = promise.catch(error => {
+      if (!this._auth.pendingFailure) this._auth.pendingFailure = error;
+    });
+    return promise;
+  }
+
+  // Runs the certification for a candidate user.  A `certify` interceptor rejects the candidate by
+  // returning literal `false` from `onBefore`;  every handler is awaited before the verdict is
+  // acted on, so a rejecting handler can't race another handler's asynchronous key setup.  A
+  // rejected user is never published:  it's signed out from within this turn instead, so that the
+  // sign-out doesn't queue behind the certification that asked for it.
+  _certify(user) {
+    return this._dispatcher.execute(
+      'auth', 'certify', new Reference(this._tree, '/'), user, onBeforeResults => {
+        if (user && _.some(onBeforeResults, result => result === false)) return 'rejected';
+        if (this.root.user === user) return false;
         if (user) Object.freeze(user);
         this.root.user = user;
         this.root.userid = user && user.uid;
         return true;
       }
-    );
-    this._auth.changePromise = this._auth.changePromise.then(() => promise).catch();
-    return promise;
+    ).then(outcome => {
+      if (outcome !== 'rejected') return outcome;
+      // Clear out the rejected candidate before reporting it.  A failure here is the more urgent
+      // one, so let it through in place of the rejection.
+      return this._signOut().then(() => {
+        const error = new Error('Authentication rejected');
+        error.code = AUTH_REJECTED;
+        return Promise.reject(error);
+      });
+    });
   }
 
-  _isAuthChangeStale(user) {
-    return this.root.user === user;
+  // The guts of `unauthenticate()`, usable from inside a certification turn.  The whole flow is
+  // wrapped in an `auth/unauthenticate` operation, null certification included, so that every
+  // logout failure reaches an `onFailure` with `op.method === 'unauthenticate'` even when the
+  // enclosing authentication error is caught.
+  _signOut() {
+    return this._dispatcher.execute(
+      'auth', 'unauthenticate', new Reference(this._tree, '/'), undefined, () => {
+        // Signal the user change to null pre-emptively.  This is what the Firebase SDK does as
+        // well, since it lets the app tear down user-required connections before the user is
+        // actually deauthed, which can prevent spurious permission denied errors.  An already-null
+        // client user says nothing about the worker, which may well still be signed in, so the
+        // bridge sign-out below runs either way.
+        return this._certify(null).then(() => this._bridge.unauth(this._rootUrl));
+      }
+    );
   }
 
   _connectInfoProperty(property, attribute) {
