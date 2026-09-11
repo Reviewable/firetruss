@@ -1510,7 +1510,12 @@ class MetaTree {
     if (supersededChange) return;
     const authSerial = this._auth.serial;
     if (this.root.user === user) return Promise.resolve(false);
-    const promise = this._dispatcher.execute(
+    // Serialize certifications.  The bridge doesn't await our auth listeners, so consecutive
+    // callbacks would otherwise overlap:  a second certification could run its interceptors and
+    // publish while an earlier one is still in its own onBefore, letting the two land out of
+    // order.  The serial below can't catch that, since it only changes when the app itself calls
+    // authenticate()/unauthenticate(), not between two callbacks from the bridge.
+    const promise = this._auth.changePromise.then(() => this._dispatcher.execute(
       'auth', 'certify', new Reference(this._tree, '/'), user, () => {
         if (this.root.user === user || authSerial !== this._auth.serial) return false;
         if (user) Object.freeze(user);
@@ -1518,8 +1523,10 @@ class MetaTree {
         this.root.userid = user && user.uid;
         return true;
       }
-    );
-    this._auth.changePromise = this._auth.changePromise.then(() => promise).catch();
+    ));
+    // Keep the chain going even if this certification fails, but don't swallow the result for
+    // the caller, which needs to know whether the change was actually applied.
+    this._auth.changePromise = promise.catch(_.noop);
     return promise;
   }
 
