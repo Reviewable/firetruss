@@ -764,6 +764,36 @@ test('a certification failure reaches the authenticate operation hooks', async (
   assert.equal(metaTree.root.user, null);
 });
 
+// The delivery cutoff, not just the drain, is what keeps a predecessor's certification out of a
+// call's result:  a callback delivered before the call can still take its turn after the call has
+// registered its collector, and attributing that turn would report a stranger's failure.  The
+// failing certification is the last one here, so nothing later can mask it.
+test('a certification delivered before a call stays out of its result', async () => {
+  const {deliver, dispatcher, metaTree} = createMetaTree({authResults: {token: {uid: 'mine'}}});
+  await deliver(null);
+  let releaseFirst;
+  dispatcher.intercept('certify', {
+    onBefore: op => {
+      if (!op.operand) return;
+      if (op.operand.uid === 'first') return new Promise(resolve => {releaseFirst = resolve;});
+      if (op.operand.uid === 'second') return Promise.reject(new Error('second failed'));
+    }
+  });
+
+  // Both arrive before any call exists:  'first' parks and 'second' queues behind it.
+  const first = Promise.resolve(deliver({uid: 'first'})).catch(() => undefined);
+  const second = Promise.resolve(deliver({uid: 'second'})).catch(() => undefined);
+  await drain();
+
+  // The call registers its collector, then waits out both.  'second' fails during that wait.
+  const authenticated = race(metaTree.authenticate('token'));
+  await drain();
+  releaseFirst();
+  await Promise.all([first, second]);
+
+  assert.equal(await authenticated, 'resolved', 'reported a predecessor\'s failure');
+});
+
 // pkaminski gh-4033197718:  waiting for the previous certification tail doesn't wait for the
 // previous auth operation, so both RPCs go out.  The queue has to cover the whole operation.
 test('a second auth call does not start until the first operation finishes', async () => {
