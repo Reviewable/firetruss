@@ -7,9 +7,20 @@ import Dispatcher from './Dispatcher.js';
 import MetaTree from './MetaTree.js';
 
 // The bridge doesn't await auth listeners, so it can deliver consecutive callbacks that overlap.
-function createMetaTree({unauth} = {}) {
+// Pass `withholdAuth` to keep the auth RPCs pending until `resolveAuth()` releases them by token,
+// which is how a call's own certification result gets separated from later background ones.
+function createMetaTree({unauth, withholdAuth, authResults = {}} = {}) {
   let handleAuthChange;
   const unauthCalls = [];
+  const authCalls = [];
+  const pendingAuth = new Map();
+  // The worker resolves an auth request with the user it signed in (`userToJson(result.user)`), so
+  // the stub does too:  a call uses that to know an auth change answering it is on its way.
+  const authenticate = token => {
+    authCalls.push(token);
+    if (!withholdAuth) return Promise.resolve(authResults[token]);
+    return new Promise(resolve => {pendingAuth.set(token, resolve);});
+  };
   const bridge = {
     onAuth: (rootUrl, callback, context) => {handleAuthChange = callback.bind(context);},
     trackServer: () => undefined,
@@ -19,12 +30,27 @@ function createMetaTree({unauth} = {}) {
       unauthCalls.push(true);
       return unauth ? unauth() : Promise.resolve();
     },
-    authWithCustomToken: () => Promise.resolve(),
-    authAnonymously: () => Promise.resolve()
+    authWithCustomToken: (rootUrl, token) => authenticate(token),
+    authAnonymously: () => authenticate(undefined)
   };
   const dispatcher = new Dispatcher(bridge);
   const metaTree = new MetaTree('https://example.firebaseio.com', {}, bridge, dispatcher);
-  return {deliver: user => handleAuthChange(user), dispatcher, metaTree, unauthCalls};
+  return {
+    deliver: user => handleAuthChange(user),
+    dispatcher, metaTree, unauthCalls, authCalls,
+    resolveAuth: (token, user) => {
+      const resolve = pendingAuth.get(token);
+      assert.ok(resolve, `no auth RPC pending for ${token}`);
+      pendingAuth.delete(token);
+      resolve(user);
+    }
+  };
+}
+
+// Lets every already-scheduled microtask and timer callback run, so that a test can assert on what
+// the implementation did or didn't start rather than on a fixed number of ticks.
+function drain() {
+  return new Promise(resolve => {setTimeout(resolve, 10);});
 }
 
 // Mimics the client's key handling:  a sign-in installs the key before its user is published, and
@@ -345,6 +371,47 @@ test('a null certification failure reaches an unauthenticate onFailure', async (
   assert.equal(unauthCalls.length, 0, 'signed the worker out despite failed cleanup');
 });
 
+// pkaminski:  the 'rejected' outcome used to be examined only after Dispatcher.execute() had
+// finished onAfter, so a throwing certify onAfter skipped the sign-out entirely and left Firebase
+// holding a login the client had refused, with no unauthenticate.onFailure to detect it.
+test('a rejected candidate is signed out even when a certify onAfter fails', async () => {
+  const {deliver, dispatcher, metaTree, unauthCalls} = createMetaTree();
+  await deliver(null);
+  dispatcher.intercept('certify', {
+    onBefore: op => op.operand ? false : undefined,
+    onAfter: op => {
+      if (op.operand) throw new Error('after hook failed');
+    }
+  });
+
+  const error = await settle(deliver({uid: 'github:1'}));
+
+  assert.equal(error.message, 'after hook failed', 'lost the hook error');
+  assert.equal(metaTree.root.user, null, 'published a rejected user');
+  assert.equal(unauthCalls.length, 1, 'skipped the worker sign-out for a rejected candidate');
+});
+
+test('a failed sign-out outranks a certify onAfter failure', async () => {
+  const {deliver, dispatcher} =
+    createMetaTree({unauth: () => Promise.reject(new Error('worker sign-out failed'))});
+  await deliver(null);
+  const failures = [];
+  dispatcher.intercept('certify', {
+    onBefore: op => op.operand ? false : undefined,
+    onAfter: op => {
+      if (op.operand) throw new Error('after hook failed');
+    }
+  });
+  dispatcher.intercept('unauthenticate', {onFailure: op => {failures.push(op.method);}});
+
+  const error = await settle(deliver({uid: 'github:1'}));
+  // onFailure callbacks are dispatched on a timeout.
+  await new Promise(resolve => {setTimeout(resolve, 0);});
+
+  assert.equal(error.message, 'worker sign-out failed');
+  assert.deepEqual(failures, ['unauthenticate'], 'the logout failure never reached an onFailure');
+});
+
 // The sign-out that clears a rejected candidate matters more than the rejection that caused it.
 test('a failed forced sign-out takes precedence over the rejection', async () => {
   const {deliver, dispatcher, metaTree} =
@@ -373,4 +440,228 @@ test('a nested public auth call from an interceptor is not supported', async () 
   });
 
   assert.equal(await race(deliver({uid: 'github:1'})), 'hung');
+});
+// Repro tests appended to MetaTree.test.js
+
+// pkaminski gh-4033197670:  resetting the certification chain when a call claims the queue orphans
+// an in-flight certification.  The paused certification completes against the orphaned tail and
+// publishes its user, while the sign-out delivered meanwhile was dropped as a duplicate by
+// comparing against a root that the orphaned turn hadn't updated yet.
+test('a sign-out delivered while a call waits on a paused certification is not lost', async () => {
+  const {deliver, dispatcher, metaTree} = createMetaTree();
+  await deliver(null);
+  let release;
+  dispatcher.intercept('certify', {
+    onBefore: op => {
+      if (op.operand && op.operand.uid === 'old') {
+        return new Promise(resolve => {release = resolve;});
+      }
+    }
+  });
+
+  // An unsolicited sign-in parks in onBefore, before the root has been updated.
+  const oldCertification = Promise.resolve(deliver({uid: 'old'})).catch(() => undefined);
+  await Promise.resolve();
+
+  // The app issues a call while that certification is still paused, then the bridge reports a
+  // sign-out that supersedes it.
+  const authenticated = metaTree.authenticate('next');
+  await Promise.resolve();
+  const signedOut = Promise.resolve(deliver(null)).catch(() => undefined);
+  await Promise.resolve();
+
+  release();
+  await Promise.all([oldCertification, signedOut]);
+  await race(authenticated);
+
+  assert.notEqual(metaTree.root.userid, 'old', 'published the stale user after a sign-out');
+});
+
+// pkaminski gh-4033197683:  clearing pendingFailure when a call claims the queue lets the orphaned
+// tail's recovery handler refill the slot, so the new call rejects with a background error.
+test('a background certification failure does not leak into the next call', async () => {
+  const {deliver, dispatcher, metaTree} = createMetaTree();
+  await deliver(null);
+  let release, paused;
+  dispatcher.intercept('certify', {
+    onBefore: op => {
+      if (!op.operand) return;
+      if (op.operand.uid === 'background' && !paused) {
+        paused = true;
+        return new Promise((resolve, reject) => {release = reject;});
+      }
+    }
+  });
+
+  const background = Promise.resolve(deliver({uid: 'background'})).catch(() => undefined);
+  await Promise.resolve();
+
+  const authenticated = metaTree.authenticate('token');
+  await Promise.resolve();
+  release(new Error('old background failure'));
+  await background;
+  Promise.resolve(deliver({uid: 'new'})).catch(() => undefined);
+
+  assert.equal(
+    await race(authenticated), 'resolved', 'the call inherited a background failure');
+  assert.equal(metaTree.root.userid, 'new');
+});
+
+// pkaminski gh-4033197643:  a call must finish on the certification result captured when its RPC
+// settled, not on whatever the chain holds later.  A background failure arriving after settlement
+// belongs to the next turn's drain, not to this call.
+// pkaminski gh-4033197643:  a call must finish on the certification result captured when its RPC
+// settled, not on whatever the chain holds later.  A background failure arriving after settlement
+// belongs to the next turn's drain, not to this call.
+test(
+  'a certification failing after the RPC settles does not fail the call',
+  async () => {
+    const {deliver, dispatcher, metaTree} = createMetaTree();
+    await deliver(null);
+    let release, held;
+    // Resolves once the held certification has actually entered onBefore, so the test doesn't have
+    // to guess how many ticks that takes.
+    const reached = new Promise(resolveReached => {
+      dispatcher.intercept('certify', {
+        onBefore: op => {
+          if (!op.operand) return;
+          if (op.operand.uid === 'late') {
+            return Promise.reject(new Error('late background failure'));
+          }
+          if (held) return;
+          held = true;
+          return new Promise(resolve => {
+            release = resolve;
+            resolveReached();
+          });
+        }
+      });
+    });
+
+    const authenticated = race(metaTree.authenticate('token'));
+    await drain();
+    // Hold this call's own certification open, then let it finish, so the call's window closes.
+    Promise.resolve(deliver({uid: 'mine'})).catch(() => undefined);
+    await reached;
+    release();
+    await drain();
+    // Only now does an unrelated background certification fail;  it belongs to no call.
+    Promise.resolve(deliver({uid: 'late'})).catch(() => undefined);
+
+    assert.equal(await authenticated, 'resolved', 'a later background failure failed the call');
+  });
+
+// pkaminski gh-4033197605:  with a shared failure slot the first call to finish consumed it and the
+// outcomes got crossed.  These two document that each call reports its own outcome once
+// `firetruss-worker` delivers auth changes in Firebase's order, each with its own response;  they
+// pass against the shared slot too, since that ordering alone avoids the crossing.  The unordered
+// batch that crossed them is covered by firetruss-worker#27, not here.
+function testBatchedAuthCalls(failing) {
+  test(
+    `batched auth calls report their own outcome when ${failing} fails`,
+    async () => {
+      const {deliver, dispatcher, metaTree, resolveAuth} = createMetaTree({withholdAuth: true});
+      await deliver(null);
+      dispatcher.intercept('certify', {
+        onBefore: op => {
+          if (op.operand && op.operand.uid === failing) {
+            return Promise.reject(new Error(`${failing} failed`));
+          }
+        }
+      });
+
+      // Both calls are issued before either worker response comes back, but each call's callback
+      // arrives with its own response:  `firetruss-worker` serializes the `userToJson` results, so
+      // a later callback can't overtake an earlier request's.
+      const first = race(metaTree.authenticate('token-a'));
+      const second = race(metaTree.authenticate('token-b'));
+      await drain();
+      Promise.resolve(deliver({uid: 'a'})).catch(() => undefined);
+      resolveAuth('token-a');
+      await drain();
+      Promise.resolve(deliver({uid: 'b'})).catch(() => undefined);
+      resolveAuth('token-b');
+
+      const outcomes = {a: await first, b: await second};
+      const other = failing === 'a' ? 'b' : 'a';
+      assert.equal(
+        outcomes[failing].message, `${failing} failed`,
+        `${failing} did not report its own failure`);
+      assert.equal(outcomes[other], 'resolved', `${other} inherited ${failing}'s failure`);
+    });
+}
+
+testBatchedAuthCalls('a');
+testBatchedAuthCalls('b');
+
+// pkaminski gh-4033197560:  the operation's own failure has to win over a certification failure it
+// provoked, which is what the comment in _runAuthCall promises.
+test('a logout failure takes precedence over a concurrent certification failure', async () => {
+  const {deliver, dispatcher, metaTree} =
+    createMetaTree({unauth: () => Promise.reject(new Error('worker logout failure'))});
+  await deliver({uid: 'github:1'});
+  dispatcher.intercept('certify', {
+    onBefore: op => {
+      if (op.operand) return Promise.reject(new Error('background certification failure'));
+    }
+  });
+
+  const unauthenticated = metaTree.unauthenticate();
+  await Promise.resolve();
+  Promise.resolve(deliver({uid: 'background'})).catch(() => undefined);
+
+  const error = await race(unauthenticated);
+  assert.equal(error.message, 'worker logout failure', 'the certification error won');
+});
+
+// pkaminski gh-4033197643:  "capture a fixed certification result at RPC settlement, preserving
+// that snapshot's errors".  Documents the boundary rather than pinning a fix:  it passes against
+// the shared failure slot as well, since a single call has nothing to cross with.
+// The auth change that answers a call arrives in the same batch as the
+// response and ahead of it, since Firebase fires `onIdTokenChanged` before resolving the sign-in
+// and `firetruss-worker` preserves that order, so the call must report that certification's
+// failure.
+test('a call reports the failure of the certification that answered it', async () => {
+  const {deliver, dispatcher, metaTree, resolveAuth} = createMetaTree({withholdAuth: true});
+  await deliver(null);
+  dispatcher.intercept('certify', {
+    onBefore: op => op.operand ? Promise.reject(new Error('cannot certify')) : undefined
+  });
+
+  const authenticated = race(metaTree.authenticate('token'));
+  await drain();
+  // One batch, applied synchronously:  the auth change, then the response that carries the user.
+  Promise.resolve(deliver({uid: 'github:1'})).catch(() => undefined);
+  resolveAuth('token', {uid: 'github:1'});
+
+  const error = await authenticated;
+  assert.equal(error.message, 'cannot certify', 'the call lost its own certification failure');
+  assert.equal(metaTree.root.user, null, 'published an uncertified user');
+});
+
+// pkaminski gh-4033197718:  waiting for the previous certification tail doesn't wait for the
+// previous auth operation, so both RPCs go out.  The queue has to cover the whole operation.
+test('a second auth call does not start until the first operation finishes', async () => {
+  const {deliver, dispatcher, metaTree, authCalls, resolveAuth} =
+    createMetaTree({withholdAuth: true});
+  await deliver(null);
+  const log = [];
+  dispatcher.intercept('authenticate', {onBefore: op => {log.push(`before ${op.operand}`);}});
+
+  const first = settle(metaTree.authenticate('token-a'));
+  const second = settle(metaTree.authenticate('token-b'));
+  await drain();
+
+  assert.deepEqual(authCalls, ['token-a'], 'sent the second RPC before the first finished');
+  assert.deepEqual(log, ['before token-a'], 'ran the second call\'s interceptors early');
+
+  resolveAuth('token-a');
+  Promise.resolve(deliver({uid: 'a'})).catch(() => undefined);
+  assert.equal(await race(first), 'resolved');
+  await drain();
+  resolveAuth('token-b');
+  Promise.resolve(deliver({uid: 'b'})).catch(() => undefined);
+
+  assert.equal(await race(second), 'resolved');
+  assert.deepEqual(authCalls, ['token-a', 'token-b']);
 });
