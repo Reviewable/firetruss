@@ -9,6 +9,11 @@ import Reference from './Reference.js';
 export const AUTH_REJECTED = 'AUTH_REJECTED';
 
 
+function isAuthRejection(error) {
+  return Boolean(error) && error.code === AUTH_REJECTED;
+}
+
+
 export default class MetaTree {
   constructor(rootUrl, tree, bridge, dispatcher) {
     this._rootUrl = rootUrl;
@@ -187,16 +192,17 @@ export default class MetaTree {
       return this._certify(user);
     });
     // Keep the queue moving if this certification fails, but hand the failure to the call it was
-    // attributed to, if any, so that the call can report it.  Only the latest outcome is kept:  the
-    // call is answered by one auth change, and anything a later certification superseded wasn't it.
+    // attributed to, if any, so that the call can report it.  A later auth change supersedes an
+    // earlier one, since a call is answered by at most one:  a failure that a subsequent
+    // certification overtook wasn't the call's outcome.  A rejection is exempt, because the
+    // sign-out clearing the rejected candidate reports its own null change, and that cleanup must
+    // not bury the rejection that asked for it.
     this._auth.changePromise = promise.then(
       () => {
-        // A later auth change supersedes an earlier one:  a call is answered by at most one, so a
-        // failure that a subsequent certification overtook was not the call's own outcome.
-        if (collector) collector.failure = undefined;
+        if (collector && !isAuthRejection(collector.failure)) collector.failure = undefined;
       },
       error => {
-        if (collector) collector.failure = error;
+        if (collector && !isAuthRejection(collector.failure)) collector.failure = error;
       }
     );
     return promise;

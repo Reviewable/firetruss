@@ -4,12 +4,12 @@ import _ from 'lodash';
 
 import './Truss.test.setup.js';
 import Dispatcher from './Dispatcher.js';
-import MetaTree from './MetaTree.js';
+import MetaTree, {AUTH_REJECTED} from './MetaTree.js';
 
 // The bridge doesn't await auth listeners, so it can deliver consecutive callbacks that overlap.
 // Pass `withholdAuth` to keep the auth RPCs pending until `resolveAuth()` releases them by token,
 // which is how a call's own certification result gets separated from later background ones.
-function createMetaTree({unauth, withholdAuth, authResults = {}} = {}) {
+function createMetaTree({unauth, withholdAuth, reportSignOut, authResults = {}} = {}) {
   let handleAuthChange;
   const unauthCalls = [];
   const authCalls = [];
@@ -28,7 +28,12 @@ function createMetaTree({unauth, withholdAuth, authResults = {}} = {}) {
     off: () => undefined,
     unauth: () => {
       unauthCalls.push(true);
-      return unauth ? unauth() : Promise.resolve();
+      const result = unauth ? unauth() : Promise.resolve();
+      // The worker reports the resulting sign-out, like the real one does.
+      if (reportSignOut) {
+        result.then(() => Promise.resolve(handleAuthChange(null)).catch(_.noop), _.noop);
+      }
+      return result;
     },
     authWithCustomToken: (rootUrl, token) => authenticate(token),
     authAnonymously: () => authenticate(undefined)
@@ -410,6 +415,24 @@ test('a failed sign-out outranks a certify onAfter failure', async () => {
 
   assert.equal(error.message, 'worker sign-out failed');
   assert.deepEqual(failures, ['unauthenticate'], 'the logout failure never reached an onFailure');
+});
+
+// Codex:  the sign-out that clears a rejected candidate makes the worker report a null auth change,
+// and treating that as a superseding outcome cleared the AUTH_REJECTED it was cleaning up after, so
+// `authenticate()` resolved successfully on a candidate its own interceptor had refused.
+test('a rejection survives the cleanup sign-out it triggers', async () => {
+  const {deliver, dispatcher, metaTree} =
+    createMetaTree({reportSignOut: true, authResults: {token: {uid: 'github:1'}}});
+  await deliver(null);
+  dispatcher.intercept('certify', {onBefore: op => op.operand ? false : undefined});
+
+  const authenticated = race(metaTree.authenticate('token'));
+  await Promise.resolve();
+  Promise.resolve(deliver({uid: 'github:1'})).catch(() => undefined);
+
+  const error = await authenticated;
+  assert.equal(error.code, AUTH_REJECTED, 'the cleanup sign-out buried the rejection');
+  assert.equal(metaTree.root.user, null);
 });
 
 // The sign-out that clears a rejected candidate matters more than the rejection that caused it.
