@@ -38,20 +38,19 @@ export default class MetaTree {
       initialAuthChangeReceived: false,
       // Certifications are serialized on this promise, in the order the bridge delivers them.
       changePromise: Promise.resolve(),
-      // Counts auth change callbacks as the bridge delivers them.  A client-issued call records the
-      // count when it's issued, so that a callback delivered before that point is recognized as
-      // background work even though its certification may only run, or fail, later.
-      changesDelivered: 0,
       // Client-issued auth calls are serialized on this one, which spans each call's whole
       // operation:  its interceptors, its RPC, and the certification result it reports.  Waiting
       // only on `changePromise` would let a second call's RPC go out while the first is still in
       // flight, since a call's own callback need not have arrived yet.
       callPromise: Promise.resolve(),
-      // The collectors of the client-issued calls that have been made but haven't finished yet, in
-      // call order.  Each collects the certification failure of the auth change that answers its
-      // call, so that a call reports its own failure rather than one belonging to a background
-      // callback or to a call batched alongside it.  The certification queue itself always recovers
-      // from a failure, so one bad certification can't wedge the ones behind it.
+      // Counts auth change callbacks as the bridge delivers them, so that a call can tell the ones
+      // that predate it from the ones that might answer it.
+      changesDelivered: 0,
+      // The collector of the client-issued call that's currently running, if any.  It gathers the
+      // certification failures of the turns that begin while the call runs, so that the call
+      // reports its own failure rather than a predecessor's.  Held as a list so that a
+      // certification running between two calls is attributed to neither.  The certification queue
+      // always recovers from a failure, so one bad certification can't wedge those behind it.
       collectors: []
     };
 
@@ -92,25 +91,11 @@ export default class MetaTree {
   // needs to reject its user returns `false` instead of signing out itself.
   _runAuthCall(run) {
     this._auth.callIssued = true;
-    // Reserve this call's collector synchronously, and enqueue it behind the calls already
-    // outstanding.  The bridge can deliver a callback in the same tick as the call, before the
-    // queue ahead of it has drained, and such a callback still belongs to this call;  opening it
-    // only once the call starts would make ownership depend on how many microtasks the drain takes,
-    // and the drain would then swallow the call's own certification as a predecessor's.
-    const collector = {
-      failure: undefined,
-      // Set once the call is actually running, so that a call still queued behind another doesn't
-      // claim callbacks belonging to the one in front of it.  Calls are serialized, so at most one
-      // collector is running at any time.
-      running: false,
-      // The call owns the auth change callbacks delivered within this half-open range of delivery
-      // counts:  from the moment it was issued until the certifications it provoked have settled.
-      // Recording both edges as delivery counts makes ownership a fact about the bridge's delivery
-      // order alone, rather than about when a given callback's turn on the queue comes up.
-      deliveredFrom: this._auth.changesDelivered,
-      deliveredUntil: undefined
-    };
-    this._auth.collectors.push(collector);
+    // The delivery count at the moment the call is issued.  A callback delivered before this point
+    // was provoked by something else, even if its certification only runs, or fails, later;  one
+    // delivered after it is either this call's answer or unsolicited, and those are
+    // indistinguishable without a correlation id.
+    const collector = {failure: undefined, deliveredFrom: this._auth.changesDelivered};
     const previousCall = this._auth.callPromise;
     const result = previousCall.catch(_.noop).then(() => this._startAuthCall(run, collector));
     // Keep the queue moving even if this call fails, so one rejection can't wedge the calls behind
@@ -123,38 +108,48 @@ export default class MetaTree {
   // came before, so they're drained to a standstill before this call runs:  resetting the chain
   // would orphan them, letting a stale certification publish after a newer callback was already
   // discarded as a duplicate against a root it hadn't updated yet.
-  //
-  // The call's collector, reserved when the call was issued, stops accepting callbacks once the
-  // certifications it provoked have settled, so later background ones are left to the next call.
   _startAuthCall(run, collector) {
-    // Mark the call running before the drain, not after it:  the drain can take an unpredictable
-    // number of microtasks, and a callback provoked by this call may well be delivered during it.
-    collector.running = true;
+    // Register the collector before draining, so that a callback the bridge delivered before this
+    // call got to run still reaches it.  Its delivery cutoff keeps the drain's own turns out:
+    // those were provoked by whoever came before, and attributing them here is what made a
+    // background failure reject an otherwise successful call.
+    this._auth.collectors.push(collector);
     return this._settleChangePromise().then(() => {
-      // Every auth change delivered while the call runs is assigned to it, without trying to work
-      // out which one answers it:  the pairing isn't guaranteed, and which side of the response a
-      // change lands on is a detail of the Firebase SDK and the worker that we don't want to depend
-      // on.  The window stays open until the call's certification queue goes quiet, so a change
-      // delivered just after the response still counts as the call's own.
-      const collect = issueRpc => Promise.resolve().then(issueRpc);
+      // Report the collected failure from inside the executor, so that the enclosing operation
+      // sees it:  the certification answering a call is part of that call's outcome, so
+      // `authenticate` interceptors have to get their `onError` and `onFailure` for it.  Every
+      // change delivered from here until the queue goes quiet is assigned to the call, without
+      // trying to work out which one answers it;  the pairing isn't guaranteed, and which side of
+      // the response a change lands on is an SDK and worker detail we don't want to depend on.
+      const collect = issueRpc => Promise.resolve()
+        .then(issueRpc)
+        .then(
+          result => this._reportCollectedFailure(collector).then(() => result),
+          // The operation's own failure outranks a certification failure it provoked:  a forced
+          // sign-out that couldn't reach the bridge matters more than the rejection that caused it.
+          // The queue still has to settle before the call reports anything.
+          error => this._reportCollectedFailure(collector)
+            .catch(_.noop).then(() => Promise.reject(error))
+        );
       return run(collect).then(
-        result => this._reportCollectedFailure(collector).then(() => result),
-        // The call's own failure wins over any certification failure it provoked:  a forced
-        // sign-out that couldn't reach the bridge matters more than the rejection that caused it.
-        // The certification queue still has to settle before the call reports anything.
-        error => this._reportCollectedFailure(collector)
-          .catch(_.noop).then(() => Promise.reject(error))
+        result => this._releaseCollector(collector).then(() => result),
+        error => this._releaseCollector(collector).then(() => Promise.reject(error))
       );
     });
   }
 
-  // Finds the call a delivered callback is assigned to:  the running call whose window covers it.
-  // A callback delivered before the running call was issued, or after that call finished, or while
-  // no call is running at all, is background work and belongs to no call.
+  // Closes out a call's window once its operation has ended, so that later changes belong to
+  // whoever runs next.  The failure itself was already reported from inside the operation.
+  _releaseCollector(collector) {
+    _.pull(this._auth.collectors, collector);
+    return Promise.resolve();
+  }
+
+  // Finds the call a certification is assigned to:  the running call whose delivery cutoff the
+  // callback falls at or after.  Calls are serialized, so there's at most one candidate;  one that
+  // predates it, or arrives while no call runs, is background work and belongs to none.
   _findCollector(ordinal) {
-    return _.find(this._auth.collectors, candidate =>
-      candidate.running && ordinal >= candidate.deliveredFrom &&
-      (_.isUndefined(candidate.deliveredUntil) || ordinal < candidate.deliveredUntil));
+    return _.find(this._auth.collectors, candidate => ordinal >= candidate.deliveredFrom);
   }
 
   // Waits for the certification queue to stop growing, not merely for its current tail:  settling
@@ -167,14 +162,10 @@ export default class MetaTree {
     });
   }
 
-  // Finishes a call by letting the certifications it accepted run to a standstill and then
-  // reporting the first of their failures.
+  // Lets the certifications a call provoked run to a standstill and then reports the first of their
+  // failures.  Called from inside the call's operation, so the failure reaches its interceptors.
   _reportCollectedFailure(collector) {
     return this._settleChangePromise().then(() => {
-      // Close the window only now:  everything the call provoked has certified, so anything
-      // delivered from here on belongs to whoever runs next.
-      collector.deliveredUntil = this._auth.changesDelivered;
-      _.pull(this._auth.collectors, collector);
       if (collector.failure) return Promise.reject(collector.failure);
     });
   }
@@ -196,10 +187,18 @@ export default class MetaTree {
       return this._certify(user);
     });
     // Keep the queue moving if this certification fails, but hand the failure to the call it was
-    // attributed to, if any, so that the call can report it.
-    this._auth.changePromise = promise.catch(error => {
-      if (collector && !collector.failure) collector.failure = error;
-    });
+    // attributed to, if any, so that the call can report it.  Only the latest outcome is kept:  the
+    // call is answered by one auth change, and anything a later certification superseded wasn't it.
+    this._auth.changePromise = promise.then(
+      () => {
+        // A later auth change supersedes an earlier one:  a call is answered by at most one, so a
+        // failure that a subsequent certification overtook was not the call's own outcome.
+        if (collector) collector.failure = undefined;
+      },
+      error => {
+        if (collector) collector.failure = error;
+      }
+    );
     return promise;
   }
 

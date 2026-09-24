@@ -639,6 +639,71 @@ test('a call reports the failure of the certification that answered it', async (
   assert.equal(metaTree.root.user, null, 'published an uncertified user');
 });
 
+// Codex:  the collector is reserved when the call is issued and marked running before the
+// predecessor drain, so an unrelated callback arriving during that drain falls inside the call's
+// window and its certification failure rejects an otherwise successful authentication.
+test('a background failure during the predecessor drain is not the call\'s own', async () => {
+  const {deliver, dispatcher, metaTree} = createMetaTree({authResults: {token: {uid: 'mine'}}});
+  await deliver(null);
+  let releaseSlow;
+  dispatcher.intercept('certify', {
+    onBefore: op => {
+      if (!op.operand) return;
+      if (op.operand.uid === 'slow') return new Promise(resolve => {releaseSlow = resolve;});
+      if (op.operand.uid === 'background') return Promise.reject(new Error('background boom'));
+    }
+  });
+
+  // An earlier certification parks, keeping the queue pending.
+  const slow = Promise.resolve(deliver({uid: 'slow'})).catch(() => undefined);
+  await drain();
+
+  // The call is issued and has to wait out that certification.
+  const authenticated = race(metaTree.authenticate('token'));
+  await Promise.resolve();
+
+  // An unrelated callback arrives while the call is still waiting, and fails to certify.
+  const background = Promise.resolve(deliver({uid: 'background'})).catch(() => undefined);
+  await drain();
+
+  releaseSlow();
+  await Promise.all([slow, background]);
+  Promise.resolve(deliver({uid: 'mine'})).catch(() => undefined);
+
+  assert.equal(await authenticated, 'resolved', 'reported a background failure as its own');
+  assert.equal(metaTree.root.userid, 'mine');
+});
+
+// Codex:  the collected certification failure used to be awaited inside the dispatcher executor, so
+// the enclosing operation observed it.  Reporting it after `execute()` resolved meant
+// `authenticate` interceptors ran `onAfter` as a success and never saw `onError` or `onFailure`,
+// even though the public promise rejected.  The base branch fired both.
+test('a certification failure reaches the authenticate operation hooks', async () => {
+  const {deliver, dispatcher, metaTree} = createMetaTree({authResults: {token: {uid: 'u'}}});
+  await deliver(null);
+  const log = [];
+  dispatcher.intercept('certify', {
+    onBefore: op => op.operand ? Promise.reject(new Error('cannot certify')) : undefined
+  });
+  dispatcher.intercept('authenticate', {
+    onError: () => {log.push('onError'); return false;},
+    onFailure: () => {log.push('onFailure');}
+  });
+
+  const authenticated = race(metaTree.authenticate('token'));
+  await Promise.resolve();
+  Promise.resolve(deliver({uid: 'u'})).catch(() => undefined);
+
+  const error = await authenticated;
+  // onFailure callbacks are dispatched on a timeout.
+  await new Promise(resolve => {setTimeout(resolve, 0);});
+
+  assert.equal(error.message, 'cannot certify');
+  assert.deepEqual(
+    log, ['onError', 'onFailure'], 'the operation never saw the certification failure');
+  assert.equal(metaTree.root.user, null);
+});
+
 // pkaminski gh-4033197718:  waiting for the previous certification tail doesn't wait for the
 // previous auth operation, so both RPCs go out.  The queue has to cover the whole operation.
 test('a second auth call does not start until the first operation finishes', async () => {
