@@ -1,0 +1,11 @@
+name: Check build
+on:
+  - push
+  - pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  check-build:
+    uses: reviewable/actions/.github/workflows/check-build-output.yaml@master
