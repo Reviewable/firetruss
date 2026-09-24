@@ -14,6 +14,17 @@ function isAuthRejection(error) {
 }
 
 
+// Runs `after` once `promise` settles, either way, and preserves the original outcome.  `after` may
+// return a promise, which is awaited;  if it rejects, its failure replaces a success but not an
+// existing failure, since the original one is the more informative.
+function settleThen(promise, after) {
+  return promise.then(
+    result => Promise.resolve(after()).then(() => result),
+    error => Promise.resolve(after()).catch(_.noop).then(() => Promise.reject(error))
+  );
+}
+
+
 export default class MetaTree {
   constructor(rootUrl, tree, bridge, dispatcher) {
     this._rootUrl = rootUrl;
@@ -51,12 +62,12 @@ export default class MetaTree {
       // Counts auth change callbacks as the bridge delivers them, so that a call can tell the ones
       // that predate it from the ones that might answer it.
       changesDelivered: 0,
-      // The collector of the client-issued call that's currently running, if any.  It gathers the
-      // certification failures of the turns that begin while the call runs, so that the call
-      // reports its own failure rather than a predecessor's.  Held as a list so that a
-      // certification running between two calls is attributed to neither.  The certification queue
-      // always recovers from a failure, so one bad certification can't wedge those behind it.
-      collectors: []
+      // The collector of the client-issued call that's currently running, if any:  calls are
+      // serialized, so there's at most one.  It gathers the certification failures of the turns
+      // that begin while the call runs, so that the call reports its own failure rather than a
+      // predecessor's.  The certification queue always recovers from a failure, so one bad
+      // certification can't wedge those behind it.
+      collector: undefined
     };
 
     bridge.onAuth(rootUrl, this._handleAuthChange, this);
@@ -118,7 +129,7 @@ export default class MetaTree {
     // call got to run still reaches it.  Its delivery cutoff keeps the drain's own turns out:
     // those were provoked by whoever came before, and attributing them here is what made a
     // background failure reject an otherwise successful call.
-    this._auth.collectors.push(collector);
+    this._auth.collector = collector;
     return this._settleChangePromise().then(() => {
       // Report the collected failure from inside the executor, so that the enclosing operation
       // sees it:  the certification answering a call is part of that call's outcome, so
@@ -126,35 +137,25 @@ export default class MetaTree {
       // change delivered from here until the queue goes quiet is assigned to the call, without
       // trying to work out which one answers it;  the pairing isn't guaranteed, and which side of
       // the response a change lands on is an SDK and worker detail we don't want to depend on.
-      const collect = issueRpc => Promise.resolve()
-        .then(issueRpc)
-        .then(
-          result => this._reportCollectedFailure(collector).then(() => result),
-          // The operation's own failure outranks a certification failure it provoked:  a forced
-          // sign-out that couldn't reach the bridge matters more than the rejection that caused it.
-          // The queue still has to settle before the call reports anything.
-          error => this._reportCollectedFailure(collector)
-            .catch(_.noop).then(() => Promise.reject(error))
-        );
-      return run(collect).then(
-        result => this._releaseCollector(collector).then(() => result),
-        error => this._releaseCollector(collector).then(() => Promise.reject(error))
-      );
+      // The operation's own failure outranks a certification failure it provoked:  a forced
+      // sign-out that couldn't reach the bridge matters more than the rejection that caused it.
+      // The queue still has to settle before the call reports anything either way.
+      const collect = issueRpc =>
+        settleThen(Promise.resolve().then(issueRpc), () => this._concludeAttempt(collector));
+      // Release the collector once the operation has ended, so that later changes belong to
+      // whoever runs next.  Its failure was already reported from inside the operation.
+      return settleThen(run(collect), () => {
+        this._auth.collector = undefined;
+      });
     });
   }
 
-  // Closes out a call's window once its operation has ended, so that later changes belong to
-  // whoever runs next.  The failure itself was already reported from inside the operation.
-  _releaseCollector(collector) {
-    _.pull(this._auth.collectors, collector);
-    return Promise.resolve();
-  }
-
-  // Finds the call a certification is assigned to:  the running call whose delivery cutoff the
-  // callback falls at or after.  Calls are serialized, so there's at most one candidate;  one that
-  // predates it, or arrives while no call runs, is background work and belongs to none.
+  // Finds the call a certification is assigned to:  the running call, provided the callback wasn't
+  // delivered before it was issued.  One that predates the call, or arrives while no call is
+  // running, is background work and belongs to no call.
   _findCollector(ordinal) {
-    return _.find(this._auth.collectors, candidate => ordinal >= candidate.deliveredFrom);
+    const collector = this._auth.collector;
+    return collector && ordinal >= collector.deliveredFrom ? collector : undefined;
   }
 
   // Waits for the certification queue to stop growing, not merely for its current tail:  settling
@@ -167,11 +168,15 @@ export default class MetaTree {
     });
   }
 
-  // Lets the certifications a call provoked run to a standstill and then reports the first of their
-  // failures.  Called from inside the call's operation, so the failure reaches its interceptors.
-  _reportCollectedFailure(collector) {
+  // Concludes one attempt at a call:  lets the certifications it provoked run to a standstill and
+  // reports the first of their failures.  Called from inside the call's operation, so the failure
+  // reaches its interceptors.  The collector is left clean either way, since `Dispatcher` reruns
+  // the executor to retry and this attempt's outcome says nothing about the next candidate.
+  _concludeAttempt(collector) {
     return this._settleChangePromise().then(() => {
-      if (collector.failure) return Promise.reject(collector.failure);
+      const failure = collector.failure;
+      collector.failure = undefined;
+      if (failure) return Promise.reject(failure);
     });
   }
 
@@ -223,7 +228,7 @@ export default class MetaTree {
       'auth', 'certify', new Reference(this._tree, '/'), user, onBeforeResults => {
         if (user && _.some(onBeforeResults, result => result === false)) {
           rejected = true;
-          return 'rejected';
+          return false;
         }
         if (this.root.user === user) return false;
         if (user) Object.freeze(user);
@@ -232,7 +237,7 @@ export default class MetaTree {
         return true;
       }
     ).then(
-      outcome => rejected ? this._signOutRejected() : outcome,
+      published => rejected ? this._signOutRejected() : published,
       // A hook failure after the candidate was rejected still has to clear it out.  The sign-out
       // reports its own failure if it has one, and otherwise the original hook error stands.
       error => {

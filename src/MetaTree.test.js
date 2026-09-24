@@ -9,7 +9,8 @@ import MetaTree, {AUTH_REJECTED} from './MetaTree.js';
 // The bridge doesn't await auth listeners, so it can deliver consecutive callbacks that overlap.
 // Pass `withholdAuth` to keep the auth RPCs pending until `resolveAuth()` releases them by token,
 // which is how a call's own certification result gets separated from later background ones.
-function createMetaTree({unauth, withholdAuth, reportSignOut, authResults = {}} = {}) {
+function createMetaTree(
+    {unauth, withholdAuth, reportSignOut, reportSignIn, authResults = {}} = {}) {
   let handleAuthChange;
   const unauthCalls = [];
   const authCalls = [];
@@ -18,8 +19,13 @@ function createMetaTree({unauth, withholdAuth, reportSignOut, authResults = {}} 
   // the stub does too:  a call uses that to know an auth change answering it is on its way.
   const authenticate = token => {
     authCalls.push(token);
-    if (!withholdAuth) return Promise.resolve(authResults[token]);
-    return new Promise(resolve => {pendingAuth.set(token, resolve);});
+    if (withholdAuth) return new Promise(resolve => {pendingAuth.set(token, resolve);});
+    const user = _.isFunction(authResults) ? authResults(authCalls.length) : authResults[token];
+    // The worker reports the auth change its request caused, like the real one does.
+    if (reportSignIn) {
+      Promise.resolve().then(() => Promise.resolve(handleAuthChange(user)).catch(_.noop));
+    }
+    return Promise.resolve(user);
   };
   const bridge = {
     onAuth: (rootUrl, callback, context) => {handleAuthChange = callback.bind(context);},
@@ -54,6 +60,10 @@ function createMetaTree({unauth, withholdAuth, reportSignOut, authResults = {}} 
 
 // Lets every already-scheduled microtask and timer callback run, so that a test can assert on what
 // the implementation did or didn't start rather than on a fixed number of ticks.
+function deliverInitialSignOut(metaTree) {
+  return Promise.resolve(metaTree._handleAuthChange(null)).catch(_.noop);
+}
+
 function drain() {
   return new Promise(resolve => {setTimeout(resolve, 10);});
 }
@@ -433,6 +443,33 @@ test('a rejection survives the cleanup sign-out it triggers', async () => {
   const error = await authenticated;
   assert.equal(error.code, AUTH_REJECTED, 'the cleanup sign-out buried the rejection');
   assert.equal(metaTree.root.user, null);
+});
+
+// Codex:  a rejection has to survive the sign-out cleaning it up, but not a retry of the same
+// operation.  Holding it across attempts made a successful retry reject with the previous
+// candidate's stale AUTH_REJECTED, and an always-retrying onError loop forever.
+test('a retried authentication is not rejected by the previous attempt', async () => {
+  const {dispatcher, metaTree} = createMetaTree({
+    reportSignIn: true, reportSignOut: true,
+    authResults: attempt => ({uid: attempt === 1 ? 'bad' : 'good'})
+  });
+  await deliverInitialSignOut(metaTree);
+  dispatcher.intercept('certify', {
+    onBefore: op => op.operand && op.operand.uid === 'bad' ? false : undefined
+  });
+  let retried = false;
+  dispatcher.intercept('authenticate', {
+    onError: () => {
+      if (retried) return false;
+      retried = true;
+      return true;
+    }
+  });
+
+  assert.equal(
+    await race(metaTree.authenticate('token')), 'resolved',
+    'the retry inherited the first attempt\'s rejection');
+  assert.equal(metaTree.root.userid, 'good');
 });
 
 // The sign-out that clears a rejected candidate matters more than the rejection that caused it.
