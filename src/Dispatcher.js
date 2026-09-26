@@ -6,7 +6,7 @@ import {joinPath} from './utils/paths.js';
 
 const INTERCEPT_KEYS = [
   'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'authenticate',
-  'unathenticate', 'certify', 'all'
+  'unauthenticate', 'certify', 'all'
 ];
 
 const EMPTY_ARRAY = [];
@@ -49,7 +49,10 @@ class Operation {
     this._tries = 0;
     this._startTimestamp = Date.now();
     this._slowHandles = [];
+    this._onBeforeResults = EMPTY_ARRAY;
   }
+
+  get onBeforeResults() {return this._onBeforeResults;}
 
   get type() {return this._type;}
   get method() {return this._method;}
@@ -161,12 +164,17 @@ export default class Dispatcher {
     return `${stage}_${interceptKey}`;
   }
 
-  execute(operationType, method, target, operand, executor) {
+  // `onOperation`, if given, is called with the operation as soon as it exists, so that a caller
+  // can read state off it, such as the `onBefore` verdicts, even when the operation fails before
+  // its executor runs.
+  execute(operationType, method, target, operand, executor, {onOperation} = {}) {
     executor = wrapPromiseCallback(executor);
     const operation = this.createOperation(operationType, method, target, operand);
-    return this.begin(operation).then(() => {
+    if (onOperation) onOperation(operation);
+    return this.begin(operation).then(onBeforeResults => {
       const executeWithRetries = () => {
-        return executor().catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
+        return executor(onBeforeResults)
+          .catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
       };
       return executeWithRetries();
     }).then(result => this.end(operation).then(() => result));
@@ -176,13 +184,31 @@ export default class Dispatcher {
     return new Operation(operationType, method, target, operand);
   }
 
+  // Resolves with the `onBefore` handler results, so that an executor can make decisions based on
+  // them;  `certify` uses this to let a handler reject the candidate user.  All handlers are
+  // awaited before the results are delivered, so one handler's verdict can't race another's
+  // asynchronous setup.  The verdicts reached before a failure are recorded on the operation, so
+  // that a caller can still act on them;  see `MetaTree._certify`.
+  // Every handler settles before any of them is acted on, and the first failure is reported once
+  // they're all in.  This matters most for `certify`, whose handlers mutate auth state:  acting on
+  // one's refusal while a sibling is still installing a key for the same candidate would leave the
+  // two out of step.  A handler that never settles therefore holds its operation, which is the
+  // right outcome:  that's a bug in the handler, and rescuing it would depend on an unrelated
+  // sibling happening to reject.
   begin(operation) {
+    const results = [];
     return Promise.all(_.map(
       this._getCallbacks('onBefore', operation.type, operation.method),
-      onBefore => onBefore(operation)
-    )).then(() => {
+      (onBefore, index) => Promise.resolve()
+        .then(() => onBefore(operation))
+        .then(result => {results[index] = result;}, error => error)
+    )).then(errors => {
+      operation._onBeforeResults = results;
+      const failure = _.find(errors, error => !_.isUndefined(error));
+      if (failure) return this.end(operation, failure);
       if (!operation.ended) operation._setRunning(true);
-    }, e => this.end(operation, e));
+      return results;
+    });
   }
 
   markReady(operation) {
