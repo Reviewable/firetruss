@@ -6,7 +6,7 @@ import {joinPath} from './utils/paths.js';
 
 const INTERCEPT_KEYS = [
   'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'authenticate',
-  'unathenticate', 'certify', 'all'
+  'unauthenticate', 'certify', 'all'
 ];
 
 const EMPTY_ARRAY = [];
@@ -49,7 +49,10 @@ class Operation {
     this._tries = 0;
     this._startTimestamp = Date.now();
     this._slowHandles = [];
+    this._onBeforeResults = EMPTY_ARRAY;
   }
+
+  get onBeforeResults() {return this._onBeforeResults;}
 
   get type() {return this._type;}
   get method() {return this._method;}
@@ -161,12 +164,17 @@ export default class Dispatcher {
     return `${stage}_${interceptKey}`;
   }
 
-  execute(operationType, method, target, operand, executor) {
+  // `onOperation`, if given, is called with the operation as soon as it exists, so that a caller
+  // can read state off it, such as the `onBefore` verdicts, even when the operation fails before
+  // its executor runs.
+  execute(operationType, method, target, operand, executor, onOperation) {
     executor = wrapPromiseCallback(executor);
     const operation = this.createOperation(operationType, method, target, operand);
-    return this.begin(operation).then(() => {
+    if (onOperation) onOperation(operation);
+    return this.begin(operation).then(onBeforeResults => {
       const executeWithRetries = () => {
-        return executor().catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
+        return executor(onBeforeResults)
+          .catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
       };
       return executeWithRetries();
     }).then(result => this.end(operation).then(() => result));
@@ -176,13 +184,25 @@ export default class Dispatcher {
     return new Operation(operationType, method, target, operand);
   }
 
+  // Resolves with the `onBefore` handler results, so that an executor can make decisions based on
+  // them;  `certify` uses this to let a handler reject the candidate user.  Every handler settles
+  // before any of them is acted on, so one handler's verdict can't race another's asynchronous
+  // setup, and a handler that fails doesn't discard its siblings' verdicts:  they're recorded on
+  // the operation either way, since `certify` still has to clear out a candidate one of them
+  // refused.  The first failure is then reported, as `Promise.all` would have.
   begin(operation) {
     return Promise.all(_.map(
       this._getCallbacks('onBefore', operation.type, operation.method),
-      onBefore => onBefore(operation)
-    )).then(() => {
+      onBefore => Promise.resolve()
+        .then(() => onBefore(operation))
+        .then(result => ({result}), error => ({error}))
+    )).then(outcomes => {
+      operation._onBeforeResults = _.map(outcomes, 'result');
+      const failed = _.find(outcomes, 'error');
+      if (failed) return this.end(operation, failed.error);
       if (!operation.ended) operation._setRunning(true);
-    }, e => this.end(operation, e));
+      return operation.onBeforeResults;
+    });
   }
 
   markReady(operation) {

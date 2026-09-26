@@ -220,10 +220,12 @@ interface StatItem {
 
 type InterceptActionKey =
   'read' | 'write' | 'auth' | 'set' | 'update' | 'commit' | 'connect' | 'peek' | 'authenticate' |
-  'unathenticate' | 'certify' | 'all';
+  'unauthenticate' | 'certify' | 'all';
 
 interface InterceptCallbacks {
-  onBefore?: (op: Truss.Operation) => Promise<void> | void,
+  // A `certify` onBefore rejects a non-null candidate user by returning literal `false`; any other
+  // return value is ignored.  All handlers are awaited before the verdict is acted on.
+  onBefore?: (op: Truss.Operation) => Promise<void | false> | void | false,
   onAfter?: (op: Truss.Operation) => Promise<void> | void,
   onError?: (op: Truss.Operation, error: Error) => Promise<boolean> | boolean | void,
   onFailure?: (op: Truss.Operation) => Promise<void> | void
