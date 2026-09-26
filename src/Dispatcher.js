@@ -6,7 +6,7 @@ import {joinPath} from './utils/paths.js';
 
 const INTERCEPT_KEYS = [
   'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'authenticate',
-  'unathenticate', 'certify', 'all'
+  'unauthenticate', 'certify', 'all'
 ];
 
 const EMPTY_ARRAY = [];
@@ -49,7 +49,14 @@ class Operation {
     this._tries = 0;
     this._startTimestamp = Date.now();
     this._slowHandles = [];
+    this._onBeforeResults = EMPTY_ARRAY;
+    this._onBeforeSettled = Promise.resolve();
   }
+
+  get onBeforeResults() {return this._onBeforeResults;}
+  // Resolves once every `onBefore` handler has settled, so that a caller acting on their verdicts
+  // sees the ones that arrive after a sibling's rejection has already failed the operation.
+  get onBeforeSettled() {return this._onBeforeSettled;}
 
   get type() {return this._type;}
   get method() {return this._method;}
@@ -161,12 +168,17 @@ export default class Dispatcher {
     return `${stage}_${interceptKey}`;
   }
 
-  execute(operationType, method, target, operand, executor) {
+  // `onOperation`, if given, is called with the operation as soon as it exists, so that a caller
+  // can read state off it, such as the `onBefore` verdicts, even when the operation fails before
+  // its executor runs.
+  execute(operationType, method, target, operand, executor, onOperation) {
     executor = wrapPromiseCallback(executor);
     const operation = this.createOperation(operationType, method, target, operand);
-    return this.begin(operation).then(() => {
+    if (onOperation) onOperation(operation);
+    return this.begin(operation).then(onBeforeResults => {
       const executeWithRetries = () => {
-        return executor().catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
+        return executor(onBeforeResults)
+          .catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
       };
       return executeWithRetries();
     }).then(result => this.end(operation).then(() => result));
@@ -176,13 +188,31 @@ export default class Dispatcher {
     return new Operation(operationType, method, target, operand);
   }
 
+  // Resolves with the `onBefore` handler results, so that an executor can make decisions based on
+  // them;  `certify` uses this to let a handler reject the candidate user.  All handlers are
+  // awaited before the results are delivered, so one handler's verdict can't race another's
+  // asynchronous setup.  The verdicts reached before a failure are recorded on the operation, so
+  // that a caller can still act on them;  see `MetaTree._certify`.
   begin(operation) {
-    return Promise.all(_.map(
+    const results = [];
+    // Each verdict is recorded as it arrives, so a handler that fails doesn't discard the ones its
+    // siblings reach, whether they got there first or only later:  `certify` still has to clear out
+    // a candidate one of them refused.  The rejection itself propagates immediately, since waiting
+    // the siblings out would hang the operation on one that never settles;  a caller that needs
+    // their verdicts awaits `operation.onBeforeSettled` instead.
+    const settled = _.map(
       this._getCallbacks('onBefore', operation.type, operation.method),
-      onBefore => onBefore(operation)
-    )).then(() => {
+      (onBefore, index) => Promise.resolve()
+        .then(() => onBefore(operation))
+        .then(result => {results[index] = result;})
+    );
+    operation._onBeforeResults = results;
+    operation._onBeforeSettled =
+      Promise.all(_.map(settled, promise => promise.catch(_.noop)));
+    return Promise.all(settled).then(() => {
       if (!operation.ended) operation._setRunning(true);
-    }, e => this.end(operation, e));
+      return results;
+    }, error => this.end(operation, error));
   }
 
   markReady(operation) {
