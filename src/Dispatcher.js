@@ -6,7 +6,7 @@ import {joinPath} from './utils/paths.js';
 
 const INTERCEPT_KEYS = [
   'read', 'write', 'auth', 'set', 'update', 'commit', 'connect', 'peek', 'authenticate',
-  'unathenticate', 'certify', 'all'
+  'unauthenticate', 'certify', 'all'
 ];
 
 const EMPTY_ARRAY = [];
@@ -164,9 +164,10 @@ export default class Dispatcher {
   execute(operationType, method, target, operand, executor) {
     executor = wrapPromiseCallback(executor);
     const operation = this.createOperation(operationType, method, target, operand);
-    return this.begin(operation).then(() => {
+    return this.begin(operation).then(onBeforeResults => {
       const executeWithRetries = () => {
-        return executor().catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
+        return executor(onBeforeResults)
+          .catch(e => this._retryOrEnd(operation, e).then(executeWithRetries));
       };
       return executeWithRetries();
     }).then(result => this.end(operation).then(() => result));
@@ -176,12 +177,17 @@ export default class Dispatcher {
     return new Operation(operationType, method, target, operand);
   }
 
+  // Resolves with the `onBefore` handler results, so that an executor can make decisions based on
+  // them;  `certify` uses this to let a handler reject the candidate user.  All handlers are
+  // awaited before the results are delivered, so one handler's verdict can't race another's
+  // asynchronous setup.
   begin(operation) {
     return Promise.all(_.map(
       this._getCallbacks('onBefore', operation.type, operation.method),
       onBefore => onBefore(operation)
-    )).then(() => {
+    )).then(results => {
       if (!operation.ended) operation._setRunning(true);
+      return results;
     }, e => this.end(operation, e));
   }
 
