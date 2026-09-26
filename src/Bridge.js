@@ -1,7 +1,10 @@
 import {unescapeKey} from './utils/paths.js';
 import _ from 'lodash';
 
-const MIN_WORKER_VERSION = '4.0.0';
+// 4.1.2 is the first worker that delivers auth results in the order Firebase reported them, which
+// the serialized certifications in `MetaTree` rely on to tell a call's own answer from a background
+// change.
+const MIN_WORKER_VERSION = '4.1.2';
 
 
 class Snapshot {
