@@ -171,6 +171,27 @@ function makePathMatcher(pattern) {
 const MIN_WORKER_VERSION = '4.0.0';
 
 
+// Whether a worker at `version` satisfies `minimum`:  the major versions must match precisely, and
+// the minor and patch must be greater than or equal.  Each component is compared as a number, since
+// comparing the digits as text gets two-digit components wrong:  a patch of '10' sorts below '2'.
+// An unparseable version yields nothing, which the caller treats as one it can't judge rather than
+// as incompatible.
+function isVersionSufficient(version, minimum) {
+  const worker = parseVersion(version);
+  const min = parseVersion(minimum);
+  if (!worker || !min) return;
+  return worker.major === min.major && (
+    worker.minor > min.minor || worker.minor === min.minor && worker.patch >= min.patch
+  );
+}
+
+function parseVersion(version) {
+  const parts = version.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
+  if (!parts) return;
+  return {major: _.toNumber(parts[1]), minor: _.toNumber(parts[2]), patch: _.toNumber(parts[3])};
+}
+
+
 class Snapshot {
   constructor({path, value, exists, writeSerial}) {
     this._path = path;
@@ -234,20 +255,11 @@ class Bridge {
       // Some browsers don't like us accessing local storage -- nothing we can do.
     }
     return this._send({msg: 'init', storage: items, config, lockName}).then(response => {
-      const workerVersion = response.version.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
-      if (workerVersion) {
-        const minVersion = MIN_WORKER_VERSION.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
-        // Major version must match precisely, minor and patch must be greater than or equal.
-        const sufficient = workerVersion[1] === minVersion[1] && (
-          workerVersion[2] > minVersion[2] ||
-          workerVersion[2] === minVersion[2] && workerVersion[3] >= minVersion[3]
-        );
-        if (!sufficient) {
-          return Promise.reject(new Error(
-            `Incompatible Firetruss worker version: ${response.version} ` +
-            `(${MIN_WORKER_VERSION} or better required)`
-          ));
-        }
+      if (isVersionSufficient(response.version, MIN_WORKER_VERSION) === false) {
+        return Promise.reject(new Error(
+          `Incompatible Firetruss worker version: ${response.version} ` +
+          `(${MIN_WORKER_VERSION} or better required)`
+        ));
       }
       if (response.livenessLockName) {
         navigator.locks.request(response.livenessLockName, () => {
