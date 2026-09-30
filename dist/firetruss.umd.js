@@ -179,6 +179,16 @@
   const MIN_WORKER_VERSION = '4.0.0';
 
 
+  // Splits a version into numbers, since comparing the digits as strings gets two-digit components
+  // wrong:  a patch of '10' sorts below '2'.  Yields nothing for anything unparseable, which the
+  // caller treats as a version it can't judge rather than as incompatible.
+  function parseVersion(version) {
+    const parts = version.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
+    if (!parts) return;
+    return {major: ___default.default.toNumber(parts[1]), minor: ___default.default.toNumber(parts[2]), patch: ___default.default.toNumber(parts[3])};
+  }
+
+
   class Snapshot {
     constructor({path, value, exists, writeSerial}) {
       this._path = path;
@@ -242,13 +252,13 @@
         // Some browsers don't like us accessing local storage -- nothing we can do.
       }
       return this._send({msg: 'init', storage: items, config, lockName}).then(response => {
-        const workerVersion = response.version.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
+        const workerVersion = parseVersion(response.version);
         if (workerVersion) {
-          const minVersion = MIN_WORKER_VERSION.match(/^(\d+)\.(\d+)\.(\d+)(-.*)?$/);
+          const minVersion = parseVersion(MIN_WORKER_VERSION);
           // Major version must match precisely, minor and patch must be greater than or equal.
-          const sufficient = workerVersion[1] === minVersion[1] && (
-            workerVersion[2] > minVersion[2] ||
-            workerVersion[2] === minVersion[2] && workerVersion[3] >= minVersion[3]
+          const sufficient = workerVersion.major === minVersion.major && (
+            workerVersion.minor > minVersion.minor ||
+            workerVersion.minor === minVersion.minor && workerVersion.patch >= minVersion.patch
           );
           if (!sufficient) {
             return Promise.reject(new Error(
