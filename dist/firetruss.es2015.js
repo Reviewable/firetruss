@@ -3522,6 +3522,8 @@ class Tree {
     const segments = splitPath(path);
     let object;
     for (const segment of segments) {
+      // An intermediate model can still be a null placeholder during creation.
+      if (segment && object === null) return;
       object = segment ? object.$data[segment] : this.root;
       if (object === undefined) return;
     }

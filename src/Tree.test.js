@@ -103,6 +103,17 @@ test('relativizePaths', () => {
   assert.deepEqual(updates, {'foo/bar': 1, 'foo/baz/qux': 2});
 });
 
+test('getObject waits for a null intermediate model to be populated', () => {
+  const tree = context.tree;
+  tree._setFirebaseProperty(tree.root, 'foo', null);
+
+  assert.equal(tree.getObject('/foo'), null);
+  assert.equal(tree.getObject('/foo/bar'), undefined);
+
+  tree._plantValue('/foo', 'foo', {bar: 'ready'}, tree.root, false, false, false, []);
+  assert.equal(tree.getObject('/foo/bar'), 'ready');
+});
+
 test('plantValue', () => {
   const tree = context.tree;
 
