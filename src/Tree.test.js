@@ -1,5 +1,6 @@
 import {afterEach, beforeEach, mock, test} from 'node:test';
 import assert from 'node:assert/strict';
+import Vue from 'vue';
 
 import Tree, {
   checkUpdateHasOnlyDescendantsWithNoOverlap, relativizePaths, toFirebaseJson
@@ -103,15 +104,28 @@ test('relativizePaths', () => {
   assert.deepEqual(updates, {'foo/bar': 1, 'foo/baz/qux': 2});
 });
 
-test('getObject waits for a null intermediate model to be populated', () => {
-  const tree = context.tree;
-  tree._setFirebaseProperty(tree.root, 'foo', null);
+test('getObject watchers recover after a null intermediate model is populated', async t => {
+  const tree = new Tree(context.truss, context.rootUrl, context.bridge, context.dispatcher);
+  t.after(() => tree.destroy());
+  const observed = [];
 
-  assert.equal(tree.getObject('/foo'), null);
-  assert.equal(tree.getObject('/foo/bar'), undefined);
+  class Foo {
+    static get $trussMount() {return {path: '/foo', placeholder: false};}
 
-  tree._plantValue('/foo', 'foo', {bar: 'ready'}, tree.root, false, false, false, []);
-  assert.equal(tree.getObject('/foo/bar'), 'ready');
+    beforeCreate() {
+      assert.equal(tree.getObject('/foo'), null);
+      assert.equal(tree.getObject('/foo/bar'), undefined);
+      tree._vue.$watch(() => tree.getObject('/foo/bar'), value => {
+        observed.push(value);
+      }, {immediate: true});
+    }
+  }
+
+  tree.init([Foo]);
+  tree._integrateSnapshot({path: '/foo', key: 'foo', exists: true, value: {bar: 'ready'}});
+  assert.deepEqual(observed, [undefined]);
+  await Vue.nextTick();
+  assert.deepEqual(observed, [undefined, 'ready']);
 });
 
 test('plantValue', () => {
