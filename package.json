@@ -58,5 +58,5 @@
     "lodash": "4",
     "vue": "^2.1.6"
   },
-  "packageManager": "yarn@4.13.0"
+  "packageManager": "yarn@4.18.1"
 }
