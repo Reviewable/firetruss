@@ -3767,6 +3767,8 @@
         let connector = new Connector(scope, {result: target}, this._tree, 'peek');
 
         let unintercept = this.intercept('peek', {onFailure: op => {
+          // A failure callback may already be queued when cleanup removes the interceptor.
+          if (!connector) return;
           function match(descriptor) {
             if (!descriptor) return;
             if (descriptor instanceof Handle) return op.target.isEqual(descriptor);
