@@ -1,8 +1,10 @@
 import {mock, test} from 'node:test';
 import assert from 'node:assert/strict';
+import _ from 'lodash';
 
 import './Truss.test.setup.js';
 import Truss from './Truss.js';
+import {Reference} from './Reference.js';
 
 
 test('wait for remote data updates resolves immediately when none are pending', async () => {
@@ -42,3 +44,43 @@ test('wait for remote data updates adds a next tick after pending snapshots', as
   await promise;
   assert.equal(resolved, true);
 });
+
+
+for (const outcome of ['failure', 'success']) {
+  test(`peek ignores queued failures after ${outcome} cleanup`, async () => {
+    let onFailure, onReady;
+    const disconnect = mock.fn();
+    const unintercept = mock.fn();
+    const unobserve = mock.fn();
+    const tree = {connectReference: () => disconnect, getObject: _.constant(42)};
+    const target = new Reference(tree, '/value');
+    const truss = {
+      _tree: tree,
+      intercept(method, callbacks) {
+        assert.equal(method, 'peek');
+        onFailure = callbacks.onFailure;
+        return unintercept;
+      },
+      observe(subject, callback) {onReady = callback; return unobserve;}
+    };
+    const promise = Truss.prototype.peek.call(truss, target);
+    await Promise.resolve();
+
+    // Dispatcher snapshots callbacks before deferring their invocation with setTimeout.
+    const error = new Error('original read failure');
+    const queuedFailure = () => onFailure({target, error});
+    if (outcome === 'failure') {
+      queuedFailure();
+      await assert.rejects(promise, error);
+    } else {
+      onReady(true);
+      assert.equal(await promise, 42);
+    }
+
+    assert.equal(disconnect.mock.calls.length, 1);
+    assert.equal(unintercept.mock.calls.length, 1);
+    assert.equal(unobserve.mock.calls.length, 1);
+    assert.doesNotThrow(queuedFailure);
+    assert.equal(disconnect.mock.calls.length, 1);
+  });
+}
